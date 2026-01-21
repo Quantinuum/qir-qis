@@ -71,54 +71,20 @@ This generates `input.qis.bc` containing the compiled QIS bitcode.
 
 ### Python API
 
-```python
-from qir_qis import qir_ll_to_bc, validate_qir, qir_to_qis, get_entry_attributes
+See [examples/python_api.py](examples/python_api.py) for a complete working example.
 
-# Read LLVM IR
-with open("input.ll", "r") as f:
-    llvm_ir = f.read()
-
-# Convert LLVM IR text to bitcode
-bc_bytes = qir_ll_to_bc(llvm_ir)
-
-# Validate QIR
-validate_qir(bc_bytes)
-
-# Get entry point metadata
-attributes = get_entry_attributes(bc_bytes)
-print(f"Required qubits: {attributes.get('required_num_qubits')}")
-
-# Compile to QIS
-qis_bytes = qir_to_qis(
-    bc_bytes,
-    opt_level=2,           # Optimization level (0-3)
-    target="aarch64",      # Target architecture
-)
-
-# Write output
-with open("output.qis.bc", "wb") as f:
-    f.write(qis_bytes)
+```sh
+uv run examples/python_api.py
 ```
+
+For a more comprehensive example with quantum simulation, see [main.py](main.py).
 
 ### Rust API
 
-```rust
-use qir_qis::qir_qis::{qir_ll_to_bc, validate_qir, qir_to_qis};
-use std::borrow::Cow::Borrowed;
-use std::fs;
+See [examples/rust_api.rs](examples/rust_api.rs) for a complete working example.
 
-// Read input
-let ll_text = fs::read_to_string("input.ll")?;
-
-// Convert and validate
-let bc_bytes = qir_ll_to_bc(&ll_text)?;
-validate_qir(Borrowed(&bc_bytes), None)?;
-
-// Compile to QIS
-let qis_bytes = qir_to_qis(bc_bytes, 2, "aarch64", None)?;
-
-// Write output
-fs::write("output.qis.bc", qis_bytes)?;
+```sh
+cargo run --example rust_api
 ```
 
 ## Development
