@@ -1,0 +1,50 @@
+[package]
+name = "qir-qis"
+version = "0.1.0"
+authors = ["Kartik Singhal <kartik.singhal@quantinuum.com>"]
+edition = "2024"
+rust-version = "1.91"
+description = "QIR to Quantinuum QIS (Quantum Instruction Set) compiler"
+readme = "README.md"
+license = "Apache-2.0"
+repository = "https://github.com/quantinuum/qir-qis/"
+homepage = "https://github.com/quantinuum/qir-qis"
+documentation = "https://docs.rs/qir-qis"
+keywords = ["qir", "quantum", "compiler", "qis", "quantinuum"]
+categories = ["compilers", "science"]
+default-run = "qir-qis"
+exclude = [
+    "/.github",
+    "/.pre-commit-config.yaml",
+    "/tests/data/bad",
+    "*.pyc",
+    "/__pycache__",
+    "/main.py",
+    "/pyproject.toml",
+    "/uv.lock",
+]
+
+[dependencies]
+bpaf = { version = "0.9", features = ["derive"] }
+env_logger = "0.11"
+inkwell = { version = "0.8", features = ["llvm14-0"] }
+llvm-sys = "140"
+log = "0.4"
+pyo3 = { version = "0.27", features = [
+    "abi3-py310",
+    "anyhow",
+], optional = true }
+pyo3-stub-gen = { version = "0.17", optional = true }
+rstest = "0.26"
+wasmparser = { version = "0.244", optional = true }
+
+[features]
+default = ["python"]
+python = ["pyo3", "pyo3-stub-gen"]
+wasm = ["wasmparser"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dev-dependencies]
+insta = { version = "1", features = ["filters"] }

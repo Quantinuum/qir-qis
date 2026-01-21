@@ -1,0 +1,317 @@
+---
+source: src/convert.rs
+expression: qis_text.unwrap().to_string()
+---
+; ModuleID = 'qis_module'
+source_filename = "tests/data/ArithOps_switch.ll"
+target datalayout = "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128"
+target triple = "aarch64-unknown-linux-gnu"
+
+%Qubit = type opaque
+
+@qis_qs = private unnamed_addr global [5 x i64] zeroinitializer
+@e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
+@res_s0.3 = private constant [12 x i8] c"\0BUSER:INT:s0"
+@res_rng_int1.4 = private constant [18 x i8] c"\11USER:INT:rng_int1"
+@res_rng_int2.5 = private constant [18 x i8] c"\11USER:INT:rng_int2"
+@res_rng_flt.6 = private constant [19 x i8] c"\12USER:FLOAT:rng_flt"
+@res_rng_intb.7 = private constant [18 x i8] c"\11USER:INT:rng_intb"
+@res_r0.8 = private constant [12 x i8] c"\0BUSER:INT:r0"
+@res_r1.9 = private constant [12 x i8] c"\0BUSER:INT:r1"
+@res_r2.10 = private constant [12 x i8] c"\0BUSER:INT:r2"
+@res_i0.11 = private constant [12 x i8] c"\0BUSER:INT:i0"
+@res_i1.12 = private constant [12 x i8] c"\0BUSER:INT:i1"
+@res_f0.13 = private constant [14 x i8] c"\0DUSER:FLOAT:f0"
+@gen_name = global [7 x i8] c"qir-qis", section ",generator"
+@gen_version = global [5 x i8] c"0.0.0", section ",generator"
+
+define void @___user_qir_ENTRYPOINT__main() local_unnamed_addr {
+block_0:
+  %qalloc.i = tail call i64 @___qalloc()
+  %is_fail.i = icmp eq i64 %qalloc.i, -1
+  br i1 %is_fail.i, label %qalloc_fail.i, label %qir_qis.init_qubit.exit
+
+qalloc_fail.i:                                    ; preds = %block_0
+  tail call void @panic(i32 1001, i8* getelementptr inbounds ([47 x i8], [47 x i8]* @e_qalloc_fail, i64 0, i64 0))
+  unreachable
+
+qir_qis.init_qubit.exit:                          ; preds = %block_0
+  tail call void @___reset(i64 %qalloc.i)
+  store i64 %qalloc.i, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 0), align 16
+  %qalloc.i30 = tail call i64 @___qalloc()
+  %is_fail.i31 = icmp eq i64 %qalloc.i30, -1
+  br i1 %is_fail.i31, label %qalloc_fail.i32, label %qir_qis.init_qubit.exit33
+
+qalloc_fail.i32:                                  ; preds = %qir_qis.init_qubit.exit
+  tail call void @panic(i32 1001, i8* getelementptr inbounds ([47 x i8], [47 x i8]* @e_qalloc_fail, i64 0, i64 0))
+  unreachable
+
+qir_qis.init_qubit.exit33:                        ; preds = %qir_qis.init_qubit.exit
+  tail call void @___reset(i64 %qalloc.i30)
+  store i64 %qalloc.i30, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 1), align 8
+  %qalloc.i34 = tail call i64 @___qalloc()
+  %is_fail.i35 = icmp eq i64 %qalloc.i34, -1
+  br i1 %is_fail.i35, label %qalloc_fail.i36, label %qir_qis.init_qubit.exit37
+
+qalloc_fail.i36:                                  ; preds = %qir_qis.init_qubit.exit33
+  tail call void @panic(i32 1001, i8* getelementptr inbounds ([47 x i8], [47 x i8]* @e_qalloc_fail, i64 0, i64 0))
+  unreachable
+
+qir_qis.init_qubit.exit37:                        ; preds = %qir_qis.init_qubit.exit33
+  tail call void @___reset(i64 %qalloc.i34)
+  store i64 %qalloc.i34, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 2), align 16
+  %qalloc.i38 = tail call i64 @___qalloc()
+  %is_fail.i39 = icmp eq i64 %qalloc.i38, -1
+  br i1 %is_fail.i39, label %qalloc_fail.i40, label %qir_qis.init_qubit.exit41
+
+qalloc_fail.i40:                                  ; preds = %qir_qis.init_qubit.exit37
+  tail call void @panic(i32 1001, i8* getelementptr inbounds ([47 x i8], [47 x i8]* @e_qalloc_fail, i64 0, i64 0))
+  unreachable
+
+qir_qis.init_qubit.exit41:                        ; preds = %qir_qis.init_qubit.exit37
+  tail call void @___reset(i64 %qalloc.i38)
+  store i64 %qalloc.i38, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 3), align 8
+  %qalloc.i42 = tail call i64 @___qalloc()
+  %is_fail.i43 = icmp eq i64 %qalloc.i42, -1
+  br i1 %is_fail.i43, label %qalloc_fail.i44, label %qir_qis.init_qubit.exit45
+
+qalloc_fail.i44:                                  ; preds = %qir_qis.init_qubit.exit41
+  tail call void @panic(i32 1001, i8* getelementptr inbounds ([47 x i8], [47 x i8]* @e_qalloc_fail, i64 0, i64 0))
+  unreachable
+
+qir_qis.init_qubit.exit45:                        ; preds = %qir_qis.init_qubit.exit41
+  tail call void @___reset(i64 %qalloc.i42)
+  store i64 %qalloc.i42, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 4), align 16
+  %qbit.i = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 0), align 16
+  tail call void @___rxy(i64 %qbit.i, double 0x400921FB54442D18, double 0.000000e+00)
+  %qbit.i46 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 1), align 8
+  tail call void @___rxy(i64 %qbit.i46, double 0x400921FB54442D18, double 0.000000e+00)
+  %qbit.i47 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 2), align 16
+  tail call void @___rxy(i64 %qbit.i47, double 0x400921FB54442D18, double 0.000000e+00)
+  %qbit.i48 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 3), align 8
+  tail call void @___rxy(i64 %qbit.i48, double 0x400921FB54442D18, double 0.000000e+00)
+  %qbit.i49 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 4), align 16
+  tail call void @___rxy(i64 %qbit.i49, double 0x400921FB54442D18, double 0.000000e+00)
+  %qbit5 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 0), align 16
+  %meas = tail call i64 @___lazy_measure(i64 %qbit5)
+  %qbit6 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 1), align 8
+  %meas7 = tail call i64 @___lazy_measure(i64 %qbit6)
+  %qbit8 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 2), align 16
+  %meas9 = tail call i64 @___lazy_measure(i64 %qbit8)
+  %qbit10 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 3), align 8
+  %meas11 = tail call i64 @___lazy_measure(i64 %qbit10)
+  %qbit12 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 4), align 16
+  %meas13 = tail call i64 @___lazy_measure(i64 %qbit12)
+  %bool = tail call i1 @___read_future_bool(i64 %meas)
+  tail call void @___dec_future_refcount(i64 %meas)
+  br i1 %bool, label %block_1, label %block_2
+
+block_1:                                          ; preds = %qir_qis.init_qubit.exit45
+  br label %block_2
+
+block_2:                                          ; preds = %block_1, %qir_qis.init_qubit.exit45
+  %var_39 = phi i64 [ 1, %qir_qis.init_qubit.exit45 ], [ 3, %block_1 ]
+  %var_38 = phi i64 [ 10, %qir_qis.init_qubit.exit45 ], [ 8, %block_1 ]
+  %var_37 = phi i64 [ 0, %qir_qis.init_qubit.exit45 ], [ 5, %block_1 ]
+  %var_36 = phi i64 [ 0, %qir_qis.init_qubit.exit45 ], [ 1, %block_1 ]
+  %bool14 = tail call i1 @___read_future_bool(i64 %meas7)
+  tail call void @___dec_future_refcount(i64 %meas7)
+  br i1 %bool14, label %block_3, label %block_4
+
+block_3:                                          ; preds = %block_2
+  %var_12 = add nuw nsw i64 %var_36, 1
+  %var_13 = add nuw nsw i64 %var_37, 5
+  %var_14 = add nsw i64 %var_38, -2
+  %var_15 = mul nuw nsw i64 %var_39, 3
+  br label %block_4
+
+block_4:                                          ; preds = %block_3, %block_2
+  %var_43 = phi i64 [ %var_39, %block_2 ], [ %var_15, %block_3 ]
+  %var_42 = phi i64 [ %var_38, %block_2 ], [ %var_14, %block_3 ]
+  %var_41 = phi i64 [ %var_37, %block_2 ], [ %var_13, %block_3 ]
+  %var_40 = phi i64 [ %var_36, %block_2 ], [ %var_12, %block_3 ]
+  %bool15 = tail call i1 @___read_future_bool(i64 %meas9)
+  tail call void @___dec_future_refcount(i64 %meas9)
+  br i1 %bool15, label %block_5, label %block_6
+
+block_5:                                          ; preds = %block_4
+  %var_18 = add nuw nsw i64 %var_40, 1
+  %var_19 = add nuw nsw i64 %var_41, 5
+  %var_20 = add nsw i64 %var_42, -2
+  %var_21 = mul nuw nsw i64 %var_43, 3
+  br label %block_6
+
+block_6:                                          ; preds = %block_5, %block_4
+  %var_47 = phi i64 [ %var_43, %block_4 ], [ %var_21, %block_5 ]
+  %var_46 = phi i64 [ %var_42, %block_4 ], [ %var_20, %block_5 ]
+  %var_45 = phi i64 [ %var_41, %block_4 ], [ %var_19, %block_5 ]
+  %var_44 = phi i64 [ %var_40, %block_4 ], [ %var_18, %block_5 ]
+  %bool16 = tail call i1 @___read_future_bool(i64 %meas11)
+  tail call void @___dec_future_refcount(i64 %meas11)
+  br i1 %bool16, label %block_7, label %block_8
+
+block_7:                                          ; preds = %block_6
+  %var_24 = add nuw nsw i64 %var_44, 1
+  %var_25 = add nuw nsw i64 %var_45, 5
+  %var_26 = add nsw i64 %var_46, -2
+  %var_27 = mul nuw nsw i64 %var_47, 3
+  br label %block_8
+
+block_8:                                          ; preds = %block_7, %block_6
+  %var_51 = phi i64 [ %var_47, %block_6 ], [ %var_27, %block_7 ]
+  %var_50 = phi i64 [ %var_46, %block_6 ], [ %var_26, %block_7 ]
+  %var_49 = phi i64 [ %var_45, %block_6 ], [ %var_25, %block_7 ]
+  %var_48 = phi i64 [ %var_44, %block_6 ], [ %var_24, %block_7 ]
+  %bool17 = tail call i1 @___read_future_bool(i64 %meas13)
+  tail call void @___dec_future_refcount(i64 %meas13)
+  br i1 %bool17, label %block_9, label %block_10
+
+block_9:                                          ; preds = %block_8
+  %var_30 = add nuw nsw i64 %var_48, 1
+  %var_31 = add nuw nsw i64 %var_49, 5
+  %var_32 = add nsw i64 %var_50, -2
+  %var_33 = mul nuw nsw i64 %var_51, 3
+  br label %block_10
+
+block_10:                                         ; preds = %block_9, %block_8
+  %var_55 = phi i64 [ %var_51, %block_8 ], [ %var_33, %block_9 ]
+  %var_54 = phi i64 [ %var_50, %block_8 ], [ %var_32, %block_9 ]
+  %var_53 = phi i64 [ %var_49, %block_8 ], [ %var_31, %block_9 ]
+  %var_52 = phi i64 [ %var_48, %block_8 ], [ %var_30, %block_9 ]
+  %qbit.i50 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 0), align 16
+  tail call void @___reset(i64 %qbit.i50)
+  %qbit.i51 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 1), align 8
+  tail call void @___reset(i64 %qbit.i51)
+  %qbit.i52 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 2), align 16
+  tail call void @___reset(i64 %qbit.i52)
+  %qbit.i53 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 3), align 8
+  tail call void @___reset(i64 %qbit.i53)
+  %qbit.i54 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 4), align 16
+  tail call void @___reset(i64 %qbit.i54)
+  %current_shot = tail call i64 @get_current_shot()
+  tail call void @print_int(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @res_s0.3, i64 0, i64 0), i64 11, i64 %current_shot)
+  tail call void @random_seed(i64 42)
+  %rint23 = tail call i32 @random_int()
+  %rint64 = sext i32 %rint23 to i64
+  tail call void @print_int(i8* getelementptr inbounds ([18 x i8], [18 x i8]* @res_rng_int1.4, i64 0, i64 0), i64 17, i64 %rint64)
+  tail call void @random_advance(i64 -1)
+  %rint = tail call i32 @random_int()
+  %rint64a = sext i32 %rint to i64
+  tail call void @print_int(i8* getelementptr inbounds ([18 x i8], [18 x i8]* @res_rng_int2.5, i64 0, i64 0), i64 17, i64 %rint64a)
+  %rfloat24 = tail call double @random_float()
+  tail call void @print_float(i8* getelementptr inbounds ([19 x i8], [19 x i8]* @res_rng_flt.6, i64 0, i64 0), i64 18, double %rfloat24)
+  br label %random
+
+random:                                           ; preds = %random.backedge, %block_10
+  %rintb = tail call i32 @random_rng(i32 5)
+  %val64 = sext i32 %rintb to i64
+  tail call void @print_int(i8* getelementptr inbounds ([18 x i8], [18 x i8]* @res_rng_intb.7, i64 0, i64 0), i64 17, i64 %val64)
+  switch i32 %rintb, label %otherwise [
+    i32 0, label %onzero
+    i32 1, label %onone
+    i32 2, label %ontwo
+  ]
+
+onzero:                                           ; preds = %random
+  tail call void @print_int(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @res_r0.8, i64 0, i64 0), i64 11, i64 %var_52)
+  br label %random.backedge
+
+random.backedge:                                  ; preds = %ontwo, %onone, %onzero
+  br label %random
+
+onone:                                            ; preds = %random
+  tail call void @print_int(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @res_r1.9, i64 0, i64 0), i64 11, i64 %var_53)
+  br label %random.backedge
+
+ontwo:                                            ; preds = %random
+  tail call void @print_int(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @res_r2.10, i64 0, i64 0), i64 11, i64 %var_54)
+  br label %random.backedge
+
+otherwise:                                        ; preds = %random
+  tail call void @print_int(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @res_i0.11, i64 0, i64 0), i64 11, i64 %var_55)
+  tail call void @print_int(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @res_i1.12, i64 0, i64 0), i64 11, i64 %rint64)
+  tail call void @print_float(i8* getelementptr inbounds ([14 x i8], [14 x i8]* @res_f0.13, i64 0, i64 0), i64 13, double %rfloat24)
+  %qbit25 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 0), align 16
+  tail call void @___qfree(i64 %qbit25)
+  %qbit26 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 1), align 8
+  tail call void @___qfree(i64 %qbit26)
+  %qbit27 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 2), align 16
+  tail call void @___qfree(i64 %qbit27)
+  %qbit28 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 3), align 8
+  tail call void @___qfree(i64 %qbit28)
+  %qbit29 = load i64, i64* getelementptr inbounds ([5 x i64], [5 x i64]* @qis_qs, i64 0, i64 4), align 16
+  tail call void @___qfree(i64 %qbit29)
+  ret void
+}
+
+declare i64 @___qalloc() local_unnamed_addr
+
+declare void @panic(i32, i8*) local_unnamed_addr
+
+declare void @___reset(i64) local_unnamed_addr
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind readonly willreturn
+define i64 @qir_qis.load_qubit(%Qubit* %0) local_unnamed_addr #0 {
+entry:
+  %idx = ptrtoint %Qubit* %0 to i64
+  %qbit_ptr = getelementptr [5 x i64], [5 x i64]* @qis_qs, i64 0, i64 %idx
+  %qbit = load i64, i64* %qbit_ptr, align 8
+  ret i64 %qbit
+}
+
+declare void @___rxy(i64, double, double) local_unnamed_addr
+
+declare i64 @___lazy_measure(i64) local_unnamed_addr
+
+declare i1 @___read_future_bool(i64) local_unnamed_addr
+
+declare void @___dec_future_refcount(i64) local_unnamed_addr
+
+declare i64 @get_current_shot() local_unnamed_addr
+
+declare void @print_int(i8*, i64, i64) local_unnamed_addr
+
+declare void @random_seed(i64) local_unnamed_addr
+
+declare i32 @random_int() local_unnamed_addr
+
+declare void @random_advance(i64) local_unnamed_addr
+
+declare double @random_float() local_unnamed_addr
+
+declare void @print_float(i8*, i64, double) local_unnamed_addr
+
+declare i32 @random_rng(i32) local_unnamed_addr
+
+declare void @___qfree(i64) local_unnamed_addr
+
+define i64 @qmain(i64 %0) local_unnamed_addr {
+entry:
+  tail call void @setup(i64 %0)
+  tail call void @___user_qir_ENTRYPOINT__main()
+  %retval = tail call i64 @teardown()
+  ret i64 %retval
+}
+
+declare void @setup(i64) local_unnamed_addr
+
+declare i64 @teardown() local_unnamed_addr
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind readonly willreturn }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4, !6, !8, !9, !10, !11}
+!name = !{!12}
+
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 5, !"int_computations", !5}
+!5 = !{!"i32", !"i64"}
+!6 = !{i32 5, !"float_computations", !7}
+!7 = !{!"float", !"double"}
+!8 = !{i32 1, !"ir_functions", i1 false}
+!9 = !{i32 1, !"backwards_branching", i2 0}
+!10 = !{i32 1, !"multiple_target_branching", i1 true}
+!11 = !{i32 1, !"multiple_return_points", i1 false}
+!12 = !{!"mainlib"}
