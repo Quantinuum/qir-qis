@@ -1307,8 +1307,8 @@ mod test {
 
     #[test]
     fn test_get_entry_attributes() {
-        let ll_text =
-            std::fs::read_to_string("tests/data/base-attrs.ll").expect("Failed to read base.ll");
+        let ll_text = std::fs::read_to_string("tests/data/base-attrs.ll")
+            .expect("Failed to read base-attrs.ll");
         let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
         let attrs = get_entry_attributes(bc_bytes).unwrap();
         assert!(matches!(attrs.get("entry_point"), Some(None)));
