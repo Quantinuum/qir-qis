@@ -1,0 +1,130 @@
+[project]
+name = "qir_qis"
+description = "QIR to Quantinuum QIS (Quantum Instruction Set) compiler"
+readme = "README.md"
+authors = [{ name = "Kartik Singhal", email = "kartik.singhal@quantinuum.com" }]
+requires-python = ">=3.10,<3.15"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Compilers",
+    "License :: OSI Approved :: Apache Software License",
+]
+dynamic = ["version"]
+
+[project.urls]
+repository = "https://github.com/quantinuum/qir-qis/"
+
+[build-system]
+requires = ["maturin~=1.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+profile = "release"
+features = ["pyo3/extension-module"]
+
+[dependency-groups]
+dev = [
+    "maturin~=1.0",
+    "qir-formatter~=0.1",
+    "rich~=14.0",
+    "selene-sim~=0.2",
+]
+
+[tool.uv]
+prerelease = "allow"
+# Rebuild package when any rust files change
+cache-keys = [{ file = "src/**/*.rs" }]
+
+[tool.deptry]
+known_first_party = ["qir_qis"]
+
+[tool.deptry.package_module_name_map]
+selene-sim = ["selene_helios_qis_plugin", "selene_sim"]
+
+[tool.deptry.per_rule_ignores]
+DEP004 = [
+    "qir_formatter",            # used in tests
+    "rich",                     # used in tests
+    "selene_helios_qis_plugin", # used in tests
+    "selene_sim",               # used in tests
+]
+
+[tool.ruff]
+lint.select = ["ALL"]
+lint.ignore = [
+    "COM812", # ignored for ruff format
+    "D100",   # Missing docstring in public module
+    "D203",   # 1 blank line required before class docstring
+    "D213",   # Multi-line docstring closing quotes should be on a separate line
+    "PYI021", # Docstrings should not be included in stubs
+    "T201",   # `print` found
+]
+
+[tool.cibuildwheel]
+build = "cp310-*"
+build-frontend = "build[uv]"
+skip = "*-win32 *-manylinux_i686 *-musllinux*"
+manylinux-x86_64-image = "manylinux_2_28"
+test-command = [
+    "llvm-as {project}/tests/data/base_native_only.ll",
+    "python -c 'import qir_qis; from pathlib import Path; qir = Path(\"{project}/tests/data/base_native_only.ll\").read_bytes(); qir_qis.validate_qir(qir); qir_qis.qir_to_qis(qir)'",
+]
+
+[tool.cibuildwheel.linux.environment]
+PATH = '$HOME/.cargo/bin:/tmp/llvm/bin:$PATH'
+LLVM_SYS_140_PREFIX = '/tmp/llvm'
+[tool.cibuildwheel.linux]
+before-all = [
+    'curl -sSf https://sh.rustup.rs | sh -s -- -y',
+    'dnf install libffi-devel -y',
+    'curl -LO https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz',
+    'mkdir -p /tmp/llvm',
+    'tar xf clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz -C /tmp/llvm --strip-components=1',
+]
+repair-wheel-command = [
+    'auditwheel repair -w {dest_dir} {wheel}',
+    'uvx abi3audit --strict --report {wheel}',
+]
+
+[tool.cibuildwheel.macos.environment]
+PATH = '/tmp/llvm/bin:$PATH'
+LLVM_SYS_140_PREFIX = '/tmp/llvm'
+MACOSX_DEPLOYMENT_TARGET = "13.2"
+[tool.cibuildwheel.macos]
+before-all = [
+    'curl -sSf https://sh.rustup.rs | sh -s -- -y',
+    'if [ "$(uname -m)" = "arm64" ]; then ARCH_PREFIX=arm64-apple-darwin22.3.0; else ARCH_PREFIX=x86_64-apple-darwin; fi',
+    'curl -LO https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-$ARCH_PREFIX.tar.xz',
+    'mkdir -p /tmp/llvm',
+    'tar xf clang+llvm-14.0.6-$ARCH_PREFIX.tar.xz -C /tmp/llvm --strip-components=1',
+]
+repair-wheel-command = [
+    'DYLD_FALLBACK_LIBRARY_PATH=/tmp/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}',
+    'uvx abi3audit --strict --report {wheel}',
+]
+
+[tool.cibuildwheel.windows.environment]
+PATH = 'C:\\LLVM\\bin;$PATH'
+LLVM_SYS_140_PREFIX = 'C:\\LLVM'
+[tool.cibuildwheel.windows]
+before-all = [
+    'rustup update',
+    'curl -LO https://github.com/PLC-lang/llvm-package-windows/releases/download/v14.0.6/LLVM-14.0.6-win64.7z',
+    '7z x LLVM-14.0.6-win64.7z "-oC:\LLVM" -y',
+]
+before-build = ['pip install delvewheel']
+repair-wheel-command = [
+    'delvewheel repair -w {dest_dir} {wheel}',
+    'uvx abi3audit --strict --report {wheel}',
+]
+test-command = [
+    'cd /d {project}',
+    'llvm-as tests\data\base_native_only.ll',
+    '''python -c "import qir_qis; from pathlib import Path; qir = Path('tests/data/base_native_only.ll').read_bytes(); qir_qis.validate_qir(qir); qir_qis.qir_to_qis(qir)"''',
+]

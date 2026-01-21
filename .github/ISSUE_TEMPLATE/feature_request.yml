@@ -1,0 +1,34 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Feature Description
+      description: What feature would you like? Why is it useful?
+      placeholder: |
+        I'd like to add support for X because...
+
+        Example usage:
+        ```python
+        qir_to_qis(bc_bytes, new_feature=True)
+        ```
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Component
+      description: Which area does this affect?
+      multiple: true
+      options:
+        - QIR validation
+        - QIS translation
+        - Gate decomposition
+        - CLI/API
+        - Documentation
+        - Other
+    validations:
+      required: false

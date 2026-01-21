@@ -1,0 +1,38 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug, steps to reproduce, and what you expected
+      placeholder: |
+        Bug: X doesn't work when Y
+
+        Steps:
+        1. Run `qir-qis input.ll`
+        2. See error...
+
+        Expected: Should compile successfully
+    validations:
+      required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Minimal Example
+      description: QIR code or command that reproduces the issue
+      placeholder: Include minimal QIR file or command
+      render: llvm
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version & Environment
+      description: "qir-qis version, OS (e.g., 0.1.0, macOS 14, LLVM 14)"
+      placeholder: "0.1.0, Linux, LLVM 14.0"
+    validations:
+      required: true

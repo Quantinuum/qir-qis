@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or Discussion
+    url: https://github.com/quantinuum/qir-qis/discussions
+    about: Ask questions or discuss ideas with the community
+  - name: Security Issue
+    url: https://github.com/quantinuum/qir-qis/security/advisories/new
+    about: Report a security vulnerability (private)
