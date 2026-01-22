@@ -9,7 +9,7 @@ A compiler that validates and translates [QIR (Quantum Intermediate Representati
 - **Python & Rust API**: Use as a Rust library or Python package
 - **CLI Tool**: Command-line interface for quick compilation
 
-See [qtm-qir-reference.md](./qtm-qir-reference.md) for details on supported QIR features and their mapping to Quantinuum QIS.
+See [qtm-qir-reference.md](https://github.com/quantinuum/qir-qis/blob/main/qtm-qir-reference.md) for details on supported QIR features and their mapping to Quantinuum QIS.
 
 ## Installation
 
@@ -71,17 +71,17 @@ This generates `input.qis.bc` containing the compiled QIS bitcode.
 
 ### Python API
 
-See [examples/python_api.py](examples/python_api.py) for a complete working example.
+See [examples/python_api.py](https://github.com/quantinuum/qir-qis/blob/main/examples/python_api.py) for a complete working example.
 
 ```sh
 uv run examples/python_api.py
 ```
 
-For a more comprehensive example with quantum simulation, see [main.py](main.py).
+For a more comprehensive example with quantum simulation, see [main.py](https://github.com/quantinuum/qir-qis/blob/main/main.py).
 
 ### Rust API
 
-See [examples/rust_api.rs](examples/rust_api.rs) for a complete working example.
+See [examples/rust_api.rs](https://github.com/quantinuum/qir-qis/blob/main/examples/rust_api.rs) for a complete working example.
 
 ```sh
 cargo run --example rust_api
@@ -175,7 +175,7 @@ After modifying the Python API:
 make stubs
 ```
 
-This updates [qir_qis.pyi](./qir_qis.pyi) with the latest type signatures.
+This updates [qir_qis.pyi](https://github.com/quantinuum/qir-qis/blob/main/qir_qis.pyi) with the latest type signatures.
 
 ## Project Structure
 
@@ -211,7 +211,7 @@ qir-qis/
 
 ## Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for:
+Contributions are welcome! Please read [CONTRIBUTING.md](https://github.com/quantinuum/qir-qis/blob/main/CONTRIBUTING.md) for:
 
 - How to report issues and submit pull requests
 - Coding standards and commit message format
@@ -222,7 +222,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for:
 - [ ] Tests pass: `make test`
 - [ ] Linters pass: `make lint`
 - [ ] Documentation updated
-- [ ] [CHANGELOG.md](CHANGELOG.md) updated
+- [ ] [CHANGELOG.md](https://github.com/quantinuum/qir-qis/blob/main/CHANGELOG.md) updated
 
 ## License
 
