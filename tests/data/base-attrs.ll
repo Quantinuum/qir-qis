@@ -1,11 +1,15 @@
-; type definitions
+; entry point definition
 
 define i64 @Entry_Point_Name() #0 {
 entry:
   ret i64 0
 }
 
+; attributes
+
 attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="2" "required_num_results"="2" }
+
+; module flags
 
 !llvm.module.flags = !{!0, !1, !2, !3}
 

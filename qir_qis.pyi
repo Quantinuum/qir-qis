@@ -53,7 +53,7 @@ def qir_to_qis(
     """
 
 def validate_qir(
-    bc_bytes: builtins.bytes, wasm_bytes: builtins.bytes | None = None
+    bc_bytes: builtins.bytes, *, wasm_bytes: builtins.bytes | None = None
 ) -> None:
     r"""Validate the given QIR.
 
