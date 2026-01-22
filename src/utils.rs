@@ -1,4 +1,4 @@
-#[cfg(any(feature = "wasm", test))]
+#[cfg(feature = "wasm")]
 use std::collections::BTreeMap;
 
 use inkwell::{

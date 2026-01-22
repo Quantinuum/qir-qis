@@ -13,15 +13,16 @@ documentation = "https://docs.rs/qir-qis"
 keywords = ["qir", "quantum", "compiler", "qis", "quantinuum"]
 categories = ["compilers", "science"]
 default-run = "qir-qis"
-exclude = [
-    "/.github",
-    "/.pre-commit-config.yaml",
-    "/tests/data/bad",
-    "*.pyc",
-    "/__pycache__",
-    "/main.py",
-    "/pyproject.toml",
-    "/uv.lock",
+include = [
+    "/src/**/*",
+    "/examples/**/*.rs",
+    "/tests/**/*.ll",
+    "/tests/**/*.snap",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
 ]
 
 [dependencies]
