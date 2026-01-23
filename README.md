@@ -162,7 +162,7 @@ This will:
 make lint
 
 # This runs:
-# - prek (pre-commit checks)
+# - prek (pre-commit checks, https://prek.j178.dev/)
 # - typos checker
 # - cargo clippy
 ```

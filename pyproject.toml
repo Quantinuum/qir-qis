@@ -71,15 +71,20 @@ build = "cp310-*"
 build-frontend = "build[uv]"
 skip = "*-win32 *-manylinux_i686 *-musllinux*"
 manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
 test-command = [
     "llvm-as {project}/tests/data/base_native_only.ll",
     "python -c 'import qir_qis; from pathlib import Path; qir = Path(\"{project}/tests/data/base_native_only.ll\").read_bytes(); qir_qis.validate_qir(qir); qir_qis.qir_to_qis(qir)'",
 ]
 
-[tool.cibuildwheel.linux.environment]
-PATH = '$HOME/.cargo/bin:/tmp/llvm/bin:$PATH'
-LLVM_SYS_140_PREFIX = '/tmp/llvm'
 [tool.cibuildwheel.linux]
+environment = {PATH = '$HOME/.cargo/bin:/tmp/llvm/bin:$PATH', LLVM_SYS_140_PREFIX = '/tmp/llvm'}
+repair-wheel-command = [
+    'auditwheel repair -w {dest_dir} {wheel}',
+    'uvx abi3audit --strict --report {wheel}',
+]
+
+[tool.cibuildwheel.manylinux_x86_64]
 before-all = [
     'curl -sSf https://sh.rustup.rs | sh -s -- -y',
     'dnf install libffi-devel -y',
@@ -87,9 +92,14 @@ before-all = [
     'mkdir -p /tmp/llvm',
     'tar xf clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz -C /tmp/llvm --strip-components=1',
 ]
-repair-wheel-command = [
-    'auditwheel repair -w {dest_dir} {wheel}',
-    'uvx abi3audit --strict --report {wheel}',
+
+[tool.cibuildwheel.manylinux_aarch64]
+before-all = [
+    'curl -sSf https://sh.rustup.rs | sh -s -- -y',
+    'dnf install libffi-devel -y',
+    'curl -LO https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-aarch64-linux-gnu.tar.xz',
+    'mkdir -p /tmp/llvm',
+    'tar xf clang+llvm-14.0.6-aarch64-linux-gnu.tar.xz -C /tmp/llvm --strip-components=1',
 ]
 
 [tool.cibuildwheel.macos.environment]
