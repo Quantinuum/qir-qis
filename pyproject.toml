@@ -78,7 +78,7 @@ test-command = [
 ]
 
 [tool.cibuildwheel.linux]
-environment = {PATH = '$HOME/.cargo/bin:/tmp/llvm/bin:$PATH', LLVM_SYS_140_PREFIX = '/tmp/llvm'}
+environment = { PATH = '$HOME/.cargo/bin:/tmp/llvm/bin:$PATH', LLVM_SYS_140_PREFIX = '/tmp/llvm' }
 before-all = [
     'curl -sSf https://sh.rustup.rs | sh -s -- -y',
     'dnf install libffi-devel -y',
