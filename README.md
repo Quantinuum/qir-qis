@@ -1,5 +1,8 @@
 # QIR-QIS
 
+[![Crates.io](https://img.shields.io/crates/v/qir-qis)](https://crates.io/crates/qir-qis)
+[![PyPI](https://img.shields.io/pypi/v/qir-qis)](https://pypi.org/project/qir-qis/)
+
 A compiler that validates and translates [QIR (Quantum Intermediate Representation)](https://github.com/qir-alliance/qir-spec/tree/main/specification) to Quantinuum QIS (Quantum Instruction Set). This tool enables quantum programs written in QIR to run on Quantinuum's quantum computing systems.
 
 ## Features
@@ -32,6 +35,14 @@ The compiled binary will be available at `target/release/qir-qis`.
 
 - Python >= 3.10, < 3.15
 - [uv](https://github.com/astral-sh/uv) (recommended) or pip
+
+**Available pre-built wheels:**
+
+- **Linux**: x86_64 (manylinux_2_28), aarch64 (manylinux_2_28)
+- **macOS**: x86_64, arm64 (Apple Silicon)
+- **Windows**: x86_64
+
+All wheels support Python 3.10+ using the stable ABI (abi3).
 
 ```sh
 # Using uv (recommended)
