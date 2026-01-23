@@ -79,27 +79,17 @@ test-command = [
 
 [tool.cibuildwheel.linux]
 environment = {PATH = '$HOME/.cargo/bin:/tmp/llvm/bin:$PATH', LLVM_SYS_140_PREFIX = '/tmp/llvm'}
+before-all = [
+    'curl -sSf https://sh.rustup.rs | sh -s -- -y',
+    'dnf install libffi-devel -y',
+    'if [ "$(uname -m)" = "aarch64" ]; then LLVM_ARCH_SUFFIX=aarch64-linux-gnu; else LLVM_ARCH_SUFFIX=x86_64-linux-gnu-rhel-8.4; fi',
+    'curl -LO "https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-${LLVM_ARCH_SUFFIX}.tar.xz"',
+    'mkdir -p /tmp/llvm',
+    'tar xf "clang+llvm-14.0.6-${LLVM_ARCH_SUFFIX}.tar.xz" -C /tmp/llvm --strip-components=1',
+]
 repair-wheel-command = [
     'auditwheel repair -w {dest_dir} {wheel}',
     'uvx abi3audit --strict --report {wheel}',
-]
-
-[tool.cibuildwheel.manylinux_x86_64]
-before-all = [
-    'curl -sSf https://sh.rustup.rs | sh -s -- -y',
-    'dnf install libffi-devel -y',
-    'curl -LO https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz',
-    'mkdir -p /tmp/llvm',
-    'tar xf clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz -C /tmp/llvm --strip-components=1',
-]
-
-[tool.cibuildwheel.manylinux_aarch64]
-before-all = [
-    'curl -sSf https://sh.rustup.rs | sh -s -- -y',
-    'dnf install libffi-devel -y',
-    'curl -LO https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-aarch64-linux-gnu.tar.xz',
-    'mkdir -p /tmp/llvm',
-    'tar xf clang+llvm-14.0.6-aarch64-linux-gnu.tar.xz -C /tmp/llvm --strip-components=1',
 ]
 
 [tool.cibuildwheel.macos.environment]
