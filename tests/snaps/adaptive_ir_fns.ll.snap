@@ -14,8 +14,8 @@ target triple = "aarch64-unknown-linux-gnu"
 @res_0 = private constant [17 x i8] c"\10USER:RESULT:0_t0"
 @res_1 = private constant [17 x i8] c"\10USER:RESULT:0_t1"
 @res_2.9 = private constant [14 x i8] c"\0DUSER:INT:int2"
-@gen_name = global [7 x i8] c"qir-qis", section ",generator"
-@gen_version = global [5 x i8] c"0.0.0", section ",generator"
+@gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
+@gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
 define void @swap(%Qubit* %arg1, %Qubit* %arg2) local_unnamed_addr {
   %idx.i = ptrtoint %Qubit* %arg2 to i64

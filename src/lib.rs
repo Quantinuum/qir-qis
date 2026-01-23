@@ -49,7 +49,7 @@ pub mod decompose;
 pub mod opt;
 pub mod utils;
 
-mod aux {
+pub mod aux {
     use std::collections::{BTreeMap, HashMap};
 
     use crate::{
@@ -277,7 +277,7 @@ mod aux {
     }
 
     /// Primary translation loop over the entry function for translation to QIS.
-    pub fn process_entry_function<'ctx>(
+    pub(crate) fn process_entry_function<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
         entry_fn: FunctionValue<'ctx>,
@@ -981,8 +981,6 @@ pub fn qir_to_qis(
     // Handle IR defined functions that take qubits
     process_ir_defined_q_fns(&ctx, &module, entry_fn)?;
 
-    // No channel management in core: external calls are generic and stateless
-
     free_all_qubits(&ctx, &module, entry_fn, qubit_array)?;
 
     // Add qmain wrapper that calls setup, entry function, and teardown
@@ -991,8 +989,6 @@ pub fn qir_to_qis(
     module
         .verify()
         .map_err(|e| format!("LLVM module verification failed: {e}"))?;
-
-    optimize(&module, opt_level, target)?;
 
     // Clean up the translated module
     for attr in get_string_attrs(entry_fn) {
@@ -1015,13 +1011,18 @@ pub fn qir_to_qis(
     add_generator_metadata(&ctx, &module, "gen_name", env!("CARGO_PKG_NAME"))?;
     add_generator_metadata(&ctx, &module, "gen_version", env!("CARGO_PKG_VERSION"))?;
 
+    optimize(&module, opt_level, target)?;
+
     Ok(module.write_bitcode_to_memory().as_slice().to_vec())
 }
 
+/// Extract WASM function mapping from the given WASM bytes.
+///
+/// # Errors
+/// Returns an error string if parsing fails.
 #[cfg(feature = "wasm")]
-fn get_wasm_functions(
+pub fn get_wasm_functions(
     wasm_bytes: Option<&[u8]>,
-    _errors: &mut Vec<String>,
 ) -> Result<std::collections::BTreeMap<String, u64>, String> {
     use crate::utils::parse_wasm_functions;
     use std::collections::BTreeMap;
@@ -1037,7 +1038,6 @@ fn get_wasm_functions(
 #[cfg(not(feature = "wasm"))]
 fn get_wasm_functions(
     _wasm_bytes: Option<&[u8]>,
-    _errors: &mut Vec<String>,
 ) -> Result<std::collections::BTreeMap<String, u64>, String> {
     Ok(std::collections::BTreeMap::new())
 }
@@ -1104,7 +1104,7 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
         return Err(errors.join("; "));
     };
 
-    let wasm_fns = get_wasm_functions(wasm_bytes, &mut errors)?;
+    let wasm_fns = get_wasm_functions(wasm_bytes)?;
 
     validate_functions(&module, entry_fn, &wasm_fns, &mut errors);
 
