@@ -922,10 +922,7 @@ mod aux {
     }
 }
 
-/// Core QIR to QIS translation logic without `PyO3` dependencies.
-///
-/// This function can be imported by other crates that need to use the translation
-/// logic without depending on `PyO3`.
+/// Core QIR to QIS translation logic.
 ///
 /// # Arguments
 /// - `bc_bytes` - The QIR bytes to translate.
@@ -1021,8 +1018,6 @@ pub fn qir_to_qis_core(
     Ok(module.write_bitcode_to_memory().as_slice().to_vec())
 }
 
-// Core Rust API functions (without PyO3 dependencies)
-
 #[cfg(feature = "wasm")]
 fn get_wasm_functions(
     wasm_bytes: Option<&[u8]>,
@@ -1048,8 +1043,6 @@ fn get_wasm_functions(
 }
 
 /// Validate the given QIR bitcode.
-///
-/// This is the core validation logic that can be used without `PyO3` dependencies.
 ///
 /// # Arguments
 /// - `bc_bytes` - The QIR bytes to validate.
@@ -1125,8 +1118,6 @@ pub fn validate_qir_core(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(
 }
 
 /// Convert QIR LLVM IR text to QIR bitcode bytes.
-///
-/// This is the core conversion logic that can be used without `PyO3` dependencies.
 ///
 /// # Errors
 /// Returns an error string if the LLVM IR is invalid.
@@ -1237,7 +1228,7 @@ pub mod qir_qis {
     #[gen_stub_pyfunction]
     #[pyfunction]
     #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (bc_bytes, wasm_bytes = None))]
+    #[pyo3(signature = (bc_bytes, *, wasm_bytes = None))]
     pub fn validate_qir(bc_bytes: Cow<[u8]>, wasm_bytes: Option<Cow<[u8]>>) -> PyResult<()> {
         crate::validate_qir_core(&bc_bytes, wasm_bytes.as_deref())
             .map_err(PyErr::new::<ValidationError, _>)

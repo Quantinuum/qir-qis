@@ -1025,7 +1025,6 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use inkwell::{types::AnyType, values::BasicValue};
-    use pyo3::Python;
     use rstest::rstest;
 
     use std::fs;
@@ -1534,8 +1533,6 @@ mod tests {
 
         let qir_bytes = fs::read(&bc_path).expect("Failed to read input file");
 
-        Python::initialize();
-
         assert!(qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).is_err());
 
         if bc_path.exists() {
@@ -1549,8 +1546,6 @@ mod tests {
         let bc_path = get_bc(ll_path);
 
         let qir_bytes = fs::read(&bc_path).expect("Failed to read input file");
-
-        Python::initialize();
 
         assert!(qir_qis::validate_qir(qir_bytes.clone().into(), None).is_err());
         assert!(qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).is_err());
@@ -1566,8 +1561,6 @@ mod tests {
         let bc_path = get_bc(ll_path);
 
         let qir_bytes = fs::read(&bc_path).expect("Failed to read input file");
-
-        Python::initialize();
 
         assert!(qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).is_err());
 
@@ -1631,8 +1624,6 @@ mod tests {
 
         // Run the main function
         let qir_bytes = fs::read(&bc_path).expect("Failed to read input file");
-
-        Python::initialize();
 
         let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).unwrap();
 
