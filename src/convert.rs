@@ -1647,8 +1647,8 @@ mod tests {
 
         settings.bind(|| {
             insta::with_settings!({filters => vec![
-                (r#"@gen_version = global \[[0-9]+ x i8\] c"[^"]+", section ",generator""#,
-                  r#"@gen_version = global [5 x i8] c"0.0.0", section ",generator""#),
+                (r#"@gen_version = local_unnamed_addr global \[[0-9]+ x i8\] c"[^"]+", section ",generator""#,
+                  r#"@gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator""#),
             ]}, {
                 insta::assert_snapshot!(filename, qis_text.unwrap().to_string());
             });

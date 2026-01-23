@@ -13,8 +13,8 @@ target triple = "aarch64-unknown-linux-gnu"
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
 @res_0 = private constant [17 x i8] c"\10USER:RESULT:0_t0"
 @res_1 = private constant [17 x i8] c"\10USER:RESULT:0_t1"
-@gen_name = global [7 x i8] c"qir-qis", section ",generator"
-@gen_version = global [5 x i8] c"0.0.0", section ",generator"
+@gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
+@gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
 define i64 @___user_qir_TeleportChain() local_unnamed_addr {
 entry:

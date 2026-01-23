@@ -990,8 +990,6 @@ pub fn qir_to_qis(
         .verify()
         .map_err(|e| format!("LLVM module verification failed: {e}"))?;
 
-    optimize(&module, opt_level, target)?;
-
     // Clean up the translated module
     for attr in get_string_attrs(entry_fn) {
         let kind_id = attr
@@ -1012,6 +1010,8 @@ pub fn qir_to_qis(
         .map_err(|e| format!("Failed to add global metadata: {e}"))?;
     add_generator_metadata(&ctx, &module, "gen_name", env!("CARGO_PKG_NAME"))?;
     add_generator_metadata(&ctx, &module, "gen_version", env!("CARGO_PKG_VERSION"))?;
+
+    optimize(&module, opt_level, target)?;
 
     Ok(module.write_bitcode_to_memory().as_slice().to_vec())
 }

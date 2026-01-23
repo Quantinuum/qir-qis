@@ -11,8 +11,8 @@ target triple = "aarch64-unknown-linux-gnu"
 
 @qis_qs = private unnamed_addr global [1 x i64] zeroinitializer
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
-@gen_name = global [7 x i8] c"qir-qis", section ",generator"
-@gen_version = global [5 x i8] c"0.0.0", section ",generator"
+@gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
+@gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
 ; Function Attrs: noreturn
 define i64 @___user_qir_bad_loop() local_unnamed_addr #0 {

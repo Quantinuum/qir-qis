@@ -22,8 +22,8 @@ target triple = "aarch64-unknown-linux-gnu"
 @res_i0.11 = private constant [12 x i8] c"\0BUSER:INT:i0"
 @res_i1.12 = private constant [12 x i8] c"\0BUSER:INT:i1"
 @res_f0.13 = private constant [14 x i8] c"\0DUSER:FLOAT:f0"
-@gen_name = global [7 x i8] c"qir-qis", section ",generator"
-@gen_version = global [5 x i8] c"0.0.0", section ",generator"
+@gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
+@gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
 define void @___user_qir_ENTRYPOINT__main() local_unnamed_addr {
 block_0:
