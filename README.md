@@ -233,7 +233,6 @@ Contributions are welcome! Please read [CONTRIBUTING.md](https://github.com/quan
 - [ ] Tests pass: `make test`
 - [ ] Linters pass: `make lint`
 - [ ] Documentation updated
-- [ ] [CHANGELOG.md](https://github.com/quantinuum/qir-qis/blob/main/CHANGELOG.md) updated
 
 ## License
 

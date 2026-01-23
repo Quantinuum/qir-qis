@@ -24,15 +24,13 @@ Before creating an issue, check existing ones to avoid duplicates. Include:
 2. Make your changes following our standards (see below)
 3. Add tests for new functionality
 4. Run `make test` and `make lint` - both must pass
-5. Update [CHANGELOG.md](CHANGELOG.md) under "Unreleased"
-6. Submit PR with clear description and reference relevant issues
+5. Submit PR with clear description and reference relevant issues
 
 **PR Checklist:**
 
 - [ ] Tests pass (`make test`)
 - [ ] Linters pass (`make lint`)
 - [ ] Documentation updated (README, API docs, qtm-qir-reference.md if needed)
-- [ ] CHANGELOG.md updated
 - [ ] Python stubs regenerated if API changed (`make stubs`)
 
 ## Coding Standards
@@ -91,11 +89,22 @@ Always add tests for new features and ensure all tests pass before submitting a 
 
 (For maintainers)
 
-1. Update versions in `Cargo.toml` and `pyproject.toml`
-2. Move "Unreleased" section to new version in [CHANGELOG.md](CHANGELOG.md)
-3. Tag release: `git tag -a vX.Y.Z -m "Release vX.Y.Z"`
-4. Push tag: `git push origin vX.Y.Z`
-5. CI will automatically build and publish
+Releases are automated using [Release Please](https://github.com/googleapis/release-please):
+
+1. **Make changes** following [Conventional Commits](https://www.conventionalcommits.org/) format.
+
+2. **Merge PRs to main** - Release Please will automatically:
+   - Create/update a release PR with:
+     - Updated `CHANGELOG.md`
+     - Updated `Cargo.toml` version
+     - Updated `.release-please-manifest.json`
+
+3. **Review and merge the release PR** - This triggers:
+   - GitHub release creation with tag `vX.Y.Z`
+   - Automatic publishing to [crates.io](https://crates.io/crates/qir-qis)
+   - Automatic publishing to [PyPI](https://pypi.org/project/qir-qis/)
+
+No manual version bumping or tagging needed!
 
 ## Code of Conduct
 
