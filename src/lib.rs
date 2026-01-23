@@ -932,7 +932,7 @@ mod aux {
 ///
 /// # Errors
 /// Returns an error string if the translation fails.
-pub fn qir_to_qis_core(
+pub fn qir_to_qis(
     bc_bytes: &[u8],
     opt_level: u32,
     target: &str,
@@ -1050,7 +1050,7 @@ fn get_wasm_functions(
 ///
 /// # Errors
 /// Returns an error string if validation fails.
-pub fn validate_qir_core(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), String> {
+pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), String> {
     use crate::{
         aux::{validate_functions, validate_module_flags, validate_module_layout_and_triple},
         convert::find_entry_function,
@@ -1121,7 +1121,7 @@ pub fn validate_qir_core(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(
 ///
 /// # Errors
 /// Returns an error string if the LLVM IR is invalid.
-pub fn qir_ll_to_bc_core(ll_text: &str) -> Result<Vec<u8>, String> {
+pub fn qir_ll_to_bc(ll_text: &str) -> Result<Vec<u8>, String> {
     use inkwell::{context::Context, memory_buffer::MemoryBuffer};
 
     let ctx = Context::create();
@@ -1136,11 +1136,11 @@ pub fn qir_ll_to_bc_core(ll_text: &str) -> Result<Vec<u8>, String> {
 /// Get QIR entry point function attributes.
 ///
 /// These attributes are used to generate METADATA records in QIR output schemas.
-/// This function assumes that QIR has been validated using `validate_qir_core`.
+/// This function assumes that QIR has been validated using `validate_qir`.
 ///
 /// # Errors
 /// Returns an error string if the input bitcode is invalid.
-pub fn get_entry_attributes_core(
+pub fn get_entry_attributes(
     bc_bytes: &[u8],
 ) -> Result<std::collections::BTreeMap<String, Option<String>>, String> {
     use crate::convert::{find_entry_function, get_string_attrs};
@@ -1230,7 +1230,7 @@ pub mod qir_qis {
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (bc_bytes, *, wasm_bytes = None))]
     pub fn validate_qir(bc_bytes: Cow<[u8]>, wasm_bytes: Option<Cow<[u8]>>) -> PyResult<()> {
-        crate::validate_qir_core(&bc_bytes, wasm_bytes.as_deref())
+        crate::validate_qir(&bc_bytes, wasm_bytes.as_deref())
             .map_err(PyErr::new::<ValidationError, _>)
     }
 
@@ -1255,7 +1255,7 @@ pub mod qir_qis {
         target: &'a str,
         wasm_bytes: Option<Cow<'a, [u8]>>,
     ) -> PyResult<Cow<'a, [u8]>> {
-        let result = crate::qir_to_qis_core(&bc_bytes, opt_level, target, wasm_bytes.as_deref())
+        let result = crate::qir_to_qis(&bc_bytes, opt_level, target, wasm_bytes.as_deref())
             .map_err(PyErr::new::<CompilerError, _>)?;
 
         Ok(result.into())
@@ -1268,7 +1268,7 @@ pub mod qir_qis {
     #[gen_stub_pyfunction]
     #[pyfunction]
     pub fn qir_ll_to_bc(ll_text: &str) -> PyResult<Cow<'_, [u8]>> {
-        let result = crate::qir_ll_to_bc_core(ll_text).map_err(PyErr::new::<ValidationError, _>)?;
+        let result = crate::qir_ll_to_bc(ll_text).map_err(PyErr::new::<ValidationError, _>)?;
         Ok(result.into())
     }
 
@@ -1283,7 +1283,7 @@ pub mod qir_qis {
     #[pyfunction]
     #[allow(clippy::needless_pass_by_value)]
     pub fn get_entry_attributes(bc_bytes: Cow<[u8]>) -> PyResult<BTreeMap<String, Option<String>>> {
-        crate::get_entry_attributes_core(&bc_bytes).map_err(PyErr::new::<ValidationError, _>)
+        crate::get_entry_attributes(&bc_bytes).map_err(PyErr::new::<ValidationError, _>)
     }
 }
 

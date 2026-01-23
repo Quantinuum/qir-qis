@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::exit;
 
-use qir_qis::{get_entry_attributes_core, qir_ll_to_bc_core, qir_to_qis_core, validate_qir_core};
+use qir_qis::{get_entry_attributes, qir_ll_to_bc, qir_to_qis, validate_qir};
 
 use bpaf::Bpaf;
 
@@ -32,15 +32,15 @@ fn main() {
     let ll_path = Path::new(&args.ll_path);
     let ll_text = fs::read_to_string(ll_path).expect("Failed to read input file");
 
-    let bc_bytes = qir_ll_to_bc_core(&ll_text).unwrap();
-    if let Err(err) = validate_qir_core(&bc_bytes, None) {
+    let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
+    if let Err(err) = validate_qir(&bc_bytes, None) {
         eprintln!("QIR validation failed: {err:?}");
         exit(1);
     }
 
-    println!("{:#?}", get_entry_attributes_core(&bc_bytes));
+    println!("{:#?}", get_entry_attributes(&bc_bytes));
 
-    let qis_module = qir_to_qis_core(&bc_bytes, args.opt_level, &args.target, None).unwrap();
+    let qis_module = qir_to_qis(&bc_bytes, args.opt_level, &args.target, None).unwrap();
     let qis_path = ll_path.with_extension("qis.bc");
     fs::write(&qis_path, qis_module).expect("Failed to write output file");
 }
