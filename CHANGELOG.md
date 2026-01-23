@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * remove `_core` from Rust API ([#14](https://github.com/Quantinuum/qir-qis/issues/14)) ([c9f3b16](https://github.com/Quantinuum/qir-qis/commit/c9f3b160f052539e169523625ce89f5d090fb1e3))
 
-## [Unreleased]
-
 ## [0.1.0] - 2026-01-22
 
 ### Added
@@ -37,5 +35,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI/CD pipeline with GitHub Actions
 - Documentation and examples
 
-[unreleased]: https://github.com/quantinuum/qir-qis/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/quantinuum/qir-qis/releases/tag/v0.1.0
