@@ -5,8 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
 ## [0.1.0] - 2026-01-22
 
 ### Added
@@ -30,5 +28,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI/CD pipeline with GitHub Actions
 - Documentation and examples
 
-[unreleased]: https://github.com/quantinuum/qir-qis/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/quantinuum/qir-qis/releases/tag/v0.1.0
