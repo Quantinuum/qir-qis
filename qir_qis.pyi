@@ -2,6 +2,15 @@
 
 import builtins
 
+__all__ = [
+    "CompilerError",
+    "ValidationError",
+    "get_entry_attributes",
+    "qir_ll_to_bc",
+    "qir_to_qis",
+    "validate_qir",
+]
+
 class CompilerError(builtins.Exception):
     r"""QIR CompilerError.
 
