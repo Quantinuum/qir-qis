@@ -18,10 +18,10 @@ use inkwell::values::{
 
 use crate::decompose::QirTypes;
 
-pub const RESULT_TAG: &str = "USER";
 pub const INIT_QARRAY_FN: &str = "qir_qis.init_qubit";
 pub const LOAD_QUBIT_FN: &str = "qir_qis.load_qubit";
 const EXIT_CODE: u64 = 1001;
+const RESULT_TAG: &str = "USER";
 
 /// Checks if the given type is an i8 array type.
 fn is_i8_array_type(ty: AnyTypeEnum) -> bool {
@@ -551,7 +551,7 @@ pub fn add_qmain_wrapper<'ctx>(
 ///
 /// # Errors
 /// Returns an error if the replacement fails.
-pub fn replace_native_call<'ctx, F>(
+fn replace_native_call<'ctx, F>(
     context: &'ctx Context,
     module: &Module<'ctx>,
     old_call: InstructionValue<'ctx>,
@@ -761,7 +761,7 @@ pub fn get_index(arg: PointerValue) -> Result<u64, String> {
 }
 
 /// Creates a call to the `___qfree` function.
-pub fn create_qfree_call<'ctx>(
+fn create_qfree_call<'ctx>(
     context: &'ctx Context,
     module: &Module<'ctx>,
     builder: &Builder,
