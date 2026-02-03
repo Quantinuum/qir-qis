@@ -14,10 +14,10 @@ static TARGET_INIT: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(||
     Mutex::new(())
 });
 
-pub type TargetConfig<'a> = (&'a str, &'a str, &'a str, &'a str);
+type TargetConfig<'a> = (&'a str, &'a str, &'a str, &'a str);
 
 /// Default config for `AArch64` codegen target
-pub const AARCH64_CONFIG: TargetConfig = (
+const AARCH64_CONFIG: TargetConfig = (
     "aarch64",
     "cortex-a53",
     "aarch64-unknown-linux-gnu",
@@ -25,10 +25,10 @@ pub const AARCH64_CONFIG: TargetConfig = (
 );
 
 /// Default config for x86-64 codegen target
-pub const X86_CONFIG: TargetConfig = ("x86-64", "x86-64", "x86_64-unknown-linux-gnu", "");
+const X86_CONFIG: TargetConfig = ("x86-64", "x86-64", "x86_64-unknown-linux-gnu", "");
 
 /// Sentinel config for native codegen target
-pub const NATIVE_CONFIG: TargetConfig = ("", "", "", "");
+const NATIVE_CONFIG: TargetConfig = ("", "", "", "");
 
 fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<TargetMachine, String> {
     // Ensure targets are initialized

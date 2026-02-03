@@ -45,11 +45,11 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
 
 pub mod convert;
-pub mod decompose;
+mod decompose;
 pub mod opt;
-pub mod utils;
+mod utils;
 
-pub mod aux {
+mod aux {
     use std::collections::{BTreeMap, HashMap};
 
     use crate::{
@@ -277,7 +277,7 @@ pub mod aux {
     }
 
     /// Primary translation loop over the entry function for translation to QIS.
-    pub(crate) fn process_entry_function<'ctx>(
+    pub fn process_entry_function<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
         entry_fn: FunctionValue<'ctx>,
@@ -1201,7 +1201,7 @@ mod exceptions {
 
 #[cfg(feature = "python")]
 #[pymodule]
-pub mod qir_qis {
+mod qir_qis {
     use std::borrow::Cow;
     use std::collections::BTreeMap;
 
@@ -1267,7 +1267,7 @@ pub mod qir_qis {
     /// Returns a `ValidationError` if the LLVM IR is invalid.
     #[gen_stub_pyfunction]
     #[pyfunction]
-    pub fn qir_ll_to_bc(ll_text: &str) -> PyResult<Cow<'_, [u8]>> {
+    fn qir_ll_to_bc(ll_text: &str) -> PyResult<Cow<'_, [u8]>> {
         let result = crate::qir_ll_to_bc(ll_text).map_err(PyErr::new::<ValidationError, _>)?;
         Ok(result.into())
     }
@@ -1282,7 +1282,7 @@ pub mod qir_qis {
     #[gen_stub_pyfunction]
     #[pyfunction]
     #[allow(clippy::needless_pass_by_value)]
-    pub fn get_entry_attributes(bc_bytes: Cow<[u8]>) -> PyResult<BTreeMap<String, Option<String>>> {
+    fn get_entry_attributes(bc_bytes: Cow<[u8]>) -> PyResult<BTreeMap<String, Option<String>>> {
         crate::get_entry_attributes(&bc_bytes).map_err(PyErr::new::<ValidationError, _>)
     }
 }
@@ -1294,14 +1294,14 @@ define_stub_info_gatherer!(stub_info);
 mod test {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    use super::qir_qis::*;
+    use crate::{get_entry_attributes, qir_ll_to_bc};
 
     #[test]
     fn test_get_entry_attributes() {
         let ll_text = std::fs::read_to_string("tests/data/base-attrs.ll")
             .expect("Failed to read base-attrs.ll");
         let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
-        let attrs = get_entry_attributes(bc_bytes).unwrap();
+        let attrs = get_entry_attributes(&bc_bytes).unwrap();
         assert!(matches!(attrs.get("entry_point"), Some(None)));
         assert_eq!(
             attrs.get("qir_profiles"),

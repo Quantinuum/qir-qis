@@ -42,4 +42,4 @@ qis_bytes = qir_to_qis(
 with Path("output.qis.bc").open("wb") as f:
     f.write(qis_bytes)
 
-print("Successfully compiled to output.qis.bc")
+print("Successfully compiled to output.qis.bc")  # noqa: T201
