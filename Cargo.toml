@@ -31,11 +31,13 @@ env_logger = "0.11"
 inkwell = { version = "0.8", features = ["llvm14-0"] }
 llvm-sys = "140"
 log = "0.4"
-pyo3 = { version = "0.27", features = [
+pyo3 = { version = "0.28", features = [
     "abi3-py310",
     "anyhow",
 ], optional = true }
-pyo3-stub-gen = { version = "0.18", optional = true }
+pyo3-stub-gen = { version = "0.18", optional = true, features = [
+    "infer_signature",
+], default-features = false }
 rstest = "0.26"
 wasmparser = { version = "0.244", optional = true }
 
