@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2](https://github.com/Quantinuum/qir-qis/compare/v0.1.1...v0.1.2) (2026-02-04)
+
+
+### Bug Fixes
+
+* **rust API:** update deps ([#20](https://github.com/Quantinuum/qir-qis/issues/20)) ([c74f764](https://github.com/Quantinuum/qir-qis/commit/c74f764fd20c6b729ff08f3cdd01f1e3be84c240)), closes [#18](https://github.com/Quantinuum/qir-qis/issues/18)
+
 ## [0.1.1](https://github.com/Quantinuum/qir-qis/compare/v0.1.0...v0.1.1) (2026-01-23)
 
 
