@@ -39,7 +39,7 @@ pyo3-stub-gen = { version = "0.18", optional = true, features = [
     "infer_signature",
 ], default-features = false }
 rstest = "0.26"
-wasmparser = { version = "0.244", optional = true }
+wasmparser = { version = "0.245", optional = true }
 
 [features]
 default = ["python"]
