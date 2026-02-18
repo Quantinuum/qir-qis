@@ -35,7 +35,7 @@ pyo3 = { version = "0.28", features = [
     "abi3-py310",
     "anyhow",
 ], optional = true }
-pyo3-stub-gen = { version = "0.18", optional = true, features = [
+pyo3-stub-gen = { version = "0.19", optional = true, features = [
     "infer_signature",
 ], default-features = false }
 rstest = "0.26"
