@@ -202,13 +202,7 @@ mod aux {
             let fn_name = fun.get_name().to_str().unwrap_or("");
             if fn_name.starts_with("__quantum__qis__") {
                 // Check for barrier instructions with arbitrary arity (barrier1, barrier2, ...)
-                let is_barrier = fn_name.starts_with("__quantum__qis__barrier")
-                    && fn_name.ends_with("__body")
-                    && fn_name
-                        .strip_prefix("__quantum__qis__barrier")
-                        .and_then(|s| s.strip_suffix("__body"))
-                        .and_then(|s| s.parse::<u32>().ok())
-                        .is_some_and(|n| n > 0);
+                let is_barrier = parse_barrier_arity(fn_name).is_ok();
 
                 if !is_barrier && !ALLOWED_QIS_FNS.contains(&fn_name) {
                     errors.push(format!("Unsupported QIR QIS function: {fn_name}"));
