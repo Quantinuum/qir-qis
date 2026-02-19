@@ -110,6 +110,21 @@ rz(-3π/4, %control2);
 rz(π/4, %control1);
 ```
 
+### Barrier Instructions
+
+Fixed-arity barrier intrinsics for synchronization:
+
+```llvm
+declare void @__quantum__qis__barrier1__body(%Qubit*)
+declare void @__quantum__qis__barrier2__body(%Qubit*, %Qubit*)
+declare void @__quantum__qis__barrier3__body(%Qubit*, %Qubit*, %Qubit*)
+; ... up to an implementation-defined maximum arity
+```
+
+where:
+
+`@__quantum__qis__barrier<n>__body(...)` is a barrier over exactly the `n` qubits passed as arguments.
+
 ## Runtime Functions
 
 See QIR [Adaptive Profile: §Runtime Functions](https://github.com/qir-alliance/qir-spec/blob/1.0/specification/profiles/Adaptive_Profile.md#runtime-functions)
