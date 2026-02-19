@@ -592,6 +592,7 @@ mod aux {
             .strip_prefix("__quantum__qis__barrier")
             .and_then(|s| s.strip_suffix("__body"))
             .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&n| n > 0)
             .ok_or_else(|| format!("Invalid barrier function name: {fn_name}"))
     }
 

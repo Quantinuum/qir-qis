@@ -1603,6 +1603,7 @@ mod tests {
     #[case("tests/data/base.ll")]
     #[case("tests/data/base_array.ll")]
     #[case("tests/data/barrier.ll")]
+    #[case("tests/data/barrier_multi.ll")]
     // Adaptive profile tests
     #[case("tests/data/adaptive.ll")]
     #[case("tests/data/adaptive_ir_fns.ll")]
