@@ -185,6 +185,17 @@ pub fn get_string_attrs(function: FunctionValue) -> Vec<Attribute> {
         .collect()
 }
 
+/// Extracts the `required_num_qubits` attribute from a function.
+///
+/// # Returns
+/// `Some(num_qubits)` if the attribute exists and can be parsed as a `u32`, otherwise `None`.
+#[must_use]
+pub fn get_required_num_qubits(function: FunctionValue) -> Option<u32> {
+    function
+        .get_string_attribute(AttributeLoc::Function, "required_num_qubits")
+        .and_then(|attr| attr.get_string_value().to_str().ok()?.parse::<u32>().ok())
+}
+
 /// Creates a global array of qubits and initializes them using `___qalloc` calls.
 /// The array is filled with qubit handles, and each qubit is reset using `___reset`.
 ///
@@ -198,10 +209,8 @@ pub fn create_qubit_array<'ctx>(
     entry_fn: FunctionValue,
 ) -> Result<PointerValue<'ctx>, String> {
     // 1. Extract `required_num_qubits` from function attributes
-    let num_qubits = entry_fn
-        .get_string_attribute(AttributeLoc::Function, "required_num_qubits")
-        .and_then(|attr| attr.get_string_value().to_str().ok()?.parse::<u32>().ok())
-        .ok_or("Missing required_num_qubits attribute")?;
+    let num_qubits =
+        get_required_num_qubits(entry_fn).ok_or("Missing required_num_qubits attribute")?;
 
     // 2. Create a global static array with dummy initializer
     let i64_type = ctx.i64_type();
@@ -1563,6 +1572,20 @@ mod tests {
         let qir_bytes = fs::read(&bc_path).expect("Failed to read input file");
 
         assert!(qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).is_err());
+
+        if bc_path.exists() {
+            let _ = std::fs::remove_file(&bc_path);
+        }
+    }
+
+    #[test]
+    fn test_barrier_invalid_fails_validation() {
+        let ll_path = Path::new("tests/data/bad/barrier_invalid.ll");
+        let bc_path = get_bc(ll_path);
+
+        let qir_bytes = fs::read(&bc_path).expect("Failed to read input file");
+
+        assert!(qir_qis::validate_qir(qir_bytes.into(), None).is_err());
 
         if bc_path.exists() {
             let _ = std::fs::remove_file(&bc_path);

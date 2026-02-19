@@ -55,9 +55,9 @@ mod aux {
     use crate::{
         convert::{
             INIT_QARRAY_FN, LOAD_QUBIT_FN, add_print_call, build_result_global, convert_globals,
-            create_reset_call, get_index, get_or_create_function, get_result_vars,
-            get_string_label, handle_tuple_or_array_output, parse_gep, record_classical_output,
-            replace_rxy_call, replace_rz_call, replace_rzz_call,
+            create_reset_call, get_index, get_or_create_function, get_required_num_qubits,
+            get_result_vars, get_string_label, handle_tuple_or_array_output, parse_gep,
+            record_classical_output, replace_rxy_call, replace_rz_call, replace_rzz_call,
         },
         utils::extract_operands,
     };
@@ -194,6 +194,9 @@ mod aux {
         _wasm_fns: &BTreeMap<String, u64>,
         errors: &mut Vec<String>,
     ) {
+        // Extract required_num_qubits for barrier validation
+        let required_num_qubits = get_required_num_qubits(entry_fn);
+
         for fun in module.get_functions() {
             if fun == entry_fn {
                 // Skip the entry function
@@ -202,7 +205,24 @@ mod aux {
             let fn_name = fun.get_name().to_str().unwrap_or("");
             if fn_name.starts_with("__quantum__qis__") {
                 // Check for barrier instructions with arbitrary arity (barrier1, barrier2, ...)
-                let is_barrier = parse_barrier_arity(fn_name).is_ok();
+                let is_barrier = if fn_name.starts_with("__quantum__qis__barrier")
+                    && fn_name.ends_with("__body")
+                {
+                    parse_barrier_arity(fn_name).is_ok_and(|arity| {
+                        // Validate barrier arity doesn't exceed module's required_num_qubits
+                        if let Some(max_qubits) = required_num_qubits
+                            && let Ok(arity_u32) = u32::try_from(arity)
+                            && arity_u32 > max_qubits
+                        {
+                            errors.push(format!(
+                "Barrier arity {arity} exceeds module's required_num_qubits ({max_qubits})"
+            ));
+                        }
+                        true
+                    })
+                } else {
+                    false
+                };
 
                 if !is_barrier && !ALLOWED_QIS_FNS.contains(&fn_name) {
                     errors.push(format!("Unsupported QIR QIS function: {fn_name}"));
