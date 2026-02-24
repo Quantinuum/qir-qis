@@ -55,9 +55,9 @@ mod aux {
     use crate::{
         convert::{
             INIT_QARRAY_FN, LOAD_QUBIT_FN, add_print_call, build_result_global, convert_globals,
-            create_reset_call, get_index, get_or_create_function, get_result_vars,
-            get_string_label, handle_tuple_or_array_output, parse_gep, record_classical_output,
-            replace_rxy_call, replace_rz_call, replace_rzz_call,
+            create_reset_call, get_index, get_or_create_function, get_required_num_qubits,
+            get_result_vars, get_string_label, handle_tuple_or_array_output, parse_gep,
+            record_classical_output, replace_rxy_call, replace_rz_call, replace_rzz_call,
         },
         utils::extract_operands,
     };
@@ -101,6 +101,7 @@ mod aux {
         "__quantum__qis__cx__body",
         "__quantum__qis__cnot__body",
         "__quantum__qis__ccx__body",
+        // Note: barrier instructions with arbitrary arity are validated separately
     ];
 
     static ALLOWED_RT_FNS: [&str; 8] = [
@@ -115,7 +116,7 @@ mod aux {
     ];
 
     #[cfg(feature = "wasm")]
-    static ALLOWED_QTM_FNS: [&str; 7] = [
+    static ALLOWED_QTM_FNS: [&str; 8] = [
         "___get_current_shot",
         "___random_seed",
         "___random_int",
@@ -123,16 +124,18 @@ mod aux {
         "___random_int_bounded",
         "___random_advance",
         "___get_wasm_context",
+        "___barrier",
     ];
 
     #[cfg(not(feature = "wasm"))]
-    static ALLOWED_QTM_FNS: [&str; 6] = [
+    static ALLOWED_QTM_FNS: [&str; 7] = [
         "___get_current_shot",
         "___random_seed",
         "___random_int",
         "___random_float",
         "___random_int_bounded",
         "___random_advance",
+        "___barrier",
     ];
 
     const REQ_FLAG_COUNT: usize = 4;
@@ -191,6 +194,9 @@ mod aux {
         _wasm_fns: &BTreeMap<String, u64>,
         errors: &mut Vec<String>,
     ) {
+        // Extract required_num_qubits for barrier validation
+        let required_num_qubits = get_required_num_qubits(entry_fn);
+
         for fun in module.get_functions() {
             if fun == entry_fn {
                 // Skip the entry function
@@ -198,7 +204,27 @@ mod aux {
             }
             let fn_name = fun.get_name().to_str().unwrap_or("");
             if fn_name.starts_with("__quantum__qis__") {
-                if !ALLOWED_QIS_FNS.contains(&fn_name) {
+                // Check for barrier instructions with arbitrary arity (barrier1, barrier2, ...)
+                let is_barrier = if fn_name.starts_with("__quantum__qis__barrier")
+                    && fn_name.ends_with("__body")
+                {
+                    parse_barrier_arity(fn_name).is_ok_and(|arity| {
+                        // Validate barrier arity doesn't exceed module's required_num_qubits
+                        if let Some(max_qubits) = required_num_qubits
+                            && let Ok(arity_u32) = u32::try_from(arity)
+                            && arity_u32 > max_qubits
+                        {
+                            errors.push(format!(
+                "Barrier arity {arity} exceeds module's required_num_qubits ({max_qubits})"
+            ));
+                        }
+                        true
+                    })
+                } else {
+                    false
+                };
+
+                if !is_barrier && !ALLOWED_QIS_FNS.contains(&fn_name) {
                     errors.push(format!("Unsupported QIR QIS function: {fn_name}"));
                 }
                 continue;
@@ -401,6 +427,9 @@ mod aux {
             "__quantum__qis__reset__body" => {
                 handle_reset_call(args)?;
             }
+            name if name.starts_with("__quantum__qis__barrier") && name.ends_with("__body") => {
+                handle_barrier_call(args)?;
+            }
             _ => return Err(format!("Unsupported QIR QIS function: {}", args.fn_name)),
         }
         Ok(())
@@ -567,6 +596,134 @@ mod aux {
 
         // Create ___reset call
         create_reset_call(ctx, module, &builder, q_handle);
+
+        instr.erase_from_basic_block();
+        Ok(())
+    }
+
+    fn parse_barrier_arity(fn_name: &str) -> Result<usize, String> {
+        fn_name
+            .strip_prefix("__quantum__qis__barrier")
+            .and_then(|s| s.strip_suffix("__body"))
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .ok_or_else(|| format!("Invalid barrier function name: {fn_name}"))
+    }
+
+    fn handle_barrier_call(args: &ProcessCallArgs) -> Result<(), String> {
+        let ProcessCallArgs {
+            ctx,
+            module,
+            instr,
+            fn_name,
+            ..
+        } = args;
+
+        let builder = ctx.create_builder();
+        builder.position_before(instr);
+
+        let num_qubits = parse_barrier_arity(fn_name)?;
+
+        // Extract qubit arguments (excluding the last operand which is the function pointer)
+        let all_operands: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let num_operands = all_operands
+            .len()
+            .checked_sub(1)
+            .ok_or("Expected at least one operand")?;
+
+        if num_operands != num_qubits {
+            return Err(format!(
+                "Barrier function {fn_name} expects {num_qubits} arguments, got {num_operands}"
+            ));
+        }
+
+        let call_args = &all_operands[..num_operands];
+
+        // Load qubit handles into an array
+        let i64_type = ctx.i64_type();
+        let array_type = i64_type.array_type(
+            u32::try_from(num_qubits).map_err(|e| format!("Failed to convert num_qubits: {e}"))?,
+        );
+        let array_alloca = builder
+            .build_alloca(array_type, "barrier_qubits")
+            .map_err(|e| format!("Failed to allocate array for barrier qubits: {e}"))?;
+
+        let idx_fn = module
+            .get_function(LOAD_QUBIT_FN)
+            .ok_or_else(|| format!("{LOAD_QUBIT_FN} not found"))?;
+
+        for (i, arg) in call_args.iter().enumerate() {
+            let qubit_ptr = arg.into_pointer_value();
+            let idx_call = builder
+                .build_call(idx_fn, &[qubit_ptr.into()], "qbit")
+                .map_err(|e| format!("Failed to build call to {LOAD_QUBIT_FN}: {e}"))?;
+            let q_handle = match idx_call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(bv) => bv,
+                inkwell::values::ValueKind::Instruction(_) => {
+                    return Err(format!(
+                        "Failed to get basic value from {LOAD_QUBIT_FN} call"
+                    ));
+                }
+            };
+
+            let elem_ptr = unsafe {
+                builder.build_gep(
+                    array_alloca,
+                    &[
+                        i64_type.const_zero(),
+                        i64_type.const_int(
+                            u64::try_from(i)
+                                .map_err(|e| format!("Failed to convert index: {e}"))?,
+                            false,
+                        ),
+                    ],
+                    "",
+                )
+            }
+            .map_err(|e| format!("Failed to build GEP for barrier array: {e}"))?;
+            builder
+                .build_store(elem_ptr, q_handle)
+                .map_err(|e| format!("Failed to store qubit handle in array: {e}"))?;
+        }
+
+        let array_ptr = unsafe {
+            builder.build_gep(
+                array_alloca,
+                &[i64_type.const_zero(), i64_type.const_zero()],
+                "barrier_array_ptr",
+            )
+        }
+        .map_err(|e| format!("Failed to build GEP for barrier array pointer: {e}"))?;
+
+        // void ___barrier(i64* %qbs, i64 %qbs_len)
+        let barrier_func = get_or_create_function(
+            module,
+            "___barrier",
+            ctx.void_type().fn_type(
+                &[
+                    i64_type.ptr_type(AddressSpace::default()).into(),
+                    i64_type.into(),
+                ],
+                false,
+            ),
+        );
+
+        builder
+            .build_call(
+                barrier_func,
+                &[
+                    array_ptr.into(),
+                    i64_type
+                        .const_int(
+                            u64::try_from(num_qubits)
+                                .map_err(|e| format!("Failed to convert num_qubits: {e}"))?,
+                            false,
+                        )
+                        .into(),
+                ],
+                "",
+            )
+            .map_err(|e| format!("Failed to build call to ___barrier: {e}"))?;
 
         instr.erase_from_basic_block();
         Ok(())
