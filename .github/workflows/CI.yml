@@ -26,6 +26,7 @@ jobs:
 
   test:
     strategy:
+      fail-fast: false
       matrix:
         os:
           - ubuntu-latest
@@ -58,6 +59,7 @@ jobs:
           mkdir -p /tmp/llvm
           tar xf "clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz" -C /tmp/llvm --strip-components=1
           echo "LLVM_SYS_140_PREFIX=/tmp/llvm" >>"$GITHUB_ENV"
+          echo "DYLD_FALLBACK_LIBRARY_PATH=/tmp/llvm/lib" >>"$GITHUB_ENV"
       - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
