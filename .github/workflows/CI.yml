@@ -75,7 +75,11 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: echo "/tmp/llvm/bin" >>"$GITHUB_PATH"
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: cargo nextest run --all-targets --all-features --test-threads=1
       - name: Test
+        if: runner.os != 'Windows'
         run: cargo nextest run --all-targets --all-features
 
   lint:
