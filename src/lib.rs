@@ -139,7 +139,7 @@ mod aux {
         "___barrier",
     ];
 
-    pub fn validate_module_layout_and_triple(_module: &Module) {
+    pub const fn validate_module_layout_and_triple(_module: &Module) {
         // Best-effort warning path only. Intentionally no-op to avoid touching
         // unstable LLVM getter APIs on some Windows environments.
     }
@@ -437,10 +437,7 @@ mod aux {
             "__quantum__rt__initialize" => {
                 args.instr.erase_from_basic_block();
             }
-            "__quantum__rt__read_result" => {
-                handle_read_result_call(args)?;
-            }
-            "__quantum__rt__result_record_output" => {
+            "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => {
                 handle_read_result_call(args)?;
             }
             "__quantum__rt__tuple_record_output" | "__quantum__rt__array_record_output" => {

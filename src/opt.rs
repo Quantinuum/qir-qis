@@ -51,20 +51,15 @@ fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<Targ
         let (cpu, features) = ("generic".to_string(), String::new());
         #[cfg(not(windows))]
         let (cpu, features) = (
-            TargetMachine::get_host_cpu_name().to_string_lossy().to_string(),
+            TargetMachine::get_host_cpu_name()
+                .to_string_lossy()
+                .to_string(),
             TargetMachine::get_host_cpu_features()
                 .to_string_lossy()
                 .to_string(),
         );
         Ok(target
-            .create_target_machine(
-                &triple,
-                &cpu,
-                &features,
-                opt_level,
-                reloc_mode,
-                code_model,
-            )
+            .create_target_machine(&triple, &cpu, &features, opt_level, reloc_mode, code_model)
             .ok_or("Failed to create target machine")?)
     } else {
         let (name, cpu, triple, features) = target_config;

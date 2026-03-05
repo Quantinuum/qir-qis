@@ -94,12 +94,12 @@ pub fn get_string_label(old_global: GlobalValue<'_>) -> Result<String, String> {
     }
 
     let mut len: usize = 0;
-    let ptr = unsafe { LLVMGetAsString(init_ref, &mut len) };
+    let ptr = unsafe { LLVMGetAsString(init_ref, &raw mut len) };
     if ptr.is_null() {
         return Err("LLVMGetAsString returned null pointer".to_string());
     }
 
-    let raw = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
+    let raw = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) };
     let until_nul = raw.split(|b| *b == 0).next().unwrap_or(raw);
     String::from_utf8(until_nul.to_vec())
         .map_err(|e| format!("Invalid UTF-8 in global initializer: {e}"))
@@ -123,11 +123,10 @@ pub fn build_result_global<'a>(
     let new_const = context.const_string(&new_cl_str_bytes, false);
 
     let new_name = if label.is_empty() {
-        if let Some(idx) = empty_tag_index {
-            format!("res_empty_tag.{idx}")
-        } else {
-            "res_empty_tag".to_string()
-        }
+        empty_tag_index.map_or_else(
+            || "res_empty_tag".to_string(),
+            |idx| format!("res_empty_tag.{idx}"),
+        )
     } else {
         format!("res_{}", sanitize_label_for_global_name(label))
     };
@@ -991,9 +990,9 @@ pub fn parse_gep(gep: BasicValueEnum) -> Result<String, String> {
                 let is_const_str = unsafe { LLVMIsConstantString(value_ref) } != 0;
                 if is_const_str {
                     let mut len: usize = 0;
-                    let str_ptr = unsafe { LLVMGetAsString(value_ref, &mut len) };
+                    let str_ptr = unsafe { LLVMGetAsString(value_ref, &raw mut len) };
                     if !str_ptr.is_null() && len > 0 {
-                        let raw = unsafe { std::slice::from_raw_parts(str_ptr as *const u8, len) };
+                        let raw = unsafe { std::slice::from_raw_parts(str_ptr.cast::<u8>(), len) };
                         let until_nul = raw.split(|b| *b == 0).next().unwrap_or(raw);
                         let label = std::str::from_utf8(until_nul)
                             .map_err(|e| format!("Invalid UTF-8 in constant string: {e}"))?;
@@ -1004,9 +1003,9 @@ pub fn parse_gep(gep: BasicValueEnum) -> Result<String, String> {
                 }
 
                 let mut len: usize = 0;
-                let name_ptr = unsafe { LLVMGetValueName2(value_ref, &mut len) };
+                let name_ptr = unsafe { LLVMGetValueName2(value_ref, &raw mut len) };
                 if !name_ptr.is_null() && len > 0 {
-                    let bytes = unsafe { std::slice::from_raw_parts(name_ptr as *const u8, len) };
+                    let bytes = unsafe { std::slice::from_raw_parts(name_ptr.cast::<u8>(), len) };
                     let name = std::str::from_utf8(bytes)
                         .map_err(|e| format!("Invalid UTF-8 in LLVM value name: {e}"))?;
                     if !name.is_empty() && !name.starts_with('%') {

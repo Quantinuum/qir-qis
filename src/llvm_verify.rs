@@ -12,7 +12,7 @@ pub fn verify_module(module: &Module, error_prefix: &str) -> Result<(), String> 
         LLVMVerifyModule(
             module.as_mut_ptr(),
             LLVMVerifierFailureAction::LLVMReturnStatusAction,
-            &mut err_ptr,
+            &raw mut err_ptr,
         )
     };
 
