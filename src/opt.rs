@@ -90,15 +90,6 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
         return Ok(());
     }
 
-    #[cfg(all(windows, target_arch = "aarch64"))]
-    if std::env::var_os("QIR_QIS_ENABLE_WINDOWS_OPTIMIZE").is_none() {
-        if trace_opt {
-            eprintln!("qir_qis.optimize: stage=skip_windows_aarch64_optimize");
-        }
-        let _ = (module, target);
-        return Ok(());
-    }
-
     let (opt, opt_str) = match opt_level {
         1 => (OptimizationLevel::Less, "default<O1>"),
         3 => (OptimizationLevel::Aggressive, "default<O3>"),

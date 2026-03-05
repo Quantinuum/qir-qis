@@ -107,7 +107,7 @@ repair-wheel-command = [
 
 [tool.cibuildwheel.windows]
 before-all = ['rustup update --no-self-update']
-environment = { PATH = "$LLVM_PATH/bin;$PATH", LLVM_SYS_211_PREFIX = "$LLVM_PATH", LLVM_PATH = "$LLVM_PATH", LLVM_CONFIG_PATH = "$LLVM_CONFIG_PATH", QIR_QIS_ENABLE_WINDOWS_OPTIMIZE = "1" }
+environment = { PATH = "$LLVM_PATH/bin;$PATH", LLVM_SYS_211_PREFIX = "$LLVM_PATH", LLVM_PATH = "$LLVM_PATH", LLVM_CONFIG_PATH = "$LLVM_CONFIG_PATH" }
 before-build = [
     'if "%LLVM_SYS_211_PREFIX%"=="" (echo LLVM_SYS_211_PREFIX is empty & set LLVM & where llvm-config & exit /b 1)',
     'if "%LLVM_CONFIG_PATH%"=="" (echo LLVM_CONFIG_PATH is empty & set LLVM & where llvm-config & exit /b 1)',
