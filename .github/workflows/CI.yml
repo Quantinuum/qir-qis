@@ -24,7 +24,68 @@ jobs:
       - uses: actions/checkout@v6
       - uses: crate-ci/typos@v1.42.0
 
-  test-lint:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            nextest_extra_args: ""
+          - os: windows-latest
+            nextest_extra_args: "--test-threads=1"
+          - os: macos-latest
+            nextest_extra_args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install LLVM (Linux)
+        if: runner.os == 'Linux'
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "14.0"
+          directory: ${{ runner.temp }}/llvm
+          env: True
+      - name: Configure LLVM (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: echo "LLVM_SYS_140_PREFIX=$LLVM_PATH" >>"$GITHUB_ENV"
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [ "$(uname -m)" = "arm64" ]; then
+            ARCH_PREFIX=arm64-apple-darwin22.3.0
+          else
+            ARCH_PREFIX=x86_64-apple-darwin
+          fi
+          curl -LO "https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz"
+          mkdir -p /tmp/llvm
+          tar xf "clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz" -C /tmp/llvm --strip-components=1
+          echo "/tmp/llvm/bin" >>"$GITHUB_PATH"
+          echo "LLVM_SYS_140_PREFIX=/tmp/llvm" >>"$GITHUB_ENV"
+          echo "DYLD_FALLBACK_LIBRARY_PATH=/tmp/llvm/lib" >>"$GITHUB_ENV"
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          curl -L -o LLVM-14.0.6-win64.7z https://github.com/PLC-lang/llvm-package-windows/releases/download/v14.0.6/LLVM-14.0.6-win64.7z
+          7z x LLVM-14.0.6-win64.7z "-oC:\LLVM" -y
+          "PATH=C:\LLVM\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LLVM_SYS_140_PREFIX=C:\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (Windows suite)
+        if: runner.os == 'Windows'
+        run: cargo nextest run --all-targets --all-features --test-threads=1 -E "not test(test_get_entry_attributes)"
+      - name: Test (Windows isolated get_entry_attributes)
+        if: runner.os == 'Windows'
+        run: cargo test --all-targets --all-features test_get_entry_attributes -- --test-threads=1
+      - name: Test
+        if: runner.os != 'Windows'
+        run: cargo nextest run --all-targets --all-features ${{ matrix.nextest_extra_args }}
+
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -34,16 +95,14 @@ jobs:
           version: "14.0"
           env: True
       - name: Configure LLVM
+        shell: bash
         run: echo "LLVM_SYS_140_PREFIX=$LLVM_PATH" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
       - name: Compile
         run: cargo check --locked
-      - name: Test
-        run: make test
       - name: Run cargo fmt (check if all code is rustfmt-ed)
         run: cargo fmt --all --check
       - name: Run cargo clippy (deny warnings)
