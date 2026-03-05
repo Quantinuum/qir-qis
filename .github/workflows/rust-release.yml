@@ -15,12 +15,12 @@ jobs:
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v2
         with:
-          version: "14.0"
+          version: "21.1.8"
           directory: ${{ runner.temp }}/llvm
           env: true
 
       - name: Configure LLVM
-        run: echo "LLVM_SYS_140_PREFIX=$LLVM_PATH" >> "$GITHUB_ENV"
+        run: echo "LLVM_SYS_211_PREFIX=$LLVM_PATH" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
 

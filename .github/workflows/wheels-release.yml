@@ -2,6 +2,8 @@ name: Wheels & Release
 
 on:
   push:
+    branches:
+      - feat-qir-2.0
     tags:
       - '*'
   workflow_dispatch:
@@ -11,11 +13,128 @@ jobs:
     name: ${{ matrix.os }} wheels
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        # macos-15-intel runners are x86_64
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
     steps:
       - uses: actions/checkout@v6
+
+      - name: Cache LLVM archive (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
+          key: llvm21-win-x64-tarball-v1
+
+      - name: Cache vcpkg libxml2 (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\downloads
+            C:\vcpkg\installed\x64-windows
+            C:\vcpkg\packages\libxml2_x64-windows
+          key: vcpkg-libxml2-x64-windows-v1
+
+      - name: Install LLVM (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $llvmRoot = Join-Path $env:RUNNER_TEMP "llvm21"
+          $extractDir = Join-Path $env:RUNNER_TEMP "llvm21-extract"
+          $archive = Join-Path $env:RUNNER_TEMP "clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz"
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/clang%2Bllvm-21.1.8-x86_64-pc-windows-msvc.tar.xz"
+
+          Remove-Item -Recurse -Force $llvmRoot, $extractDir -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $extractDir | Out-Null
+
+          if (!(Test-Path $archive)) {
+            Invoke-WebRequest -Uri $url -OutFile $archive
+          }
+          tar -xf $archive -C $extractDir
+
+          $expanded = Get-ChildItem $extractDir -Directory | Select-Object -First 1
+          if (-not $expanded) {
+            Write-Error "Failed to extract LLVM archive at $extractDir"
+            exit 1
+          }
+
+          Move-Item $expanded.FullName $llvmRoot
+
+      - name: Verify and export LLVM env (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $llvmRoot = Join-Path $env:RUNNER_TEMP "llvm21"
+          $llvmConfig = Join-Path $llvmRoot "bin\llvm-config.exe"
+          $llvmConfigFilter = Join-Path $llvmRoot "bin\llvm-config-filter.cmd"
+
+          if (!(Test-Path $llvmConfig)) {
+            Write-Error "llvm-config.exe missing at $llvmConfig"
+            exit 1
+          }
+
+          @'
+          @echo off
+          setlocal EnableDelayedExpansion
+          for /f "delims=" %%i in ('"%~dp0llvm-config.exe" %*') do (
+            set "line=%%i"
+            set "line=!line:libxml2s.lib=!"
+            echo(!line!
+          )
+          exit /b %ERRORLEVEL%
+          '@ | Out-File -FilePath $llvmConfigFilter -Encoding ascii
+
+          $xml2Static = Join-Path $llvmRoot "lib\libxml2s.lib"
+          if (!(Test-Path $xml2Static)) {
+            $vcpkgExe = "C:\vcpkg\vcpkg.exe"
+            $vcpkgXml2 = "C:\vcpkg\installed\x64-windows\lib\libxml2.lib"
+            if (Test-Path $vcpkgXml2) {
+              Copy-Item $vcpkgXml2 $xml2Static -Force
+              Write-Host "Created libxml2s.lib from cached vcpkg libxml2"
+            } elseif (Test-Path $vcpkgExe) {
+              & $vcpkgExe install libxml2:x64-windows
+              if (Test-Path $vcpkgXml2) {
+                Copy-Item $vcpkgXml2 $xml2Static -Force
+                Write-Host "Created libxml2s.lib from vcpkg libxml2"
+              }
+            }
+          }
+
+          if (!(Test-Path $xml2Static)) {
+            Write-Error "libxml2s.lib is missing and vcpkg fallback did not produce libxml2.lib"
+            exit 1
+          }
+
+          "LLVM_PATH=$llvmRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LLVM_SYS_211_PREFIX=$llvmRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LLVM_CONFIG_PATH=$llvmConfigFilter" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Set up Docker Buildx
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build custom manylinux image (x86_64)
+        if: matrix.os == 'ubuntu-latest'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .github/manylinux/Dockerfile.manylinux-2_34-x86_64
+          tags: qir-qis-manylinux_2_34_x86_64
+          load: true
+          cache-from: type=gha,scope=manylinux-x86
+          cache-to: type=gha,scope=manylinux-x86,mode=min
+
+      - name: Build custom manylinux image (aarch64)
+        if: matrix.os == 'ubuntu-24.04-arm'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .github/manylinux/Dockerfile.manylinux-2_34-aarch64
+          tags: qir-qis-manylinux_2_34_aarch64
+          load: true
+          cache-from: type=gha,scope=manylinux-arm64
+          cache-to: type=gha,scope=manylinux-arm64,mode=min
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
