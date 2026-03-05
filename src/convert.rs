@@ -42,6 +42,7 @@ fn translate_global<'ctx>(
     module: &Module<'ctx>,
     old_global: GlobalValue,
     global_mapping: &mut HashMap<String, GlobalValue<'ctx>>,
+    empty_tag_counter: &mut usize,
 ) -> Result<(), String> {
     // 1. Extract original string
     let label = get_string_label(old_global)?;
@@ -57,7 +58,15 @@ fn translate_global<'ctx>(
     } else {
         old_global_name.clone()
     };
-    let (new_const, new_name) = build_result_global(context, &label, &old_global_name, "RESULT")?;
+    let empty_tag_index = if label.is_empty() {
+        let idx = *empty_tag_counter;
+        *empty_tag_counter = empty_tag_counter.saturating_add(1);
+        Some(idx)
+    } else {
+        None
+    };
+    let (new_const, new_name) =
+        build_result_global(context, &label, &old_global_name, "RESULT", empty_tag_index)?;
     let new_global = module.add_global(new_const.get_type(), None, &new_name);
     new_global.set_initializer(&new_const);
     new_global.set_linkage(Linkage::Private);
@@ -106,15 +115,36 @@ pub fn get_string_label(old_global: GlobalValue<'_>) -> Result<String, String> {
 pub fn build_result_global<'a>(
     context: &'a Context,
     label: &str,
-    old_name: &str,
+    _old_name: &str,
     ty: &str,
+    empty_tag_index: Option<usize>,
 ) -> Result<(ArrayValue<'a>, String), String> {
     let new_cl_str_bytes = create_cl_str(RESULT_TAG, ty, label)?;
     let new_const = context.const_string(&new_cl_str_bytes, false);
 
-    // Create new global variable
-    let new_name = format!("res_{old_name}");
+    let new_name = if label.is_empty() {
+        if let Some(idx) = empty_tag_index {
+            format!("res_empty_tag.{idx}")
+        } else {
+            "res_empty_tag".to_string()
+        }
+    } else {
+        format!("res_{}", sanitize_label_for_global_name(label))
+    };
     Ok((new_const, new_name))
+}
+
+fn sanitize_label_for_global_name(label: &str) -> String {
+    label
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// Creates a CL string in the format "TAG:TYPE:LABEL" with a length prefix.
@@ -153,8 +183,15 @@ pub fn convert_globals<'ctx>(
         .collect();
 
     let mut global_mapping: HashMap<String, GlobalValue> = HashMap::new();
+    let mut empty_tag_counter: usize = 0;
     for old_global in old_globals {
-        translate_global(context, module, old_global, &mut global_mapping)?;
+        translate_global(
+            context,
+            module,
+            old_global,
+            &mut global_mapping,
+            &mut empty_tag_counter,
+        )?;
     }
     Ok(global_mapping)
 }
@@ -1151,6 +1188,7 @@ pub fn handle_tuple_or_array_output<'a, S: BuildHasher>(
         } else {
             "QIRTUPLE"
         },
+        None,
     )?;
 
     let new_global = module.add_global(new_const.get_type(), None, &new_name);
@@ -1349,7 +1387,17 @@ mod tests {
         global.set_constant(true);
 
         let mut mapping = HashMap::new();
-        assert!(translate_global(&context, &module, global, &mut mapping).is_err());
+        let mut empty_tag_counter = 0;
+        assert!(
+            translate_global(
+                &context,
+                &module,
+                global,
+                &mut mapping,
+                &mut empty_tag_counter
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1421,7 +1469,15 @@ mod tests {
         global.set_constant(true);
 
         let mut mapping = HashMap::new();
-        translate_global(&context, &module, global, &mut mapping).unwrap();
+        let mut empty_tag_counter = 0;
+        translate_global(
+            &context,
+            &module,
+            global,
+            &mut mapping,
+            &mut empty_tag_counter,
+        )
+        .unwrap();
 
         assert!(mapping.contains_key("greet"));
         let new_global = mapping.get("greet").unwrap();
@@ -1430,7 +1486,7 @@ mod tests {
                 .get_name()
                 .to_str()
                 .expect("new global name should be utf8"),
-            "res_greet"
+            "res_hello"
         );
     }
 
@@ -1479,14 +1535,21 @@ mod tests {
     fn test_build_result_global() {
         let context = Context::create();
         let (new_const, new_name) =
-            build_result_global(&context, "my_label", "old_name", "TEST").unwrap();
+            build_result_global(&context, "my_label", "old_name", "TEST", None).unwrap();
 
         // Check new name format
-        assert_eq!(new_name, "res_old_name");
+        assert_eq!(new_name, "res_my_label");
 
         // Check encoded length (one-byte prefix + payload)
         let expected_len = "USER:TEST:my_label".len();
         assert_eq!(new_const.get_type().len() as usize, expected_len + 1);
+    }
+
+    #[test]
+    fn test_build_result_global_empty_tag_name() {
+        let context = Context::create();
+        let (_, new_name) = build_result_global(&context, "", "old_name", "TEST", Some(2)).unwrap();
+        assert_eq!(new_name, "res_empty_tag.2");
     }
 
     #[test]

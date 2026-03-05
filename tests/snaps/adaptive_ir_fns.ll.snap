@@ -9,9 +9,9 @@ target triple = "aarch64-unknown-linux-gnu"
 
 @qis_qs = private unnamed_addr global [6 x i64] zeroinitializer
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
-@res_ = private constant [17 x i8] c"\10USER:RESULT:0_t0"
-@res_.1 = private constant [17 x i8] c"\10USER:RESULT:0_t1"
-@res_int2 = private constant [14 x i8] c"\0DUSER:INT:int2"
+@res_0_t0 = private constant [17 x i8] c"\10USER:RESULT:0_t0"
+@res_0_t1 = private constant [17 x i8] c"\10USER:RESULT:0_t1"
+@res_int2.1 = private constant [14 x i8] c"\0DUSER:INT:int2"
 @gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
 @gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
@@ -273,11 +273,11 @@ continue__4:                                      ; preds = %then__4, %continue_
   tail call void @___reset(i64 %qbit.i89)
   %bool20 = tail call i1 @___read_future_bool(i64 %meas15)
   tail call void @___dec_future_refcount(i64 %meas15)
-  tail call void @print_bool(ptr nonnull @res_, i64 16, i1 %bool20)
+  tail call void @print_bool(ptr nonnull @res_0_t0, i64 16, i1 %bool20)
   %bool21 = tail call i1 @___read_future_bool(i64 %meas18)
   tail call void @___dec_future_refcount(i64 %meas18)
-  tail call void @print_bool(ptr nonnull @res_.1, i64 16, i1 %bool21)
-  tail call void @print_int(ptr nonnull @res_int2, i64 13, i64 6)
+  tail call void @print_bool(ptr nonnull @res_0_t1, i64 16, i1 %bool21)
+  tail call void @print_int(ptr nonnull @res_int2.1, i64 13, i64 6)
   %qbit22 = load i64, ptr @qis_qs, align 16
   tail call void @___qfree(i64 %qbit22)
   %qbit23 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8

@@ -9,12 +9,12 @@ target triple = "aarch64-unknown-linux-gnu"
 
 @qis_qs = private unnamed_addr global [12 x i64] zeroinitializer
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
-@res_ = private constant [15 x i8] c"\0EUSER:RESULT:r1"
-@res_.1 = private constant [15 x i8] c"\0EUSER:RESULT:r2"
-@res_.2 = private constant [15 x i8] c"\0EUSER:RESULT:r3"
-@res_.3 = private constant [15 x i8] c"\0EUSER:RESULT:r4"
-@res_.4 = private constant [15 x i8] c"\0EUSER:RESULT:r5"
-@res_t0 = private constant [17 x i8] c"\10USER:QIRTUPLE:t0"
+@res_r1 = private constant [15 x i8] c"\0EUSER:RESULT:r1"
+@res_r2 = private constant [15 x i8] c"\0EUSER:RESULT:r2"
+@res_r3 = private constant [15 x i8] c"\0EUSER:RESULT:r3"
+@res_r4 = private constant [15 x i8] c"\0EUSER:RESULT:r4"
+@res_r5 = private constant [15 x i8] c"\0EUSER:RESULT:r5"
+@res_t0.1 = private constant [17 x i8] c"\10USER:QIRTUPLE:t0"
 @gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
 @gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
@@ -214,22 +214,22 @@ qir_qis.init_qubit.exit87:                        ; preds = %qir_qis.init_qubit.
   %meas25 = call i64 @___lazy_measure(i64 %qbit24)
   %qbit26 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
   %meas27 = call i64 @___lazy_measure(i64 %qbit26)
-  call void @print_int(ptr nonnull @res_t0, i64 16, i64 5)
+  call void @print_int(ptr nonnull @res_t0.1, i64 16, i64 5)
   %bool = call i1 @___read_future_bool(i64 %meas)
   call void @___dec_future_refcount(i64 %meas)
-  call void @print_bool(ptr nonnull @res_, i64 14, i1 %bool)
+  call void @print_bool(ptr nonnull @res_r1, i64 14, i1 %bool)
   %bool28 = call i1 @___read_future_bool(i64 %meas21)
   call void @___dec_future_refcount(i64 %meas21)
-  call void @print_bool(ptr nonnull @res_.1, i64 14, i1 %bool28)
+  call void @print_bool(ptr nonnull @res_r2, i64 14, i1 %bool28)
   %bool29 = call i1 @___read_future_bool(i64 %meas23)
   call void @___dec_future_refcount(i64 %meas23)
-  call void @print_bool(ptr nonnull @res_.2, i64 14, i1 %bool29)
+  call void @print_bool(ptr nonnull @res_r3, i64 14, i1 %bool29)
   %bool30 = call i1 @___read_future_bool(i64 %meas25)
   call void @___dec_future_refcount(i64 %meas25)
-  call void @print_bool(ptr nonnull @res_.3, i64 14, i1 %bool30)
+  call void @print_bool(ptr nonnull @res_r4, i64 14, i1 %bool30)
   %bool31 = call i1 @___read_future_bool(i64 %meas27)
   call void @___dec_future_refcount(i64 %meas27)
-  call void @print_bool(ptr nonnull @res_.4, i64 14, i1 %bool31)
+  call void @print_bool(ptr nonnull @res_r5, i64 14, i1 %bool31)
   %qbit32 = load i64, ptr @qis_qs, align 16
   call void @___qfree(i64 %qbit32)
   %qbit33 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8

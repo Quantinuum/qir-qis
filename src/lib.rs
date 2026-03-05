@@ -822,7 +822,7 @@ mod aux {
             } else {
                 let fallback_label = format!("result_{result_idx}");
                 let (new_const, new_name) =
-                    build_result_global(ctx, &fallback_label, &fallback_label, "RESULT")?;
+                    build_result_global(ctx, &fallback_label, &fallback_label, "RESULT", None)?;
                 let new_global = module.add_global(new_const.get_type(), None, &new_name);
                 new_global.set_initializer(&new_const);
                 new_global.set_linkage(inkwell::module::Linkage::Private);
@@ -921,7 +921,8 @@ mod aux {
             .and_then(|pos| pos.checked_add(1))
             .map_or_else(|| full_tag.clone(), |pos| full_tag[pos..].to_string());
 
-        let (new_const, new_name) = build_result_global(ctx, &old_label, &old_name, type_tag)?;
+        let (new_const, new_name) =
+            build_result_global(ctx, &old_label, &old_name, type_tag, None)?;
 
         let new_global = module.add_global(new_const.get_type(), None, &new_name);
         new_global.set_initializer(&new_const);

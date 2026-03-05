@@ -9,9 +9,9 @@ target triple = "aarch64-unknown-linux-gnu"
 
 @qis_qs = private unnamed_addr global [2 x i64] zeroinitializer, align 16
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
-@res_ = private constant [15 x i8] c"\0EUSER:RESULT:r1"
-@res_.1 = private constant [15 x i8] c"\0EUSER:RESULT:r2"
-@res_t0 = private constant [17 x i8] c"\10USER:QIRTUPLE:t0"
+@res_r1 = private constant [15 x i8] c"\0EUSER:RESULT:r1"
+@res_r2 = private constant [15 x i8] c"\0EUSER:RESULT:r2"
+@res_t0.1 = private constant [17 x i8] c"\10USER:QIRTUPLE:t0"
 @gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
 @gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
@@ -68,13 +68,13 @@ qir_qis.init_qubit.exit14:                        ; preds = %qir_qis.init_qubit.
   %meas = call i64 @___lazy_measure(i64 %qbit5)
   %qbit6 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   %meas7 = call i64 @___lazy_measure(i64 %qbit6)
-  call void @print_int(ptr nonnull @res_t0, i64 16, i64 2)
+  call void @print_int(ptr nonnull @res_t0.1, i64 16, i64 2)
   %bool = call i1 @___read_future_bool(i64 %meas)
   call void @___dec_future_refcount(i64 %meas)
-  call void @print_bool(ptr nonnull @res_, i64 14, i1 %bool)
+  call void @print_bool(ptr nonnull @res_r1, i64 14, i1 %bool)
   %bool8 = call i1 @___read_future_bool(i64 %meas7)
   call void @___dec_future_refcount(i64 %meas7)
-  call void @print_bool(ptr nonnull @res_.1, i64 14, i1 %bool8)
+  call void @print_bool(ptr nonnull @res_r2, i64 14, i1 %bool8)
   %qbit9 = load i64, ptr @qis_qs, align 16
   call void @___qfree(i64 %qbit9)
   %qbit10 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
