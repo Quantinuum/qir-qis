@@ -3,7 +3,7 @@ name: Wheels & Release
 on:
   push:
     branches:
-      - feat-qir-2.0
+      - main
     tags:
       - '*'
   workflow_dispatch:
