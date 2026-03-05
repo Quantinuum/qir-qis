@@ -39,40 +39,60 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+      - name: Cache LLVM 21 (Linux)
+        if: runner.os == 'Linux'
+        id: llvm-cache-linux
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/llvm21
+          key: llvm-21.1.8-${{ runner.os }}-v1
       - name: Install LLVM (Linux)
         if: runner.os == 'Linux'
         uses: KyleMayes/install-llvm-action@v2
         with:
-          version: "14.0"
-          directory: ${{ runner.temp }}/llvm
-          env: True
+          version: "21.1.8"
+          directory: ${{ runner.temp }}/llvm21
+          env: false
       - name: Configure LLVM (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: echo "LLVM_SYS_140_PREFIX=$LLVM_PATH" >>"$GITHUB_ENV"
+        run: |
+          llvm_root="${{ runner.temp }}/llvm21"
+          echo "LLVM_PATH=${llvm_root}" >>"$GITHUB_ENV"
+          echo "LLVM_SYS_211_PREFIX=${llvm_root}" >>"$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${llvm_root}/lib:${LD_LIBRARY_PATH:-}" >>"$GITHUB_ENV"
+          echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          brew install llvm@21
           if [ "$(uname -m)" = "arm64" ]; then
-            ARCH_PREFIX=arm64-apple-darwin22.3.0
+            LLVM_PREFIX=/opt/homebrew/opt/llvm@21
           else
-            ARCH_PREFIX=x86_64-apple-darwin
+            LLVM_PREFIX=/usr/local/opt/llvm@21
           fi
-          curl -LO "https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz"
-          mkdir -p /tmp/llvm
-          tar xf "clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz" -C /tmp/llvm --strip-components=1
-          echo "/tmp/llvm/bin" >>"$GITHUB_PATH"
-          echo "LLVM_SYS_140_PREFIX=/tmp/llvm" >>"$GITHUB_ENV"
-          echo "DYLD_FALLBACK_LIBRARY_PATH=/tmp/llvm/lib" >>"$GITHUB_ENV"
+          echo "${LLVM_PREFIX}/bin" >>"$GITHUB_PATH"
+          echo "LLVM_SYS_211_PREFIX=${LLVM_PREFIX}" >>"$GITHUB_ENV"
+          echo "DYLD_FALLBACK_LIBRARY_PATH=${LLVM_PREFIX}/lib" >>"$GITHUB_ENV"
       - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          curl -L -o LLVM-14.0.6-win64.7z https://github.com/PLC-lang/llvm-package-windows/releases/download/v14.0.6/LLVM-14.0.6-win64.7z
-          7z x LLVM-14.0.6-win64.7z "-oC:\LLVM" -y
-          "PATH=C:\LLVM\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LLVM_SYS_140_PREFIX=C:\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $llvmRoot = "C:\llvm21"
+          $archive = "$env:RUNNER_TEMP\clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz"
+          $extract = "$env:RUNNER_TEMP\llvm21-extract"
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/clang%2Bllvm-21.1.8-x86_64-pc-windows-msvc.tar.xz"
+          Remove-Item -Recurse -Force $llvmRoot, $extract -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $extract | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          tar -xf $archive -C $extract
+          $expanded = Get-ChildItem $extract -Directory | Select-Object -First 1
+          Move-Item $expanded.FullName $llvmRoot
+          "PATH=$llvmRoot\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LLVM_SYS_211_PREFIX=$llvmRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
