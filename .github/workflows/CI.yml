@@ -39,6 +39,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+      - name: Cache LLVM archive (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
+          key: llvm21-win-x64-tarball-v1
+      - name: Cache vcpkg libxml2 (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\downloads
+            C:\vcpkg\installed\x64-windows
+            C:\vcpkg\packages\libxml2_x64-windows
+          key: vcpkg-libxml2-x64-windows-v1
       - name: Cache LLVM 21 (Linux)
         if: runner.os == 'Linux'
         id: llvm-cache-linux
@@ -61,9 +76,6 @@ jobs:
           echo "LLVM_PATH=${llvm_root}" >>"$GITHUB_ENV"
           echo "LLVM_SYS_211_PREFIX=${llvm_root}" >>"$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=${llvm_root}/lib:${LD_LIBRARY_PATH:-}" >>"$GITHUB_ENV"
-          echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
-          echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
-          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         shell: bash
@@ -81,18 +93,61 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $llvmRoot = "C:\llvm21"
-          $archive = "$env:RUNNER_TEMP\clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz"
-          $extract = "$env:RUNNER_TEMP\llvm21-extract"
+          $llvmRoot = Join-Path $env:RUNNER_TEMP "llvm21"
+          $extract = Join-Path $env:RUNNER_TEMP "llvm21-extract"
+          $archive = Join-Path $env:RUNNER_TEMP "clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz"
           $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/clang%2Bllvm-21.1.8-x86_64-pc-windows-msvc.tar.xz"
           Remove-Item -Recurse -Force $llvmRoot, $extract -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $extract | Out-Null
-          Invoke-WebRequest -Uri $url -OutFile $archive
+          if (!(Test-Path $archive)) {
+            Invoke-WebRequest -Uri $url -OutFile $archive
+          }
           tar -xf $archive -C $extract
           $expanded = Get-ChildItem $extract -Directory | Select-Object -First 1
+          if (-not $expanded) {
+            Write-Error "Failed to extract LLVM archive at $extract"
+            exit 1
+          }
           Move-Item $expanded.FullName $llvmRoot
+          $llvmConfig = Join-Path $llvmRoot "bin\llvm-config.exe"
+          $llvmConfigFilter = Join-Path $llvmRoot "bin\llvm-config-filter.cmd"
+          if (!(Test-Path $llvmConfig)) {
+            Write-Error "llvm-config.exe missing at $llvmConfig"
+            exit 1
+          }
+          @'
+          @echo off
+          setlocal EnableDelayedExpansion
+          for /f "delims=" %%i in ('"%~dp0llvm-config.exe" %*') do (
+            set "line=%%i"
+            set "line=!line:libxml2s.lib=!"
+            echo(!line!
+          )
+          exit /b %ERRORLEVEL%
+          '@ | Out-File -FilePath $llvmConfigFilter -Encoding ascii
+          $xml2Static = Join-Path $llvmRoot "lib\libxml2s.lib"
+          if (!(Test-Path $xml2Static)) {
+            $vcpkgExe = "C:\vcpkg\vcpkg.exe"
+            $vcpkgXml2 = "C:\vcpkg\installed\x64-windows\lib\libxml2.lib"
+            if (Test-Path $vcpkgXml2) {
+              Copy-Item $vcpkgXml2 $xml2Static -Force
+              Write-Host "Created libxml2s.lib from cached vcpkg libxml2"
+            } elseif (Test-Path $vcpkgExe) {
+              & $vcpkgExe install libxml2:x64-windows
+              if (Test-Path $vcpkgXml2) {
+                Copy-Item $vcpkgXml2 $xml2Static -Force
+                Write-Host "Created libxml2s.lib from vcpkg libxml2"
+              }
+            }
+          }
+          if (!(Test-Path $xml2Static)) {
+            Write-Error "libxml2s.lib is missing and vcpkg fallback did not produce libxml2.lib"
+            exit 1
+          }
           "PATH=$llvmRoot\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LLVM_PATH=$llvmRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "LLVM_SYS_211_PREFIX=$llvmRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LLVM_CONFIG_PATH=$llvmConfigFilter" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
