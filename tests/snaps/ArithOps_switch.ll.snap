@@ -242,15 +242,6 @@ otherwise:                                        ; preds = %random
   ret void
 }
 
-define void @__quantum__qis__x__body(ptr %0) local_unnamed_addr {
-entry:
-  %idx.i = ptrtoint ptr %0 to i64
-  %qbit_ptr.i = getelementptr [5 x i64], ptr @qis_qs, i64 0, i64 %idx.i
-  %qbit.i = load i64, ptr %qbit_ptr.i, align 8
-  tail call void @___rxy(i64 %qbit.i, double 0x400921FB54442D18, double 0.000000e+00)
-  ret void
-}
-
 declare i64 @___qalloc() local_unnamed_addr
 
 declare void @panic(i32, ptr) local_unnamed_addr

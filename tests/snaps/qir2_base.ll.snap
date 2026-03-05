@@ -70,37 +70,6 @@ qir_qis.init_qubit.exit9:                         ; preds = %qir_qis.init_qubit.
   ret i64 0
 }
 
-define void @__quantum__qis__h__body(ptr %0) local_unnamed_addr {
-entry:
-  %idx.i = ptrtoint ptr %0 to i64
-  %qbit_ptr.i = getelementptr [2 x i64], ptr @qis_qs, i64 0, i64 %idx.i
-  %qbit.i = load i64, ptr %qbit_ptr.i, align 8
-  tail call void @___rxy(i64 %qbit.i, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i4 = load i64, ptr %qbit_ptr.i, align 8
-  tail call void @___rz(i64 %qbit.i4, double 0x400921FB54442D18)
-  ret void
-}
-
-define void @__quantum__qis__cnot__body(ptr %0, ptr %1) local_unnamed_addr {
-entry:
-  %idx.i = ptrtoint ptr %1 to i64
-  %qbit_ptr.i = getelementptr [2 x i64], ptr @qis_qs, i64 0, i64 %idx.i
-  %qbit.i = load i64, ptr %qbit_ptr.i, align 8
-  tail call void @___rxy(i64 %qbit.i, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %idx.i6 = ptrtoint ptr %0 to i64
-  %qbit_ptr.i7 = getelementptr [2 x i64], ptr @qis_qs, i64 0, i64 %idx.i6
-  %qbit.i8 = load i64, ptr %qbit_ptr.i7, align 8
-  %qbit.i11 = load i64, ptr %qbit_ptr.i, align 8
-  tail call void @___rzz(i64 %qbit.i8, i64 %qbit.i11, double 0x3FF921FB54442D18)
-  %qbit.i14 = load i64, ptr %qbit_ptr.i7, align 8
-  tail call void @___rz(i64 %qbit.i14, double 0xBFF921FB54442D18)
-  %qbit.i17 = load i64, ptr %qbit_ptr.i, align 8
-  tail call void @___rxy(i64 %qbit.i17, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i20 = load i64, ptr %qbit_ptr.i, align 8
-  tail call void @___rz(i64 %qbit.i20, double 0xBFF921FB54442D18)
-  ret void
-}
-
 declare i64 @___qalloc() local_unnamed_addr
 
 declare void @panic(i32, ptr) local_unnamed_addr

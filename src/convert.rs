@@ -1027,6 +1027,42 @@ pub fn process_ir_defined_q_fns<'a>(
     Ok(())
 }
 
+/// Removes unreferenced IR-defined QIS helper functions left after decomposition lowering.
+///
+/// These functions are implementation details (e.g. `__quantum__qis__h__body`) and should not
+/// remain in emitted QIS bitcode once all call sites are lowered.
+pub fn prune_unused_ir_qis_helpers(module: &Module<'_>) {
+    let mut called_names = std::collections::HashSet::<String>::new();
+    for fun in module.get_functions() {
+        for bb in fun.get_basic_blocks() {
+            for instr in bb.get_instructions() {
+                if let Ok(call) = CallSiteValue::try_from(instr)
+                    && let Some(callee) = call.get_called_fn_value()
+                    && let Ok(name) = callee.get_name().to_str()
+                {
+                    called_names.insert(name.to_string());
+                }
+            }
+        }
+    }
+
+    let to_remove: Vec<_> = module
+        .get_functions()
+        .filter(|f| {
+            f.count_basic_blocks() > 0
+                && f.get_name().to_str().is_ok_and(|name| {
+                    name.starts_with("__quantum__qis__") && !called_names.contains(name)
+                })
+        })
+        .collect();
+
+    for f in to_remove {
+        // Safe here because we only delete fully-defined helper functions that have no
+        // remaining call sites in the module.
+        unsafe { f.delete() };
+    }
+}
+
 /// Replaces calls to native QIR functions with equivalent QIS calls.
 fn native_qir_to_qis_call<'a>(
     ctx: &'a Context,

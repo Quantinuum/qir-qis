@@ -1138,7 +1138,7 @@ pub fn qir_to_qis(
         aux::process_entry_function,
         convert::{
             add_qmain_wrapper, create_qubit_array, find_entry_function, free_all_qubits,
-            process_ir_defined_q_fns,
+            process_ir_defined_q_fns, prune_unused_ir_qis_helpers,
         },
         decompose::add_decompositions,
         opt::optimize,
@@ -1250,6 +1250,7 @@ pub fn qir_to_qis(
         eprintln!("qir_qis.qir_to_qis: stage=optimize");
     }
     optimize(&module, opt_level, target)?;
+    prune_unused_ir_qis_helpers(&module);
     if trace_qir_to_qis {
         eprintln!("qir_qis.qir_to_qis: stage=write_bitcode");
     }
