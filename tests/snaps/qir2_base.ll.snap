@@ -3,19 +3,18 @@ source: src/convert.rs
 expression: qis_text.unwrap().to_string()
 ---
 ; ModuleID = 'qis_module'
-source_filename = "qir"
+source_filename = "qir2_base.ll"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "aarch64-unknown-linux-gnu"
 
-@qis_qs = private unnamed_addr global [2 x i64] zeroinitializer, align 16
+@qis_qs = private unnamed_addr global [2 x i64] zeroinitializer
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
-@res_ = private constant [15 x i8] c"\0EUSER:RESULT:r1"
-@res_.1 = private constant [15 x i8] c"\0EUSER:RESULT:r2"
-@res_t0 = private constant [17 x i8] c"\10USER:QIRTUPLE:t0"
+@res_ = private constant [15 x i8] c"\0EUSER:RESULT:r0"
+@res_.1 = private constant [15 x i8] c"\0EUSER:RESULT:r1"
 @gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
 @gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
-define noundef i64 @___user_qir_test_barriers() local_unnamed_addr {
+define noundef i64 @___user_qir_Entry_Point_Name() local_unnamed_addr {
 entry:
   %qalloc.i = tail call i64 @___qalloc()
   %is_fail.i = icmp eq i64 %qalloc.i, -1
@@ -27,58 +26,47 @@ qalloc_fail.i:                                    ; preds = %entry
 
 qir_qis.init_qubit.exit:                          ; preds = %entry
   tail call void @___reset(i64 %qalloc.i)
-  store i64 %qalloc.i, ptr @qis_qs, align 16
-  %qalloc.i11 = tail call i64 @___qalloc()
-  %is_fail.i12 = icmp eq i64 %qalloc.i11, -1
-  br i1 %is_fail.i12, label %qalloc_fail.i13, label %qir_qis.init_qubit.exit14
+  store i64 %qalloc.i, ptr @qis_qs, align 8
+  %qalloc.i6 = tail call i64 @___qalloc()
+  %is_fail.i7 = icmp eq i64 %qalloc.i6, -1
+  br i1 %is_fail.i7, label %qalloc_fail.i8, label %qir_qis.init_qubit.exit9
 
-qalloc_fail.i13:                                  ; preds = %qir_qis.init_qubit.exit
+qalloc_fail.i8:                                   ; preds = %qir_qis.init_qubit.exit
   tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
   unreachable
 
-qir_qis.init_qubit.exit14:                        ; preds = %qir_qis.init_qubit.exit
-  tail call void @___reset(i64 %qalloc.i11)
-  store i64 %qalloc.i11, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  %qbit.i.i = load i64, ptr @qis_qs, align 16
+qir_qis.init_qubit.exit9:                         ; preds = %qir_qis.init_qubit.exit
+  tail call void @___reset(i64 %qalloc.i6)
+  store i64 %qalloc.i6, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %qbit.i.i = load i64, ptr @qis_qs, align 8
   tail call void @___rxy(i64 %qbit.i.i, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i4.i = load i64, ptr @qis_qs, align 16
+  %qbit.i4.i = load i64, ptr @qis_qs, align 8
   tail call void @___rz(i64 %qbit.i4.i, double 0x400921FB54442D18)
-  %qbit.i.i15 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rxy(i64 %qbit.i.i15, double 0x400921FB54442D18, double 0.000000e+00)
-  %barrier_qubits = alloca [2 x i64], align 16
-  %0 = load <2 x i64>, ptr @qis_qs, align 16
-  store <2 x i64> %0, ptr %barrier_qubits, align 16
-  call void @___barrier(ptr nonnull %barrier_qubits, i64 2)
-  %qbit.i.i17 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  call void @___rxy(i64 %qbit.i.i17, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i8.i = load i64, ptr @qis_qs, align 16
+  %qbit.i.i10 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rxy(i64 %qbit.i.i10, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
+  %qbit.i8.i = load i64, ptr @qis_qs, align 8
   %qbit.i11.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  call void @___rzz(i64 %qbit.i8.i, i64 %qbit.i11.i, double 0x3FF921FB54442D18)
-  %qbit.i14.i = load i64, ptr @qis_qs, align 16
-  call void @___rz(i64 %qbit.i14.i, double 0xBFF921FB54442D18)
+  tail call void @___rzz(i64 %qbit.i8.i, i64 %qbit.i11.i, double 0x3FF921FB54442D18)
+  %qbit.i14.i = load i64, ptr @qis_qs, align 8
+  tail call void @___rz(i64 %qbit.i14.i, double 0xBFF921FB54442D18)
   %qbit.i17.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  call void @___rxy(i64 %qbit.i17.i, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  tail call void @___rxy(i64 %qbit.i17.i, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
   %qbit.i20.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  call void @___rz(i64 %qbit.i20.i, double 0xBFF921FB54442D18)
-  %barrier_qubits2 = alloca [1 x i64], align 8
-  %qbit.i18 = load i64, ptr @qis_qs, align 16
-  store i64 %qbit.i18, ptr %barrier_qubits2, align 8
-  call void @___barrier(ptr nonnull %barrier_qubits2, i64 1)
-  %qbit5 = load i64, ptr @qis_qs, align 16
-  %meas = call i64 @___lazy_measure(i64 %qbit5)
-  %qbit6 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  %meas7 = call i64 @___lazy_measure(i64 %qbit6)
-  call void @print_int(ptr nonnull @res_t0, i64 16, i64 2)
-  %bool = call i1 @___read_future_bool(i64 %meas)
-  call void @___dec_future_refcount(i64 %meas)
-  call void @print_bool(ptr nonnull @res_, i64 14, i1 %bool)
-  %bool8 = call i1 @___read_future_bool(i64 %meas7)
-  call void @___dec_future_refcount(i64 %meas7)
-  call void @print_bool(ptr nonnull @res_.1, i64 14, i1 %bool8)
-  %qbit9 = load i64, ptr @qis_qs, align 16
-  call void @___qfree(i64 %qbit9)
-  %qbit10 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  call void @___qfree(i64 %qbit10)
+  tail call void @___rz(i64 %qbit.i20.i, double 0xBFF921FB54442D18)
+  %qbit = load i64, ptr @qis_qs, align 8
+  %meas = tail call i64 @___lazy_measure(i64 %qbit)
+  %qbit1 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %meas2 = tail call i64 @___lazy_measure(i64 %qbit1)
+  %bool = tail call i1 @___read_future_bool(i64 %meas)
+  tail call void @___dec_future_refcount(i64 %meas)
+  tail call void @print_bool(ptr nonnull @res_, i64 14, i1 %bool)
+  %bool3 = tail call i1 @___read_future_bool(i64 %meas2)
+  tail call void @___dec_future_refcount(i64 %meas2)
+  tail call void @print_bool(ptr nonnull @res_.1, i64 14, i1 %bool3)
+  %qbit4 = load i64, ptr @qis_qs, align 8
+  tail call void @___qfree(i64 %qbit4)
+  %qbit5 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___qfree(i64 %qbit5)
   ret i64 0
 }
 
@@ -90,15 +78,6 @@ entry:
   tail call void @___rxy(i64 %qbit.i, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
   %qbit.i4 = load i64, ptr %qbit_ptr.i, align 8
   tail call void @___rz(i64 %qbit.i4, double 0x400921FB54442D18)
-  ret void
-}
-
-define void @__quantum__qis__x__body(ptr %0) local_unnamed_addr {
-entry:
-  %idx.i = ptrtoint ptr %0 to i64
-  %qbit_ptr.i = getelementptr [2 x i64], ptr @qis_qs, i64 0, i64 %idx.i
-  %qbit.i = load i64, ptr %qbit_ptr.i, align 8
-  tail call void @___rxy(i64 %qbit.i, double 0x400921FB54442D18, double 0.000000e+00)
   ret void
 }
 
@@ -137,11 +116,7 @@ entry:
   ret i64 %qbit
 }
 
-declare void @___barrier(ptr, i64) local_unnamed_addr
-
 declare i64 @___lazy_measure(i64) local_unnamed_addr
-
-declare void @print_int(ptr, i64, i64) local_unnamed_addr
 
 declare i1 @___read_future_bool(i64) local_unnamed_addr
 
@@ -160,7 +135,7 @@ declare void @___qfree(i64) local_unnamed_addr
 define i64 @qmain(i64 %0) local_unnamed_addr {
 entry:
   tail call void @setup(i64 %0)
-  %1 = tail call i64 @___user_qir_test_barriers()
+  %1 = tail call i64 @___user_qir_Entry_Point_Name()
   %retval = tail call i64 @teardown()
   ret i64 %retval
 }
@@ -174,7 +149,7 @@ attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memor
 !llvm.module.flags = !{!0, !1, !2, !3}
 !name = !{!4}
 
-!0 = !{i32 1, !"qir_major_version", i32 1}
+!0 = !{i32 1, !"qir_major_version", i32 2}
 !1 = !{i32 7, !"qir_minor_version", i32 0}
 !2 = !{i32 1, !"dynamic_qubit_management", i1 false}
 !3 = !{i32 1, !"dynamic_result_management", i1 false}

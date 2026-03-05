@@ -3,17 +3,17 @@ source: src/convert.rs
 expression: qis_text.unwrap().to_string()
 ---
 ; ModuleID = 'qis_module'
-source_filename = "qir"
+source_filename = "qir2_adaptive.ll"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "aarch64-unknown-linux-gnu"
 
 @qis_qs = private unnamed_addr global [1 x i64] zeroinitializer
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
-@res_ = private constant [14 x i8] c"\0DUSER:RESULT:0"
+@res_ = private constant [15 x i8] c"\0EUSER:RESULT:r0"
 @gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
 @gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
-define range(i64 0, 2) i64 @___user_qir_main() local_unnamed_addr {
+define noundef i64 @___user_qir_Entry_Point_Name() local_unnamed_addr {
 entry:
   %qalloc.i = tail call i64 @___qalloc()
   %is_fail.i = icmp eq i64 %qalloc.i, -1
@@ -33,17 +33,18 @@ qir_qis.init_qubit.exit:                          ; preds = %entry
   %meas = tail call i64 @___lazy_measure(i64 %qbit)
   %bool = tail call i1 @___read_future_bool(i64 %meas)
   tail call void @___dec_future_refcount(i64 %meas)
-  br i1 %bool, label %common.ret, label %exit
+  br i1 %bool, label %then, label %cont
 
-common.ret:                                       ; preds = %exit, %qir_qis.init_qubit.exit
-  %common.ret.op = phi i64 [ 0, %exit ], [ 1, %qir_qis.init_qubit.exit ]
-  %qbit2 = load i64, ptr @qis_qs, align 8
-  tail call void @___qfree(i64 %qbit2)
-  ret i64 %common.ret.op
+then:                                             ; preds = %qir_qis.init_qubit.exit
+  %qbit.i.i2 = load i64, ptr @qis_qs, align 8
+  tail call void @___rz(i64 %qbit.i.i2, double 0x400921FB54442D18)
+  br label %cont
 
-exit:                                             ; preds = %qir_qis.init_qubit.exit
-  tail call void @print_bool(ptr nonnull @res_, i64 13, i1 false)
-  br label %common.ret
+cont:                                             ; preds = %then, %qir_qis.init_qubit.exit
+  tail call void @print_bool(ptr nonnull @res_, i64 14, i1 %bool)
+  %qbit1 = load i64, ptr @qis_qs, align 8
+  tail call void @___qfree(i64 %qbit1)
+  ret i64 0
 }
 
 define void @__quantum__qis__h__body(ptr %0) local_unnamed_addr {
@@ -54,6 +55,15 @@ entry:
   tail call void @___rxy(i64 %qbit.i, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
   %qbit.i4 = load i64, ptr %qbit_ptr.i, align 8
   tail call void @___rz(i64 %qbit.i4, double 0x400921FB54442D18)
+  ret void
+}
+
+define void @__quantum__qis__z__body(ptr %0) local_unnamed_addr {
+entry:
+  %idx.i = ptrtoint ptr %0 to i64
+  %qbit_ptr.i = getelementptr [1 x i64], ptr @qis_qs, i64 0, i64 %idx.i
+  %qbit.i = load i64, ptr %qbit_ptr.i, align 8
+  tail call void @___rz(i64 %qbit.i, double 0x400921FB54442D18)
   ret void
 }
 
@@ -89,7 +99,7 @@ declare void @___qfree(i64) local_unnamed_addr
 define i64 @qmain(i64 %0) local_unnamed_addr {
 entry:
   tail call void @setup(i64 %0)
-  %1 = tail call i64 @___user_qir_main()
+  %1 = tail call i64 @___user_qir_Entry_Point_Name()
   %retval = tail call i64 @teardown()
   ret i64 %retval
 }
@@ -103,7 +113,7 @@ attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memor
 !llvm.module.flags = !{!0, !1, !2, !3}
 !name = !{!4}
 
-!0 = !{i32 1, !"qir_major_version", i32 1}
+!0 = !{i32 1, !"qir_major_version", i32 2}
 !1 = !{i32 7, !"qir_minor_version", i32 0}
 !2 = !{i32 1, !"dynamic_qubit_management", i1 false}
 !3 = !{i32 1, !"dynamic_result_management", i1 false}
