@@ -75,7 +75,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
+      - name: Test (Windows suite)
+        if: runner.os == 'Windows'
+        run: cargo nextest run --all-targets --all-features --test-threads=1 -E "not test(test_get_entry_attributes)"
+      - name: Test (Windows isolated get_entry_attributes)
+        if: runner.os == 'Windows'
+        run: cargo test --all-targets --all-features test_get_entry_attributes -- --test-threads=1
       - name: Test
+        if: runner.os != 'Windows'
         run: cargo nextest run --all-targets --all-features ${{ matrix.nextest_extra_args }}
 
   lint:
