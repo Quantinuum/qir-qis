@@ -1802,51 +1802,50 @@ mod tests {
         assert_eq!(label, "");
     }
 
-    #[rstest]
-    // Base profile tests
-    #[case("tests/data/base_native_only.ll")]
-    #[case("tests/data/base.ll")]
-    #[case("tests/data/base_array.ll")]
-    #[case("tests/data/barrier.ll")]
-    #[case("tests/data/barrier_multi.ll")]
-    // Adaptive profile tests
-    #[case("tests/data/adaptive.ll")]
-    #[case("tests/data/adaptive_ir_fns.ll")]
-    #[case("tests/data/adaptive_iter.ll")]
-    #[case("tests/data/adaptive_iter_fn.ll")]
-    #[case("tests/data/adaptive_cond_loop.ll")]
-    #[case("tests/data/adaptive_multi_ret.ll")]
-    // QIR 2.0 (opaque pointers) tests
-    #[case("tests/data/qir2_base.ll")]
-    #[case("tests/data/qir2_adaptive.ll")]
-    // Infinite loop test
-    #[case("tests/data/bad/inf_loop.ll")]
-    // RNG and get shot number test with Adaptive-profile switch
-    #[case("tests/data/ArithOps_switch.ll")]
-    #[trace]
-    fn test_snapshot_conversion(#[case] llpath: &str) {
-        // Ensure the .bc file is generated from the .ll file
+    macro_rules! snapshot_cases {
+        ($item:item) => {
+            #[rstest]
+            // Base profile tests
+            #[case("tests/data/base_native_only.ll")]
+            #[case("tests/data/base.ll")]
+            #[case("tests/data/base_array.ll")]
+            #[case("tests/data/barrier.ll")]
+            #[case("tests/data/barrier_multi.ll")]
+            // Adaptive profile tests
+            #[case("tests/data/adaptive.ll")]
+            #[case("tests/data/adaptive_ir_fns.ll")]
+            #[case("tests/data/adaptive_iter.ll")]
+            #[case("tests/data/adaptive_iter_fn.ll")]
+            #[case("tests/data/adaptive_cond_loop.ll")]
+            #[case("tests/data/adaptive_multi_ret.ll")]
+            // QIR 2.0 (opaque pointers) tests
+            #[case("tests/data/qir2_base.ll")]
+            #[case("tests/data/qir2_adaptive.ll")]
+            // Infinite loop test
+            #[case("tests/data/bad/inf_loop.ll")]
+            // RNG and get shot number test with Adaptive-profile switch
+            #[case("tests/data/ArithOps_switch.ll")]
+            #[trace]
+            $item
+        };
+    }
 
+    #[cfg(not(windows))]
+    snapshot_cases! {
+    fn test_snapshot_conversion(#[case] llpath: &str) {
         use insta::Settings;
 
         let ll_path = Path::new(llpath);
         let qir_bytes = get_qir_bytes(ll_path);
-
         let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).unwrap();
 
-        // Print the LLVM module in QIS bytes
         let context = Context::create();
         let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
             &qis_bytes,
             "qis_module",
         );
-        let qis_text = Module::parse_bitcode_from_buffer(&memory_buffer, &context);
-
-        if cfg!(windows) {
-            let parsed = qis_text.expect("Compiled QIS bitcode should parse on Windows");
-            assert!(parsed.get_function("qmain").is_some());
-            return;
-        }
+        let qis_text = Module::parse_bitcode_from_buffer(&memory_buffer, &context)
+            .expect("Compiled QIS bitcode should parse");
 
         let mut settings = Settings::clone_current();
         settings.set_prepend_module_to_snapshot(false);
@@ -1859,8 +1858,28 @@ mod tests {
                 (r#"@gen_version = local_unnamed_addr global \[[0-9]+ x i8\] c"[^"]+", section ",generator""#,
                   r#"@gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator""#),
             ]}, {
-                insta::assert_snapshot!(filename, qis_text.unwrap().to_string());
+                insta::assert_snapshot!(filename, qis_text.to_string());
             });
         });
-    }
+    }}
+
+    #[cfg(windows)]
+    snapshot_cases! {
+    // Windows runs this as a smoke test instead of snapshot matching because
+    // cross-target (`aarch64`) optimized codegen in CI has shown backend
+    // instability and non-deterministic output differences.
+    fn test_snapshot_conversion_windows_smoke(#[case] llpath: &str) {
+        let ll_path = Path::new(llpath);
+        let qir_bytes = get_qir_bytes(ll_path);
+        let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 2, "native", None).unwrap();
+
+        let context = Context::create();
+        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+            &qis_bytes,
+            "qis_module",
+        );
+        let parsed = Module::parse_bitcode_from_buffer(&memory_buffer, &context)
+            .expect("Compiled QIS bitcode should parse on Windows");
+        assert!(parsed.get_function("qmain").is_some());
+    }}
 }
