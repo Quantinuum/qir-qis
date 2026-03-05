@@ -57,7 +57,6 @@ jobs:
           curl -LO "https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz"
           mkdir -p /tmp/llvm
           tar xf "clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz" -C /tmp/llvm --strip-components=1
-          echo "PATH=/tmp/llvm/bin:$PATH" >>"$GITHUB_ENV"
           echo "LLVM_SYS_140_PREFIX=/tmp/llvm" >>"$GITHUB_ENV"
       - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
