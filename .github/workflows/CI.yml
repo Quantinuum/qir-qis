@@ -34,17 +34,31 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - name: Install LLVM (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Install LLVM (Linux)
+        if: runner.os == 'Linux'
         uses: KyleMayes/install-llvm-action@v2
         with:
           version: "14.0"
           directory: ${{ runner.temp }}/llvm
           env: True
-      - name: Configure LLVM (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Configure LLVM (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: echo "LLVM_SYS_140_PREFIX=$LLVM_PATH" >>"$GITHUB_ENV"
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [ "$(uname -m)" = "arm64" ]; then
+            ARCH_PREFIX=arm64-apple-darwin22.3.0
+          else
+            ARCH_PREFIX=x86_64-apple-darwin
+          fi
+          curl -LO "https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz"
+          mkdir -p /tmp/llvm
+          tar xf "clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz" -C /tmp/llvm --strip-components=1
+          echo "PATH=/tmp/llvm/bin:$PATH" >>"$GITHUB_ENV"
+          echo "LLVM_SYS_140_PREFIX=/tmp/llvm" >>"$GITHUB_ENV"
       - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
