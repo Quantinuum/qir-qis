@@ -71,6 +71,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
+      - name: Expose LLVM tools (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo "/tmp/llvm/bin" >>"$GITHUB_PATH"
       - name: Test
         run: cargo nextest run --all-targets --all-features
 
