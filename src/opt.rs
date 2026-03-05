@@ -10,6 +10,7 @@ use std::sync::Mutex;
 static TARGET_INIT: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| {
     Target::initialize_x86(&InitializationConfig::default());
     Target::initialize_aarch64(&InitializationConfig::default());
+    #[cfg(not(windows))]
     let _ = Target::initialize_native(&InitializationConfig::default());
     Mutex::new(())
 });
@@ -46,11 +47,20 @@ fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<Targ
         let triple = TargetMachine::get_default_triple();
         let target = Target::from_triple(&triple)
             .map_err(|e| format!("Failed to create target from triple: {e}"))?;
+        #[cfg(windows)]
+        let (cpu, features) = ("generic".to_string(), String::new());
+        #[cfg(not(windows))]
+        let (cpu, features) = (
+            TargetMachine::get_host_cpu_name().to_string_lossy().to_string(),
+            TargetMachine::get_host_cpu_features()
+                .to_string_lossy()
+                .to_string(),
+        );
         Ok(target
             .create_target_machine(
                 &triple,
-                &TargetMachine::get_host_cpu_name().to_string_lossy(),
-                &TargetMachine::get_host_cpu_features().to_string_lossy(),
+                &cpu,
+                &features,
                 opt_level,
                 reloc_mode,
                 code_model,

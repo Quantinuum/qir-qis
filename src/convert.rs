@@ -1871,7 +1871,10 @@ mod tests {
     fn test_snapshot_conversion_windows_smoke(#[case] llpath: &str) {
         let ll_path = Path::new(llpath);
         let qir_bytes = get_qir_bytes(ll_path);
-        let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 2, "native", None).unwrap();
+        // Keep this as a pure conversion/parsing smoke test on Windows.
+        // TargetMachine creation for optimized native codegen can be unstable
+        // on some Windows LLVM environments and cause access violations.
+        let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 0, "native", None).unwrap();
 
         let context = Context::create();
         let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
