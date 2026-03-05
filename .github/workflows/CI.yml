@@ -28,10 +28,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
+        include:
+          - os: ubuntu-latest
+            nextest_extra_args: ""
+          - os: windows-latest
+            nextest_extra_args: "--test-threads=1"
+          - os: macos-latest
+            nextest_extra_args: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -58,6 +61,7 @@ jobs:
           curl -LO "https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz"
           mkdir -p /tmp/llvm
           tar xf "clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz" -C /tmp/llvm --strip-components=1
+          echo "/tmp/llvm/bin" >>"$GITHUB_PATH"
           echo "LLVM_SYS_140_PREFIX=/tmp/llvm" >>"$GITHUB_ENV"
           echo "DYLD_FALLBACK_LIBRARY_PATH=/tmp/llvm/lib" >>"$GITHUB_ENV"
       - name: Install LLVM (Windows)
@@ -71,16 +75,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
-      - name: Expose LLVM tools (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: echo "/tmp/llvm/bin" >>"$GITHUB_PATH"
-      - name: Test (Windows)
-        if: runner.os == 'Windows'
-        run: cargo nextest run --all-targets --all-features --test-threads=1
       - name: Test
-        if: runner.os != 'Windows'
-        run: cargo nextest run --all-targets --all-features
+        run: cargo nextest run --all-targets --all-features ${{ matrix.nextest_extra_args }}
 
   lint:
     runs-on: ubuntu-latest
