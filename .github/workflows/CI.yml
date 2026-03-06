@@ -20,7 +20,6 @@ env:
   LLVM_SYS_PREFIX_ENV_VAR: "LLVM_SYS_211_PREFIX"
   LLVM_RUST_CACHE_FAMILY: "llvm21"
   LLVM_LINUX_CACHE_KEY_SUFFIX: "ci-linux-shared-v1"
-  RUST_VERSION: "1.93.1"
 
 jobs:
   typos:
@@ -59,8 +58,6 @@ jobs:
           echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
           echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
       - uses: taiki-e/install-action@nextest
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
@@ -118,17 +115,14 @@ jobs:
           echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
           echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          components: clippy, rustfmt
       - uses: mozilla-actions/sccache-action@v0.0.7
       - name: Cache sccache
         uses: actions/cache@v4
         with:
           path: ~/.cache/sccache
-          key: sccache-${{ runner.os }}-rust-1.93.1-${{ hashFiles('**/Cargo.lock') }}
+          key: sccache-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            sccache-${{ runner.os }}-rust-1.93.1-
+            sccache-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:

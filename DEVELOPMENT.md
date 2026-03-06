@@ -2,6 +2,8 @@
 
 ## Setup
 
+The default development toolchain is tracked in `rust-toolchain.toml` and follows the latest stable Rust release. The minimum supported Rust version (MSRV) is tracked separately in `Cargo.toml` and wheel-build settings.
+
 ```sh
 # Clone the repository
 git clone https://github.com/quantinuum/qir-qis.git
