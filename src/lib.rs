@@ -1099,7 +1099,7 @@ pub fn qir_to_qis(
         aux::process_entry_function,
         convert::{
             add_qmain_wrapper, create_qubit_array, find_entry_function, free_all_qubits,
-            get_string_attrs, process_ir_defined_q_fns,
+            process_ir_defined_q_fns,
         },
         decompose::add_decompositions,
         opt::optimize,
@@ -1148,12 +1148,14 @@ pub fn qir_to_qis(
         .map_err(|e| format!("LLVM module verification failed: {e}"))?;
 
     // Clean up the translated module
-    for attr in get_string_attrs(entry_fn) {
-        let kind_id = attr
-            .get_string_kind_id()
-            .to_str()
-            .map_err(|e| format!("Invalid UTF-8 in attribute kind ID: {e}"))?;
-        entry_fn.remove_string_attribute(AttributeLoc::Function, kind_id);
+    for key in [
+        "entry_point",
+        "qir_profiles",
+        "output_labeling_schema",
+        "required_num_qubits",
+        "required_num_results",
+    ] {
+        entry_fn.remove_string_attribute(AttributeLoc::Function, key);
     }
 
     // TODO: remove global module metadata
@@ -1300,9 +1302,17 @@ pub fn qir_ll_to_bc(ll_text: &str) -> Result<Vec<u8>, String> {
 pub fn get_entry_attributes(
     bc_bytes: &[u8],
 ) -> Result<std::collections::BTreeMap<String, Option<String>>, String> {
-    use crate::convert::{find_entry_function, get_string_attrs};
-    use inkwell::{context::Context, memory_buffer::MemoryBuffer};
+    use crate::convert::find_entry_function;
+    use inkwell::{attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer};
     use std::collections::BTreeMap;
+
+    const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
+        "entry_point",
+        "qir_profiles",
+        "output_labeling_schema",
+        "required_num_qubits",
+        "required_num_results",
+    ];
 
     let ctx = Context::create();
     let memory_buffer = MemoryBuffer::create_from_memory_range(bc_bytes, "bitcode");
@@ -1312,16 +1322,13 @@ pub fn get_entry_attributes(
 
     let mut metadata = BTreeMap::new();
     if let Ok(entry_fn) = find_entry_function(&module) {
-        for attr in get_string_attrs(entry_fn) {
-            let kind_id = if let Ok(kind_id) = attr.get_string_kind_id().to_str() {
-                kind_id.to_owned()
-            } else {
-                log::warn!("Skipping invalid UTF-8 attribute kind ID");
+        for key in ENTRY_ATTRIBUTE_KEYS {
+            let Some(attr) = entry_fn.get_string_attribute(AttributeLoc::Function, key) else {
                 continue;
             };
             if let Ok(value) = attr.get_string_value().to_str() {
                 metadata.insert(
-                    kind_id,
+                    key.to_owned(),
                     if value.is_empty() {
                         None
                     } else {
@@ -1329,8 +1336,8 @@ pub fn get_entry_attributes(
                     },
                 );
             } else {
-                log::warn!("Invalid UTF-8 value for attribute `{kind_id}`");
-                metadata.insert(kind_id, None);
+                log::warn!("Invalid UTF-8 value for attribute `{key}`");
+                metadata.insert(key.to_owned(), None);
             }
         }
     }

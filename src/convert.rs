@@ -5,7 +5,7 @@ use std::error::Error;
 use std::str::from_utf8;
 
 use inkwell::AddressSpace;
-use inkwell::attributes::{Attribute, AttributeLoc};
+use inkwell::attributes::AttributeLoc;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -164,25 +164,14 @@ pub fn convert_globals<'ctx>(
 /// Returns an error if no entry function is found.
 pub fn find_entry_function<'a>(module: &Module<'a>) -> Result<FunctionValue<'a>, String> {
     for function in module.get_functions() {
-        for attr in get_string_attrs(function) {
-            if let Ok(attr_name) = attr.get_string_kind_id().to_str()
-                && attr_name == "entry_point"
-            {
-                return Ok(function);
-            }
+        if function
+            .get_string_attribute(AttributeLoc::Function, "entry_point")
+            .is_some()
+        {
+            return Ok(function);
         }
     }
     Err("No entry function found".to_string())
-}
-
-/// Retrieves all string attributes from a function.
-#[must_use]
-pub fn get_string_attrs(function: FunctionValue) -> Vec<Attribute> {
-    function
-        .attributes(AttributeLoc::Function)
-        .iter()
-        .filter_map(|attr| if attr.is_string() { Some(*attr) } else { None })
-        .collect()
 }
 
 /// Extracts the `required_num_qubits` attribute from a function.
