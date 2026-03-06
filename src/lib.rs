@@ -139,9 +139,23 @@ mod aux {
         "___barrier",
     ];
 
+    #[cfg(not(windows))]
+    pub fn validate_module_layout_and_triple(module: &Module) {
+        let datalayout = module.get_data_layout();
+        let triple = module.get_triple();
+
+        if !datalayout.as_str().is_empty() {
+            log::warn!("QIR module has a data layout: {:?}", datalayout.as_str());
+        }
+        if !triple.as_str().is_empty() {
+            log::warn!("QIR module has a target triple: {:?}", triple.as_str());
+        }
+    }
+
+    #[cfg(windows)]
     pub const fn validate_module_layout_and_triple(_module: &Module) {
-        // Best-effort warning path only. Intentionally no-op to avoid touching
-        // unstable LLVM getter APIs on some Windows environments.
+        // Best-effort warning path only. Avoid unstable getter APIs on
+        // Windows where these calls have been unreliable in CI.
     }
 
     pub fn validate_functions(

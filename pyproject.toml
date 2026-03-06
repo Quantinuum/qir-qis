@@ -119,6 +119,5 @@ repair-wheel-command = [
     'uvx abi3audit --strict --report {wheel}',
 ]
 test-command = [
-    '''"%LLVM_PATH%\bin\llvm-as.exe" "{project}\tests\data\base_native_only.ll" -o "%TEMP%\base_native_only.bc"''',
-    '''python -c "from pathlib import Path; import tempfile; import qir_qis; qir = (Path(tempfile.gettempdir()) / 'base_native_only.bc').read_bytes(); qir_qis.validate_qir(qir); out = qir_qis.qir_to_qis(qir, opt_level=0, target='x86-64'); assert isinstance(out, (bytes, bytearray)) and len(out) > 0"''',
+    '''python -c "from pathlib import Path; import qir_qis; ll = Path(r'{project}\tests\data\base_native_only.ll').read_text(); qir = qir_qis.qir_ll_to_bc(ll); qir_qis.validate_qir(qir); out = qir_qis.qir_to_qis(qir, opt_level=0, target='x86-64'); assert isinstance(out, (bytes, bytearray)) and len(out) > 0"''',
 ]

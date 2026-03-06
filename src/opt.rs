@@ -91,7 +91,6 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
         if trace_opt {
             eprintln!("qir_qis.optimize: stage=skip_all_o0");
         }
-        let _ = (module, target);
         return Ok(());
     }
 
