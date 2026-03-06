@@ -1290,6 +1290,7 @@ pub fn qir_ll_to_bc(ll_text: &str) -> Result<Vec<u8>, String> {
 ///
 /// These attributes are used to generate METADATA records in QIR output schemas.
 /// This function assumes that QIR has been validated using `validate_qir`.
+/// Only the known QIR entry attributes are returned.
 ///
 /// # Errors
 /// Returns an error string if the input bitcode is invalid.
