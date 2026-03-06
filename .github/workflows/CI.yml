@@ -47,6 +47,14 @@ jobs:
           llvm-version: ${{ env.LLVM_VERSION }}
           linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
           windows-cache-key-suffix: ci-test-v1
+      - name: Configure linker flags for test
+        if: runner.os == 'Linux'
+        run: |
+          llvm_root="${LLVM_PATH}"
+          echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}

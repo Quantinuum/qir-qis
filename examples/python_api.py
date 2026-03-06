@@ -11,8 +11,8 @@
 # ///
 """Example demonstrating the qir_qis Python API."""
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from rich import print as rprint
 
