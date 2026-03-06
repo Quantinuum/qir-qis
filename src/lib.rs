@@ -245,36 +245,89 @@ mod aux {
         #[cfg(not(windows))]
         {
             let ir = module.print_to_string().to_string_lossy().into_owned();
-            let has_supported_major = ir.contains(r#""qir_major_version", i32 1"#)
-                || ir.contains(r#""qir_major_version", i32 2"#);
-            if !has_supported_major {
-                if ir.contains(r#""qir_major_version""#) {
-                    errors.push("Unsupported qir_major_version: expected 1 or 2".to_string());
-                } else {
-                    errors.push("Missing required module flag: qir_major_version".to_string());
-                }
+            let module_flags = collect_module_flag_nodes(&ir);
+            validate_exact_module_flag(
+                &module_flags,
+                "qir_major_version",
+                &["i32 1", "i32 2"],
+                errors,
+            );
+            validate_exact_module_flag(&module_flags, "qir_minor_version", &["i32 0"], errors);
+            validate_exact_module_flag(
+                &module_flags,
+                "dynamic_qubit_management",
+                &["i1 false"],
+                errors,
+            );
+            validate_exact_module_flag(
+                &module_flags,
+                "dynamic_result_management",
+                &["i1 false"],
+                errors,
+            );
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn collect_module_flag_nodes(ir: &str) -> std::collections::HashMap<String, String> {
+        let mut metadata_nodes = std::collections::HashMap::new();
+        let mut module_flag_refs = Vec::new();
+
+        for line in ir.lines().map(str::trim) {
+            if let Some((name, body)) = line.split_once(" = !{")
+                && let Some(name) = name.strip_prefix('!')
+            {
+                metadata_nodes.insert(name.to_string(), format!("!{{{body}"));
             }
 
-            if !ir.contains(r#""qir_minor_version", i32 0"#) {
-                if ir.contains(r#""qir_minor_version""#) {
-                    errors.push("Unsupported qir_minor_version: expected 0".to_string());
-                } else {
-                    errors.push("Missing required module flag: qir_minor_version".to_string());
-                }
-            }
-
-            for flag in ["dynamic_qubit_management", "dynamic_result_management"] {
-                let expected = format!(r#""{flag}", i1 false"#);
-                let exists = format!(r#""{flag}""#);
-                if !ir.contains(&expected) {
-                    if ir.contains(&exists) {
-                        errors.push(format!("Unsupported {flag}: expected i1 false"));
-                    } else {
-                        errors.push(format!("Missing required module flag: {flag}"));
-                    }
-                }
+            if let Some(body) = line.strip_prefix("!llvm.module.flags = !{") {
+                module_flag_refs.extend(
+                    body.trim_end_matches('}')
+                        .split(',')
+                        .map(str::trim)
+                        .filter_map(|entry| entry.strip_prefix('!'))
+                        .map(ToOwned::to_owned),
+                );
             }
         }
+
+        module_flag_refs
+            .into_iter()
+            .filter_map(|id| metadata_nodes.get(&id).cloned().map(|body| (id, body)))
+            .collect()
+    }
+
+    #[cfg(not(windows))]
+    fn validate_exact_module_flag(
+        module_flags: &std::collections::HashMap<String, String>,
+        flag_name: &str,
+        expected_values: &[&str],
+        errors: &mut Vec<String>,
+    ) {
+        let entries: Vec<_> = module_flags
+            .values()
+            .filter(|body| body.contains(&format!(r#"!\"{flag_name}\""#)))
+            .collect();
+
+        if entries.is_empty() {
+            errors.push(format!("Missing required module flag: {flag_name}"));
+            return;
+        }
+
+        if entries.iter().any(|body| {
+            expected_values
+                .iter()
+                .any(|expected| body.contains(&format!(r#"!\"{flag_name}\", {expected}"#)))
+        }) {
+            return;
+        }
+
+        let expected = if expected_values.len() == 1 {
+            expected_values[0].to_string()
+        } else {
+            format!("one of {}", expected_values.join(", "))
+        };
+        errors.push(format!("Unsupported {flag_name}: expected {expected}"));
     }
 
     #[allow(dead_code)]
