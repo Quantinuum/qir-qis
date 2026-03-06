@@ -95,8 +95,6 @@ See [examples/rust_api.rs](https://github.com/quantinuum/qir-qis/blob/main/examp
 cargo run --example rust_api
 ```
 
-Development setup, testing, release notes, and LLVM upgrade guidance live in [DEVELOPMENT.md](https://github.com/quantinuum/qir-qis/blob/main/DEVELOPMENT.md).
-
 ## Contributing
 
 Contributions are welcome! Please read [CONTRIBUTING.md](https://github.com/quantinuum/qir-qis/blob/main/CONTRIBUTING.md) for:
@@ -105,11 +103,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](https://github.com/quan
 - Coding standards and commit message format
 - Development workflow and testing requirements
 
-**Quick checklist before submitting:**
-
-- [ ] Tests pass: `make test`
-- [ ] Linters pass: `make lint`
-- [ ] Documentation updated
+Development setup, test commands, release notes, and LLVM upgrade guidance live in [DEVELOPMENT.md](https://github.com/quantinuum/qir-qis/blob/main/DEVELOPMENT.md).
 
 ## License
 
