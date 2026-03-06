@@ -11,6 +11,14 @@ on:
     types:
       - opened
       - synchronize
+    paths-ignore:
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "DEVELOPMENT.md"
+      - "CHANGELOG.md"
+      - "LICENSE"
+      - "qtm-qir-reference.md"
+      - ".github/*.md"
 
 env:
   CARGO_TERM_COLOR: always
