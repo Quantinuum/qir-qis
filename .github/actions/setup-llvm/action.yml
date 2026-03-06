@@ -57,7 +57,11 @@ runs:
         llvm_root="${{ runner.temp }}/llvm"
         echo "LLVM_PATH=${llvm_root}" >>"$GITHUB_ENV"
         echo "${{ inputs.llvm-sys-prefix-env-var }}=${llvm_root}" >>"$GITHUB_ENV"
-        echo "LD_LIBRARY_PATH=${llvm_root}/lib:${LD_LIBRARY_PATH:-}" >>"$GITHUB_ENV"
+        if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+          echo "LD_LIBRARY_PATH=${llvm_root}/lib:${LD_LIBRARY_PATH}" >>"$GITHUB_ENV"
+        else
+          echo "LD_LIBRARY_PATH=${llvm_root}/lib" >>"$GITHUB_ENV"
+        fi
 
     - name: Install LLVM (macOS)
       if: runner.os == 'macOS' && inputs.enable-macos == 'true'

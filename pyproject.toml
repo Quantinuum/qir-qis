@@ -94,7 +94,6 @@ LLVM_SYS_211_PREFIX = '/tmp/llvm'
 MACOSX_DEPLOYMENT_TARGET = "15.0"
 [tool.cibuildwheel.macos]
 before-all = [
-    'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal',
     'brew install llvm@21',
     'if [ "$(uname -m)" = "arm64" ]; then LLVM_PREFIX=/opt/homebrew/opt/llvm@21; else LLVM_PREFIX=/usr/local/opt/llvm@21; fi',
     'mkdir -p /tmp/llvm',
