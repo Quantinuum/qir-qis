@@ -4,11 +4,9 @@ on:
   push:
     branches:
       - main
+      - feat-qir-2.0
     tags:
       - '*'
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 env:
@@ -17,7 +15,6 @@ env:
 jobs:
   build_wheels:
     name: ${{ matrix.os }} wheels
-    if: ${{ github.event_name != 'pull_request' || startsWith(matrix.os, 'macos') }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
