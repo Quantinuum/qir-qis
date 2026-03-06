@@ -71,22 +71,17 @@ lint.ignore = [
 build = "cp310-*"
 build-frontend = "build[uv]"
 skip = "*-win32 *-manylinux_i686 *-musllinux*"
-manylinux-x86_64-image = "manylinux_2_28"
-manylinux-aarch64-image = "manylinux_2_28"
+manylinux-x86_64-image = "qir-qis-manylinux_2_34_x86_64"
+manylinux-aarch64-image = "qir-qis-manylinux_2_34_aarch64"
 test-command = [
-    "llvm-as {project}/tests/data/base_native_only.ll",
-    "python -c 'import qir_qis; from pathlib import Path; qir = Path(\"{project}/tests/data/base_native_only.ll\").read_bytes(); qir_qis.validate_qir(qir); qir_qis.qir_to_qis(qir)'",
+    "python -c 'import qir_qis; from pathlib import Path; ll = Path(\"{project}/tests/data/base_native_only.ll\").read_text(); qir = qir_qis.qir_ll_to_bc(ll); qir_qis.validate_qir(qir); out = qir_qis.qir_to_qis(qir); assert isinstance(out, (bytes, bytearray)) and len(out) > 0'",
 ]
 
 [tool.cibuildwheel.linux]
-environment = { PATH = '$HOME/.cargo/bin:/tmp/llvm/bin:$PATH', LLVM_SYS_140_PREFIX = '/tmp/llvm', LD_LIBRARY_PATH = '/tmp/llvm/lib:$LD_LIBRARY_PATH' }
+environment = { PATH = '$HOME/.cargo/bin:$PATH', LLVM_SYS_211_PREFIX = '/opt/llvm21', LLVM_CONFIG_PATH = '/opt/llvm21/bin/llvm-config', LD_LIBRARY_PATH = '/opt/llvm21/lib:$LD_LIBRARY_PATH', LLVM_SYS_211_NO_CLEAN_CFLAGS = '1', AR = '/usr/bin/ar', RANLIB = '/usr/bin/ranlib' }
 before-all = [
-    'curl -sSf https://sh.rustup.rs | sh -s -- -y',
-    'dnf install libffi-devel zlib-devel ncurses-compat-libs ncurses-devel -y',
-    'if [ "$(uname -m)" = "aarch64" ]; then LLVM_ARCH_SUFFIX=aarch64-linux-gnu; else LLVM_ARCH_SUFFIX=x86_64-linux-gnu-rhel-8.4; fi',
-    'curl -LO "https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-${LLVM_ARCH_SUFFIX}.tar.xz"',
-    'mkdir -p /tmp/llvm',
-    'tar xf "clang+llvm-14.0.6-${LLVM_ARCH_SUFFIX}.tar.xz" -C /tmp/llvm --strip-components=1',
+    'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.91.0',
+    '/opt/llvm21/bin/llvm-config --version',
 ]
 repair-wheel-command = [
     'auditwheel repair -w {dest_dir} {wheel}',
@@ -95,37 +90,35 @@ repair-wheel-command = [
 
 [tool.cibuildwheel.macos.environment]
 PATH = '/tmp/llvm/bin:$PATH'
-LLVM_SYS_140_PREFIX = '/tmp/llvm'
-MACOSX_DEPLOYMENT_TARGET = "13.2"
+LLVM_SYS_211_PREFIX = '/tmp/llvm'
+MACOSX_DEPLOYMENT_TARGET = "15.0"
 [tool.cibuildwheel.macos]
 before-all = [
-    'curl -sSf https://sh.rustup.rs | sh -s -- -y',
-    'if [ "$(uname -m)" = "arm64" ]; then ARCH_PREFIX=arm64-apple-darwin22.3.0; else ARCH_PREFIX=x86_64-apple-darwin; fi',
-    'curl -LO https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-$ARCH_PREFIX.tar.xz',
+    'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal',
+    'brew install llvm@21',
+    'if [ "$(uname -m)" = "arm64" ]; then LLVM_PREFIX=/opt/homebrew/opt/llvm@21; else LLVM_PREFIX=/usr/local/opt/llvm@21; fi',
     'mkdir -p /tmp/llvm',
-    'tar xf clang+llvm-14.0.6-$ARCH_PREFIX.tar.xz -C /tmp/llvm --strip-components=1',
+    'rsync -a "${LLVM_PREFIX}/" /tmp/llvm/',
 ]
 repair-wheel-command = [
     'DYLD_FALLBACK_LIBRARY_PATH=/tmp/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}',
     'uvx abi3audit --strict --report {wheel}',
 ]
 
-[tool.cibuildwheel.windows.environment]
-PATH = 'C:\\LLVM\\bin;$PATH'
-LLVM_SYS_140_PREFIX = 'C:\\LLVM'
 [tool.cibuildwheel.windows]
-before-all = [
-    'rustup update',
-    'curl -LO https://github.com/PLC-lang/llvm-package-windows/releases/download/v14.0.6/LLVM-14.0.6-win64.7z',
-    '7z x LLVM-14.0.6-win64.7z "-oC:\LLVM" -y',
+before-all = ['rustup update --no-self-update']
+environment = { PATH = "$LLVM_PATH/bin;$PATH", LLVM_SYS_211_PREFIX = "$LLVM_PATH", LLVM_PATH = "$LLVM_PATH", LLVM_CONFIG_PATH = "$LLVM_CONFIG_PATH" }
+before-build = [
+    'if "%LLVM_SYS_211_PREFIX%"=="" (echo LLVM_SYS_211_PREFIX is empty & set LLVM & where llvm-config & exit /b 1)',
+    'if "%LLVM_CONFIG_PATH%"=="" (echo LLVM_CONFIG_PATH is empty & set LLVM & where llvm-config & exit /b 1)',
+    'if not exist "%LLVM_CONFIG_PATH%" (echo llvm-config missing: %LLVM_CONFIG_PATH% & exit /b 1)',
+    '"%LLVM_CONFIG_PATH%" --version',
 ]
-before-build = ['pip install delvewheel']
 repair-wheel-command = [
-    'delvewheel repair -w {dest_dir} {wheel}',
+    'uvx --from delvewheel delvewheel repair -w {dest_dir} {wheel}',
     'uvx abi3audit --strict --report {wheel}',
 ]
 test-command = [
-    'cd /d {project}',
-    'llvm-as tests\data\base_native_only.ll',
-    '''python -c "import qir_qis; from pathlib import Path; qir = Path('tests/data/base_native_only.ll').read_bytes(); qir_qis.validate_qir(qir); qir_qis.qir_to_qis(qir)"''',
+    '''"%LLVM_PATH%\bin\llvm-as.exe" "{project}\tests\data\base_native_only.ll" -o "%TEMP%\base_native_only.bc"''',
+    '''python -c "from pathlib import Path; import tempfile; import qir_qis; qir = (Path(tempfile.gettempdir()) / 'base_native_only.bc').read_bytes(); qir_qis.validate_qir(qir); out = qir_qis.qir_to_qis(qir, opt_level=0, target='x86-64'); assert isinstance(out, (bytes, bytearray)) and len(out) > 0"''',
 ]

@@ -10,6 +10,7 @@ use std::sync::Mutex;
 static TARGET_INIT: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| {
     Target::initialize_x86(&InitializationConfig::default());
     Target::initialize_aarch64(&InitializationConfig::default());
+    #[cfg(not(windows))]
     let _ = Target::initialize_native(&InitializationConfig::default());
     Mutex::new(())
 });
@@ -46,15 +47,19 @@ fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<Targ
         let triple = TargetMachine::get_default_triple();
         let target = Target::from_triple(&triple)
             .map_err(|e| format!("Failed to create target from triple: {e}"))?;
+        #[cfg(windows)]
+        let (cpu, features) = ("generic".to_string(), String::new());
+        #[cfg(not(windows))]
+        let (cpu, features) = (
+            TargetMachine::get_host_cpu_name()
+                .to_string_lossy()
+                .to_string(),
+            TargetMachine::get_host_cpu_features()
+                .to_string_lossy()
+                .to_string(),
+        );
         Ok(target
-            .create_target_machine(
-                &triple,
-                &TargetMachine::get_host_cpu_name().to_string_lossy(),
-                &TargetMachine::get_host_cpu_features().to_string_lossy(),
-                opt_level,
-                reloc_mode,
-                code_model,
-            )
+            .create_target_machine(&triple, &cpu, &features, opt_level, reloc_mode, code_model)
             .ok_or("Failed to create target machine")?)
     } else {
         let (name, cpu, triple, features) = target_config;
@@ -78,14 +83,31 @@ fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<Targ
 /// # Errors
 /// Returns an error if module verification fails
 pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), String> {
+    let trace_opt = std::env::var_os("QIR_QIS_TRACE_OPT").is_some();
+    // O0 preserves semantics without running transformation passes.
+    // Avoid creating a TargetMachine in this mode; TargetMachine teardown has
+    // caused access violations in some Windows environments.
+    if opt_level == 0 {
+        if trace_opt {
+            eprintln!("qir_qis.optimize: stage=skip_all_o0");
+        }
+        let _ = (module, target);
+        return Ok(());
+    }
+
     let (opt, opt_str) = match opt_level {
-        0 => (OptimizationLevel::None, "default<O0>"),
         1 => (OptimizationLevel::Less, "default<O1>"),
         3 => (OptimizationLevel::Aggressive, "default<O3>"),
         _ => (OptimizationLevel::Default, "default<O2>"),
     };
+    if trace_opt {
+        eprintln!("qir_qis.optimize: stage=get_target_machine target={target} opt={opt_level}");
+    }
     let target_machine = get_target_machine(target, opt)
         .map_err(|e| format!("Failed to get target machine: {e}"))?;
+    if trace_opt {
+        eprintln!("qir_qis.optimize: stage=target_machine_ready");
+    }
 
     let (data_layout, triple) = {
         (
@@ -93,11 +115,23 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
             target_machine.get_triple(),
         )
     };
+    if trace_opt {
+        eprintln!("qir_qis.optimize: stage=set_triple_layout");
+    }
     module.set_triple(&triple);
     module.set_data_layout(&data_layout);
+    if trace_opt {
+        eprintln!("qir_qis.optimize: stage=after_set_triple_layout");
+    }
 
+    if trace_opt {
+        eprintln!("qir_qis.optimize: stage=run_passes");
+    }
     module
         .run_passes(opt_str, &target_machine, PassBuilderOptions::create())
         .map_err(|e| format!("Failed to run passes: {e}"))?;
+    if trace_opt {
+        eprintln!("qir_qis.optimize: stage=done");
+    }
     Ok(())
 }

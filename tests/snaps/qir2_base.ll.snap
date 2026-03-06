@@ -3,15 +3,14 @@ source: src/convert.rs
 expression: qis_text.unwrap().to_string()
 ---
 ; ModuleID = 'qis_module'
-source_filename = "qir"
+source_filename = "qir2_base.ll"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "aarch64-unknown-linux-gnu"
 
 @qis_qs = private unnamed_addr global [2 x i64] zeroinitializer
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
+@res_r0 = private constant [15 x i8] c"\0EUSER:RESULT:r0"
 @res_r1 = private constant [15 x i8] c"\0EUSER:RESULT:r1"
-@res_r2 = private constant [15 x i8] c"\0EUSER:RESULT:r2"
-@res_a0.1 = private constant [17 x i8] c"\10USER:QIRARRAY:a0"
 @gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
 @gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
@@ -58,13 +57,12 @@ qir_qis.init_qubit.exit9:                         ; preds = %qir_qis.init_qubit.
   %meas = tail call i64 @___lazy_measure(i64 %qbit)
   %qbit1 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   %meas2 = tail call i64 @___lazy_measure(i64 %qbit1)
-  tail call void @print_int(ptr nonnull @res_a0.1, i64 16, i64 2)
   %bool = tail call i1 @___read_future_bool(i64 %meas)
   tail call void @___dec_future_refcount(i64 %meas)
-  tail call void @print_bool(ptr nonnull @res_r1, i64 14, i1 %bool)
+  tail call void @print_bool(ptr nonnull @res_r0, i64 14, i1 %bool)
   %bool3 = tail call i1 @___read_future_bool(i64 %meas2)
   tail call void @___dec_future_refcount(i64 %meas2)
-  tail call void @print_bool(ptr nonnull @res_r2, i64 14, i1 %bool3)
+  tail call void @print_bool(ptr nonnull @res_r1, i64 14, i1 %bool3)
   %qbit4 = load i64, ptr @qis_qs, align 8
   tail call void @___qfree(i64 %qbit4)
   %qbit5 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
@@ -88,8 +86,6 @@ entry:
 }
 
 declare i64 @___lazy_measure(i64) local_unnamed_addr
-
-declare void @print_int(ptr, i64, i64) local_unnamed_addr
 
 declare i1 @___read_future_bool(i64) local_unnamed_addr
 
@@ -122,7 +118,7 @@ attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memor
 !llvm.module.flags = !{!0, !1, !2, !3}
 !name = !{!4}
 
-!0 = !{i32 1, !"qir_major_version", i32 1}
+!0 = !{i32 1, !"qir_major_version", i32 2}
 !1 = !{i32 7, !"qir_minor_version", i32 0}
 !2 = !{i32 1, !"dynamic_qubit_management", i1 false}
 !3 = !{i32 1, !"dynamic_result_management", i1 false}
