@@ -1098,8 +1098,8 @@ pub fn qir_to_qis(
     use crate::{
         aux::process_entry_function,
         convert::{
-            add_qmain_wrapper, create_qubit_array, find_entry_function, free_all_qubits,
-            process_ir_defined_q_fns,
+            ENTRY_ATTRIBUTE_KEYS, add_qmain_wrapper, create_qubit_array, find_entry_function,
+            free_all_qubits, process_ir_defined_q_fns,
         },
         decompose::add_decompositions,
         opt::optimize,
@@ -1149,13 +1149,7 @@ pub fn qir_to_qis(
         .map_err(|e| format!("LLVM module verification failed: {e}"))?;
 
     // Clean up the translated module
-    for key in [
-        "entry_point",
-        "qir_profiles",
-        "output_labeling_schema",
-        "required_num_qubits",
-        "required_num_results",
-    ] {
+    for key in ENTRY_ATTRIBUTE_KEYS {
         entry_fn.remove_string_attribute(AttributeLoc::Function, key);
     }
 
@@ -1213,7 +1207,7 @@ fn get_wasm_functions(
 pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), String> {
     use crate::{
         aux::{validate_functions, validate_module_flags, validate_module_layout_and_triple},
-        convert::find_entry_function,
+        convert::{ENTRY_ATTRIBUTE_KEYS, find_entry_function},
     };
     use inkwell::{
         attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
@@ -1233,13 +1227,11 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
         }
 
         // Enforce required attributes
-        let required_attrs = [
-            "required_num_qubits",
-            "required_num_results",
-            "qir_profiles",
-            "output_labeling_schema",
-        ];
-        for &attr in &required_attrs {
+        for attr in ENTRY_ATTRIBUTE_KEYS
+            .iter()
+            .copied()
+            .filter(|attr| *attr != "entry_point")
+        {
             let val = entry_fn.get_string_attribute(AttributeLoc::Function, attr);
             if val.is_none() {
                 errors.push(format!("Missing required attribute: `{attr}`"));

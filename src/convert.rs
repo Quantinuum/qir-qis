@@ -5,7 +5,7 @@ use std::error::Error;
 use std::str::from_utf8;
 
 use inkwell::AddressSpace;
-use inkwell::attributes::AttributeLoc;
+use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -20,6 +20,13 @@ use crate::decompose::QirTypes;
 
 pub const INIT_QARRAY_FN: &str = "qir_qis.init_qubit";
 pub const LOAD_QUBIT_FN: &str = "qir_qis.load_qubit";
+pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
+    "entry_point",
+    "qir_profiles",
+    "output_labeling_schema",
+    "required_num_qubits",
+    "required_num_results",
+];
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
 
@@ -172,6 +179,20 @@ pub fn find_entry_function<'a>(module: &Module<'a>) -> Result<FunctionValue<'a>,
         }
     }
     Err("No entry function found".to_string())
+}
+
+/// Retrieves known QIR entry-point string attributes from a function.
+///
+/// This compatibility helper preserves the previous public API surface while
+/// avoiding generic LLVM attribute iteration on platforms where that has been
+/// unstable. Attributes outside [`ENTRY_ATTRIBUTE_KEYS`] are ignored.
+#[deprecated(note = "Use direct get_string_attribute lookups for known QIR entry attributes")]
+#[must_use]
+pub fn get_string_attrs(function: FunctionValue) -> Vec<Attribute> {
+    ENTRY_ATTRIBUTE_KEYS
+        .iter()
+        .filter_map(|key| function.get_string_attribute(AttributeLoc::Function, key))
+        .collect()
 }
 
 /// Extracts the `required_num_qubits` attribute from a function.
