@@ -17,6 +17,7 @@ env:
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: -D warnings
   LLVM_VERSION: "21.1.8"
+  LLVM_LINUX_CACHE_KEY_SUFFIX: "ci-linux-shared-v1"
   RUST_VERSION: "1.93.1"
 
 jobs:
@@ -44,7 +45,7 @@ jobs:
         uses: ./.github/actions/setup-llvm
         with:
           llvm-version: ${{ env.LLVM_VERSION }}
-          linux-cache-key-suffix: ci-test-v1
+          linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
           windows-cache-key-suffix: ci-test-v1
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -60,17 +61,29 @@ jobs:
           cache-targets: true
       - name: Test (Windows suite)
         if: runner.os == 'Windows'
-        run: cargo nextest run --all-targets --all-features --test-threads=1 -E "not test(test_get_entry_attributes)"
+        run: cargo nextest run --lib --all-features --test-threads=1 -E "not test(test_get_entry_attributes)"
       - name: Test (Windows isolated get_entry_attributes)
         if: runner.os == 'Windows'
-        run: cargo test --all-targets --all-features test_get_entry_attributes -- --test-threads=1
+        run: cargo test --lib --all-features test_get_entry_attributes -- --test-threads=1
       - name: Test
         if: runner.os != 'Windows'
-        run: cargo nextest run --all-targets --all-features ${{ matrix.nextest_extra_args }}
+        # All exercised tests live in the library test binary. Avoid rebuilding
+        # empty bin/example harnesses, which is especially expensive with LLVM 21.
+        run: cargo nextest run --lib --all-features ${{ matrix.nextest_extra_args }}
       - name: Rust API example smoke
-        run: cargo run --example rust_api
+        # Reuse the already-built test-profile artifacts instead of rebuilding
+        # the crate again in Cargo's default dev profile.
+        run: cargo run --example rust_api --all-features --profile test
+      - name: Install Python example dependencies
+        env:
+          MATURIN_PROFILE: dev
+        run: uv sync --group dev
       - name: Python API example smoke
-        run: uv run examples/python_api.py
+        env:
+          MATURIN_PROFILE: dev
+        # Run through the project environment so the editable install from
+        # `uv sync` can be reused instead of rebuilding via script metadata.
+        run: uv run python examples/python_api.py
 
   lint:
     runs-on: ubuntu-latest
@@ -84,7 +97,7 @@ jobs:
           llvm-version: ${{ env.LLVM_VERSION }}
           enable-macos: "false"
           enable-windows: "false"
-          linux-cache-key-suffix: ci-lint-v1
+          linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
       - name: Configure linker flags for lint
         run: |
           llvm_root="${LLVM_PATH}"
