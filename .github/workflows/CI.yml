@@ -52,6 +52,11 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-rust-${{ runner.os }}-llvm21
+          cache-on-failure: true
+          cache-workspace-crates: true
+          cache-targets: true
       - name: Test (Windows suite)
         if: runner.os == 'Windows'
         run: cargo nextest run --all-targets --all-features --test-threads=1 -E "not test(test_get_entry_attributes)"
