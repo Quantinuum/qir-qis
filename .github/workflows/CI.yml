@@ -63,8 +63,6 @@ jobs:
           echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-rust-${{ runner.os }}-${{ env.LLVM_RUST_CACHE_FAMILY }}
@@ -82,20 +80,14 @@ jobs:
         # All exercised tests live in the library test binary. Avoid rebuilding
         # empty bin/example harnesses, which is especially expensive with LLVM 21.
         run: cargo nextest run --lib --all-features ${{ matrix.nextest_extra_args }}
+      - uses: astral-sh/setup-uv@v7
+        if: runner.os != 'Linux'
       - name: Rust API example smoke
-        # Reuse the already-built test-profile artifacts instead of rebuilding
-        # the crate again in Cargo's default dev profile.
+        if: runner.os != 'Linux'
         run: cargo run --example rust_api --all-features --profile test
-      - name: Install Python example dependencies
-        env:
-          MATURIN_PROFILE: dev
-        run: uv sync --group dev
       - name: Python API example smoke
-        env:
-          MATURIN_PROFILE: dev
-        # Run through the project environment so the editable install from
-        # `uv sync` can be reused instead of rebuilding via script metadata.
-        run: uv run python examples/python_api.py
+        if: runner.os != 'Linux'
+        run: uv run examples/python_api.py
 
   lint:
     runs-on: ubuntu-latest
