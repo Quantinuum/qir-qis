@@ -40,15 +40,7 @@ struct NativeGates<'ctx> {
 /// # Errors
 /// Returns an error if the module verification fails.
 pub fn add_decompositions<'ctx>(ctx: &'ctx Context, module: &Module<'ctx>) -> Result<(), String> {
-    let trace = std::env::var_os("QIR_QIS_TRACE_DECOMPOSE").is_some();
-    if trace {
-        eprintln!("qir_qis.add_decompositions: stage=build_decompositions");
-    }
-    build_decompositions(ctx, module, trace)?;
-
-    if trace {
-        eprintln!("qir_qis.add_decompositions: stage=verify_module");
-    }
+    build_decompositions(ctx, module, false)?;
     crate::llvm_verify::verify_module(module, "Module verification failed")?;
 
     Ok(())
