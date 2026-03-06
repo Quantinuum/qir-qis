@@ -83,14 +83,10 @@ fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<Targ
 /// # Errors
 /// Returns an error if module verification fails
 pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), String> {
-    let trace_opt = std::env::var_os("QIR_QIS_TRACE_OPT").is_some();
     // O0 preserves semantics without running transformation passes.
     // Avoid creating a TargetMachine in this mode; TargetMachine teardown has
     // caused access violations in some Windows environments.
     if opt_level == 0 {
-        if trace_opt {
-            eprintln!("qir_qis.optimize: stage=skip_all_o0");
-        }
         let _ = (module, target);
         return Ok(());
     }
@@ -100,14 +96,8 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
         3 => (OptimizationLevel::Aggressive, "default<O3>"),
         _ => (OptimizationLevel::Default, "default<O2>"),
     };
-    if trace_opt {
-        eprintln!("qir_qis.optimize: stage=get_target_machine target={target} opt={opt_level}");
-    }
     let target_machine = get_target_machine(target, opt)
         .map_err(|e| format!("Failed to get target machine: {e}"))?;
-    if trace_opt {
-        eprintln!("qir_qis.optimize: stage=target_machine_ready");
-    }
 
     let (data_layout, triple) = {
         (
@@ -115,23 +105,10 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
             target_machine.get_triple(),
         )
     };
-    if trace_opt {
-        eprintln!("qir_qis.optimize: stage=set_triple_layout");
-    }
     module.set_triple(&triple);
     module.set_data_layout(&data_layout);
-    if trace_opt {
-        eprintln!("qir_qis.optimize: stage=after_set_triple_layout");
-    }
-
-    if trace_opt {
-        eprintln!("qir_qis.optimize: stage=run_passes");
-    }
     module
         .run_passes(opt_str, &target_machine, PassBuilderOptions::create())
         .map_err(|e| format!("Failed to run passes: {e}"))?;
-    if trace_opt {
-        eprintln!("qir_qis.optimize: stage=done");
-    }
     Ok(())
 }

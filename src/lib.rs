@@ -284,33 +284,15 @@ mod aux {
         wasm_fns: &BTreeMap<String, u64>,
         qubit_array: PointerValue<'ctx>,
     ) -> Result<(), String> {
-        let trace_process_entry = std::env::var_os("QIR_QIS_TRACE_PROCESS_ENTRY").is_some();
-        let skip_convert_globals = std::env::var_os("QIR_QIS_SKIP_CONVERT_GLOBALS").is_some();
-        if trace_process_entry {
-            eprintln!("qir_qis.process_entry_function: stage=convert_globals");
-        }
-        let mut global_mapping = if skip_convert_globals {
-            HashMap::new()
-        } else {
-            convert_globals(ctx, module)?
-        };
+        let mut global_mapping = convert_globals(ctx, module)?;
 
         if global_mapping.is_empty() {
             log::warn!("No globals found in QIR module");
         }
-        if trace_process_entry {
-            eprintln!("qir_qis.process_entry_function: stage=get_result_vars");
-        }
         let mut result_ssa = get_result_vars(entry_fn)?;
-        if trace_process_entry {
-            eprintln!("qir_qis.process_entry_function: stage=get_required_num_qubits");
-        }
         let required_num_qubits = get_required_num_qubits_strict(entry_fn)?;
         let qubit_array_type = ctx.i64_type().array_type(required_num_qubits);
 
-        if trace_process_entry {
-            eprintln!("qir_qis.process_entry_function: stage=iterate_blocks");
-        }
         for bb in entry_fn.get_basic_blocks() {
             // Snapshot instructions before rewriting calls. Some rewrite paths
             // erase/replace instructions, which can invalidate in-place iterators.
@@ -326,9 +308,6 @@ mod aux {
                         .ok()
                         .map(ToOwned::to_owned)
                 }) {
-                    if trace_process_entry {
-                        eprintln!("qir_qis.process_entry_function: call={fn_name}");
-                    }
                     let mut args = ProcessCallArgs {
                         ctx,
                         module,
@@ -341,9 +320,6 @@ mod aux {
                         result_ssa: &mut result_ssa,
                     };
                     process_call_instruction(&mut args)?;
-                    if trace_process_entry {
-                        eprintln!("qir_qis.process_entry_function: done={fn_name}");
-                    }
                 }
             }
         }
@@ -1166,31 +1142,12 @@ pub fn qir_to_qis(
     use std::{collections::BTreeMap, env};
 
     let ctx = Context::create();
-    let trace_qir_to_qis = std::env::var_os("QIR_QIS_TRACE_QIR_TO_QIS").is_some();
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=parse_bitcode");
-    }
     let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
     let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
         .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=verify_after_parse");
-    }
     crate::llvm_verify::verify_module(&module, "LLVM module verification failed after parse")?;
 
-    let skip_decompositions = std::env::var_os("QIR_QIS_SKIP_DECOMPOSITIONS").is_some();
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=add_decompositions");
-    }
-    if !skip_decompositions {
-        let _ = add_decompositions(&ctx, &module);
-    } else if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: decompositions skipped");
-    }
-
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=find_entry");
-    }
+    let _ = add_decompositions(&ctx, &module);
     let entry_fn = find_entry_function(&module)
         .map_err(|e| format!("Failed to find entry function in QIR module: {e}"))?;
 
@@ -1203,39 +1160,19 @@ pub fn qir_to_qis(
     let new_name = format!("___user_qir_{entry_fn_name}");
     entry_fn.as_global_value().set_name(&new_name);
     log::debug!("Renamed entry function to: {new_name}");
-
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=create_qubit_array");
-    }
     let qubit_array = create_qubit_array(&ctx, &module, entry_fn)?;
 
     let wasm_fns: BTreeMap<String, u64> = BTreeMap::new();
-
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=process_entry_function");
-    }
     process_entry_function(&ctx, &module, entry_fn, &wasm_fns, qubit_array)?;
 
     // Handle IR defined functions that take qubits
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=process_ir_defined_q_fns");
-    }
     process_ir_defined_q_fns(&ctx, &module, entry_fn)?;
 
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=free_all_qubits");
-    }
     free_all_qubits(&ctx, &module, entry_fn, qubit_array)?;
 
     // Add qmain wrapper that calls setup, entry function, and teardown
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=add_qmain_wrapper");
-    }
     let _ = add_qmain_wrapper(&ctx, &module, entry_fn);
 
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=verify_module");
-    }
     crate::llvm_verify::verify_module(&module, "LLVM module verification failed")?;
 
     // Clean up known QIR entry-point attributes without relying on full
@@ -1262,14 +1199,8 @@ pub fn qir_to_qis(
     add_generator_metadata(&ctx, &module, "gen_name", env!("CARGO_PKG_NAME"))?;
     add_generator_metadata(&ctx, &module, "gen_version", env!("CARGO_PKG_VERSION"))?;
 
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=optimize");
-    }
     optimize(&module, opt_level, target)?;
     prune_unused_ir_qis_helpers(&module);
-    if trace_qir_to_qis {
-        eprintln!("qir_qis.qir_to_qis: stage=write_bitcode");
-    }
 
     Ok(module.write_bitcode_to_memory().as_slice().to_vec())
 }
@@ -1316,23 +1247,13 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
     use inkwell::{attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer};
 
     let ctx = Context::create();
-    let trace_validate = std::env::var_os("QIR_QIS_TRACE_VALIDATE").is_some();
-    if trace_validate {
-        eprintln!("qir_qis.validate_qir: stage=parse_bitcode");
-    }
     let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
     let module = inkwell::module::Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
         .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
     let mut errors = Vec::new();
 
-    if trace_validate {
-        eprintln!("qir_qis.validate_qir: stage=layout_and_triple");
-    }
     validate_module_layout_and_triple(&module);
 
-    if trace_validate {
-        eprintln!("qir_qis.validate_qir: stage=find_entry");
-    }
     let entry_fn = if let Ok(entry_fn) = find_entry_function(&module) {
         if entry_fn.get_basic_blocks().is_empty() {
             errors.push("Entry function has no basic blocks".to_string());
@@ -1373,14 +1294,8 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
 
     let wasm_fns = get_wasm_functions(wasm_bytes)?;
 
-    if trace_validate {
-        eprintln!("qir_qis.validate_qir: stage=validate_functions");
-    }
     validate_functions(&module, entry_fn, &wasm_fns, &mut errors);
 
-    if trace_validate {
-        eprintln!("qir_qis.validate_qir: stage=validate_module_flags");
-    }
     validate_module_flags(&module, &mut errors);
 
     if !errors.is_empty() {
