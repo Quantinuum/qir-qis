@@ -11,6 +11,7 @@ on:
 
 env:
   LLVM_VERSION: "21.1.8"
+  LLVM_SYS_PREFIX_ENV_VAR: "LLVM_SYS_211_PREFIX"
 
 jobs:
   build_wheels:
@@ -28,6 +29,7 @@ jobs:
         uses: ./.github/actions/setup-llvm
         with:
           llvm-version: ${{ env.LLVM_VERSION }}
+          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
           enable-linux: "false"
           enable-macos: "false"
           windows-cache-key-suffix: wheels-v1

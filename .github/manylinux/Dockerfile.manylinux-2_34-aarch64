@@ -22,12 +22,12 @@ RUN dnf install -y \
 RUN curl -L -o /tmp/llvm-project.src.tar.xz \
     "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz" && \
     tar -xf /tmp/llvm-project.src.tar.xz -C /tmp && \
-    mkdir -p /tmp/llvm-build /opt/llvm21 && \
+    mkdir -p /tmp/llvm-build /opt/llvm && \
     cmake -S /tmp/llvm-project-${LLVM_VERSION}.src/llvm \
       -B /tmp/llvm-build \
       -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=/opt/llvm21 \
+      -DCMAKE_INSTALL_PREFIX=/opt/llvm \
       -DLLVM_TARGETS_TO_BUILD="AArch64;X86" \
       -DBUILD_SHARED_LIBS=OFF \
       -DLLVM_BUILD_LLVM_DYLIB=OFF \
@@ -36,6 +36,6 @@ RUN curl -L -o /tmp/llvm-project.src.tar.xz \
     rm -rf /tmp/llvm-project-${LLVM_VERSION}.src /tmp/llvm-project.src.tar.xz /tmp/llvm-build
 
 COPY .github/manylinux/llvm-config-wrapper.sh /tmp/llvm-config-wrapper.sh
-RUN mv /opt/llvm21/bin/llvm-config /opt/llvm21/bin/llvm-config.real && \
-    install -m 0755 /tmp/llvm-config-wrapper.sh /opt/llvm21/bin/llvm-config && \
+RUN mv /opt/llvm/bin/llvm-config /opt/llvm/bin/llvm-config.real && \
+    install -m 0755 /tmp/llvm-config-wrapper.sh /opt/llvm/bin/llvm-config && \
     rm -f /tmp/llvm-config-wrapper.sh

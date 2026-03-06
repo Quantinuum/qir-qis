@@ -6,21 +6,24 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
 
+env:
+  LLVM_VERSION: "21.1.8"
+  LLVM_SYS_PREFIX_ENV_VAR: "LLVM_SYS_211_PREFIX"
+
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@v2
+      - name: Setup LLVM
+        uses: ./.github/actions/setup-llvm
         with:
-          version: "21.1.8"
-          directory: ${{ runner.temp }}/llvm
-          env: true
-
-      - name: Configure LLVM
-        run: echo "LLVM_SYS_211_PREFIX=$LLVM_PATH" >> "$GITHUB_ENV"
+          llvm-version: ${{ env.LLVM_VERSION }}
+          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
+          enable-macos: "false"
+          enable-windows: "false"
+          linux-cache-key-suffix: rust-release-v1
 
       - uses: dtolnay/rust-toolchain@stable
 

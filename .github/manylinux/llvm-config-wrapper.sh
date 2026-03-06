@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REAL="${LLVM_CONFIG_REAL:-/opt/llvm21/bin/llvm-config.real}"
+REAL="${LLVM_CONFIG_REAL:-/opt/llvm/bin/llvm-config.real}"
 
 if [[ "${1:-}" == "--system-libs" ]]; then
   "$REAL" "$@" | sed -E "s@/usr/lib[^ ]*/lib([A-Za-z0-9_+.-]+)\\.a@-l\\1@g"

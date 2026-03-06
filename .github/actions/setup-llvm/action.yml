@@ -6,6 +6,10 @@ inputs:
     description: Full LLVM version (for example, 21.1.8).
     required: false
     default: "21.1.8"
+  llvm-sys-prefix-env-var:
+    description: Versioned llvm-sys prefix environment variable to export.
+    required: false
+    default: "LLVM_SYS_211_PREFIX"
   enable-linux:
     description: Run Linux LLVM setup.
     required: false
@@ -52,7 +56,7 @@ runs:
       run: |
         llvm_root="${{ runner.temp }}/llvm"
         echo "LLVM_PATH=${llvm_root}" >>"$GITHUB_ENV"
-        echo "LLVM_SYS_211_PREFIX=${llvm_root}" >>"$GITHUB_ENV"
+        echo "${{ inputs.llvm-sys-prefix-env-var }}=${llvm_root}" >>"$GITHUB_ENV"
         echo "LD_LIBRARY_PATH=${llvm_root}/lib:${LD_LIBRARY_PATH:-}" >>"$GITHUB_ENV"
 
     - name: Install LLVM (macOS)
@@ -68,7 +72,7 @@ runs:
           llvm_prefix="/usr/local/opt/llvm@${llvm_major}"
         fi
         echo "${llvm_prefix}/bin" >>"$GITHUB_PATH"
-        echo "LLVM_SYS_211_PREFIX=${llvm_prefix}" >>"$GITHUB_ENV"
+        echo "${{ inputs.llvm-sys-prefix-env-var }}=${llvm_prefix}" >>"$GITHUB_ENV"
         echo "DYLD_FALLBACK_LIBRARY_PATH=${llvm_prefix}/lib" >>"$GITHUB_ENV"
 
     - name: Cache LLVM archive (Windows)
@@ -155,5 +159,5 @@ runs:
 
         "PATH=$llvmRoot\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         "LLVM_PATH=$llvmRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        "LLVM_SYS_211_PREFIX=$llvmRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "${{ inputs.llvm-sys-prefix-env-var }}=$llvmRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         "LLVM_CONFIG_PATH=$llvmConfigFilter" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

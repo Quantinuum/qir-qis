@@ -15,11 +15,11 @@ RUN dnf install -y \
 
 RUN curl -L -o /tmp/llvm.tar.xz \
     "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.xz" && \
-    mkdir -p /opt/llvm21 && \
-    tar -xf /tmp/llvm.tar.xz -C /opt/llvm21 --strip-components=1 && \
+    mkdir -p /opt/llvm && \
+    tar -xf /tmp/llvm.tar.xz -C /opt/llvm --strip-components=1 && \
     rm /tmp/llvm.tar.xz
 
 COPY .github/manylinux/llvm-config-wrapper.sh /tmp/llvm-config-wrapper.sh
-RUN mv /opt/llvm21/bin/llvm-config /opt/llvm21/bin/llvm-config.real && \
-    install -m 0755 /tmp/llvm-config-wrapper.sh /opt/llvm21/bin/llvm-config && \
+RUN mv /opt/llvm/bin/llvm-config /opt/llvm/bin/llvm-config.real && \
+    install -m 0755 /tmp/llvm-config-wrapper.sh /opt/llvm/bin/llvm-config && \
     rm -f /tmp/llvm-config-wrapper.sh
