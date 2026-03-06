@@ -1105,14 +1105,15 @@ pub fn qir_to_qis(
         opt::optimize,
         utils::add_generator_metadata,
     };
-    use inkwell::{attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer};
+    use inkwell::{
+        attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
+    };
     use std::{collections::BTreeMap, env};
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range(bc_bytes, "bitcode");
-    let module = ctx
-        .create_module_from_ir(memory_buffer)
-        .map_err(|e| format!("Failed to create module: {e}"))?;
+    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
+    let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+        .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
 
     let _ = add_decompositions(&ctx, &module);
 
@@ -1214,12 +1215,13 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
         aux::{validate_functions, validate_module_flags, validate_module_layout_and_triple},
         convert::find_entry_function,
     };
-    use inkwell::{attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer};
+    use inkwell::{
+        attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
+    };
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range(bc_bytes, "bitcode");
-    let module = ctx
-        .create_module_from_ir(memory_buffer)
+    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
+    let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
         .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
     let mut errors = Vec::new();
 
@@ -1284,7 +1286,7 @@ pub fn qir_ll_to_bc(ll_text: &str) -> Result<Vec<u8>, String> {
     use inkwell::{context::Context, memory_buffer::MemoryBuffer};
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range(ll_text.as_bytes(), "qir");
+    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(ll_text.as_bytes(), "qir");
     let module = ctx
         .create_module_from_ir(memory_buffer)
         .map_err(|e| format!("Failed to create module from LLVM IR: {e}"))?;
@@ -1303,7 +1305,9 @@ pub fn get_entry_attributes(
     bc_bytes: &[u8],
 ) -> Result<std::collections::BTreeMap<String, Option<String>>, String> {
     use crate::convert::find_entry_function;
-    use inkwell::{attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer};
+    use inkwell::{
+        attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
+    };
     use std::collections::BTreeMap;
 
     const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
@@ -1315,10 +1319,9 @@ pub fn get_entry_attributes(
     ];
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range(bc_bytes, "bitcode");
-    let module = ctx
-        .create_module_from_ir(memory_buffer)
-        .map_err(|e| format!("Failed to create module from QIR bitcode: {e}"))?;
+    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
+    let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+        .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
 
     let mut metadata = BTreeMap::new();
     if let Ok(entry_fn) = find_entry_function(&module) {
