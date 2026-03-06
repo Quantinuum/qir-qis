@@ -2,9 +2,6 @@ name: Wheels & Release
 
 on:
   push:
-    branches:
-      - main
-      - feat-qir-2.0
     tags:
       - '*'
   workflow_dispatch:
@@ -44,6 +41,8 @@ jobs:
         with:
           context: .
           file: .github/manylinux/Dockerfile.manylinux-2_34-x86_64
+          build-args: |
+            LLVM_VERSION=${{ env.LLVM_VERSION }}
           tags: qir-qis-manylinux_2_34_x86_64
           load: true
           cache-from: type=gha,scope=manylinux-x86
@@ -55,6 +54,8 @@ jobs:
         with:
           context: .
           file: .github/manylinux/Dockerfile.manylinux-2_34-aarch64
+          build-args: |
+            LLVM_VERSION=${{ env.LLVM_VERSION }}
           tags: qir-qis-manylinux_2_34_aarch64
           load: true
           cache-from: type=gha,scope=manylinux-arm64
