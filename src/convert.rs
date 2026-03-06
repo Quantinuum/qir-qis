@@ -11,8 +11,8 @@ use inkwell::context::Context;
 use inkwell::module::{Linkage, Module};
 use inkwell::types::{AnyTypeEnum, FunctionType};
 use inkwell::values::{
-    ArrayValue, AsValueRef, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, GlobalValue,
-    InstructionOpcode, InstructionValue, PointerValue,
+    AnyValue, ArrayValue, AsValueRef, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue,
+    GlobalValue, InstructionOpcode, InstructionValue, PointerValue,
 };
 use llvm_sys::core::{
     LLVMGetAsString, LLVMGetNumOperands, LLVMGetOperand, LLVMGetValueName2, LLVMIsConstantString,
@@ -810,7 +810,6 @@ pub fn replace_rzz_call<'a>(
 }
 
 /// Extracts the qubit index from an `IntToPtr` conversion string.
-#[cfg(test)]
 fn get_idx_from_pointer_repr(ir_string: &str) -> Result<u64, String> {
     // Expected form: `inttoptr (i64 <index> to ...)`
     let pattern = "inttoptr (i64 ";
@@ -843,7 +842,9 @@ pub fn get_index(arg: PointerValue) -> Result<u64, String> {
             return Ok(idx);
         }
     }
-    Err("Cannot extract pointer index from non-constant pointer".to_string())
+    // Fallback: try to extract the index from an `inttoptr` representation.
+    let ir_string = arg.print_to_string().to_string();
+    get_idx_from_pointer_repr(&ir_string)
 }
 
 /// Creates a call to the `___qfree` function.

@@ -231,16 +231,34 @@ mod aux {
         #[cfg(not(windows))]
         {
             let ir = module.print_to_string().to_string_lossy().into_owned();
-            let has_major_flag = ir.contains(r#""qir_major_version""#);
-            if !has_major_flag {
-                errors.push("Missing required module flag: qir_major_version".to_string());
-                return;
-            }
-
             let has_supported_major = ir.contains(r#""qir_major_version", i32 1"#)
                 || ir.contains(r#""qir_major_version", i32 2"#);
             if !has_supported_major {
-                errors.push("Unsupported qir_major_version: expected 1 or 2".to_string());
+                if ir.contains(r#""qir_major_version""#) {
+                    errors.push("Unsupported qir_major_version: expected 1 or 2".to_string());
+                } else {
+                    errors.push("Missing required module flag: qir_major_version".to_string());
+                }
+            }
+
+            if !ir.contains(r#""qir_minor_version", i32 0"#) {
+                if ir.contains(r#""qir_minor_version""#) {
+                    errors.push("Unsupported qir_minor_version: expected 0".to_string());
+                } else {
+                    errors.push("Missing required module flag: qir_minor_version".to_string());
+                }
+            }
+
+            for flag in ["dynamic_qubit_management", "dynamic_result_management"] {
+                let expected = format!(r#""{flag}", i1 false"#);
+                let exists = format!(r#""{flag}""#);
+                if !ir.contains(&expected) {
+                    if ir.contains(&exists) {
+                        errors.push(format!("Unsupported {flag}: expected i1 false"));
+                    } else {
+                        errors.push(format!("Missing required module flag: {flag}"));
+                    }
+                }
             }
         }
     }
