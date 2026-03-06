@@ -50,6 +50,8 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
       - uses: taiki-e/install-action@nextest
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-rust-${{ runner.os }}-llvm21
@@ -65,6 +67,10 @@ jobs:
       - name: Test
         if: runner.os != 'Windows'
         run: cargo nextest run --all-targets --all-features ${{ matrix.nextest_extra_args }}
+      - name: Rust API example smoke
+        run: cargo run --example rust_api
+      - name: Python API example smoke
+        run: uv run examples/python_api.py
 
   lint:
     runs-on: ubuntu-latest

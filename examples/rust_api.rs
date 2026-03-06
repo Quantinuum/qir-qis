@@ -16,7 +16,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Required qubits: {attributes:#?}");
 
     // Compile to QIS
-    let qis_bytes = qir_to_qis(&bc_bytes, 2, "aarch64", None)?;
+    #[cfg(windows)]
+    let (opt_level, target) = (0, "native");
+    #[cfg(not(windows))]
+    let (opt_level, target) = (2, "aarch64");
+    let qis_bytes = qir_to_qis(&bc_bytes, opt_level, target, None)?;
 
     // Write output
     fs::write("output.qis.bc", qis_bytes)?;
