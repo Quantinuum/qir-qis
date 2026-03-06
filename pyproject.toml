@@ -91,7 +91,7 @@ repair-wheel-command = [
 [tool.cibuildwheel.macos.environment]
 PATH = '/tmp/llvm/bin:$PATH'
 LLVM_SYS_211_PREFIX = '/tmp/llvm'
-MACOSX_DEPLOYMENT_TARGET = "15.0"
+MACOSX_DEPLOYMENT_TARGET = "13.2"
 [tool.cibuildwheel.macos]
 before-all = [
     'brew install llvm@21',
