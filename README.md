@@ -55,12 +55,6 @@ uv pip install qir-qis
 pip install qir-qis
 ```
 
-For development installation:
-
-```sh
-uv sync
-```
-
 ## Usage
 
 ### Command Line
@@ -101,135 +95,7 @@ See [examples/rust_api.rs](https://github.com/quantinuum/qir-qis/blob/main/examp
 cargo run --example rust_api
 ```
 
-## Development
-
-### Setting Up Development Environment
-
-```sh
-# Clone the repository
-git clone https://github.com/quantinuum/qir-qis.git
-cd qir-qis
-
-# Install LLVM 21 (macOS/Homebrew example)
-brew install llvm@21
-export LLVM_SYS_211_PREFIX=/opt/homebrew/opt/llvm@21
-
-# Install Rust dependencies and build
-cargo build
-
-# Install Python dependencies
-uv sync
-```
-
-### Building
-
-```sh
-# Build Rust binary
-LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
-cargo build --release
-
-# Build Python package
-LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
-uv run maturin build --release
-```
-
-### Testing
-
-#### Running Tests
-
-Tests require [cargo-nextest](https://nexte.st/docs/installation/pre-built-binaries/):
-
-```sh
-# Run all tests
-LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
-make test
-
-# Or directly with cargo
-LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
-cargo nextest run --all-targets --all-features
-```
-
-#### Testing Individual Files
-
-```sh
-# Compile a single QIR file
-make compile FILE=tests/data/adaptive.ll
-
-# Compile all test files
-make allcompile
-```
-
-#### Simulation Testing with Selene
-
-Test the compiled QIS using [Selene quantum simulator](https://docs.quantinuum.com/selene/):
-
-```sh
-# Simulate a single file (runs 5 shots by default)
-make sim FILE=tests/data/adaptive.ll
-
-# Simulate all test files
-make allsim
-```
-
-This will:
-
-1. Compile the QIR to QIS
-2. Run it on the Selene/Quest simulator
-3. Display measurement results
-
-### Code Quality
-
-```sh
-# Run linters
-make lint
-
-# This runs:
-# - prek (pre-commit checks, https://prek.j178.dev/)
-# - typos checker
-# - cargo clippy
-```
-
-### Regenerating Python Stubs
-
-After modifying the Python API:
-
-```sh
-make stubs
-```
-
-This updates [qir_qis.pyi](https://github.com/quantinuum/qir-qis/blob/main/qir_qis.pyi) with the latest type signatures.
-
-## Project Structure
-
-```text
-qir-qis/
-├── src/
-│   ├── main.rs          # CLI entry point
-│   ├── lib.rs           # Library and Python bindings
-│   ├── convert.rs       # QIR to QIS conversion logic
-│   ├── decompose.rs     # Gate decomposition
-│   ├── opt.rs           # LLVM optimization passes
-│   └── utils.rs         # Helper utilities
-├── tests/
-│   ├── data/            # Test QIR files
-│   └── snaps/           # Snapshot test results
-├── main.py              # Example Python usage with simulation
-├── Cargo.toml           # Rust package configuration
-├── pyproject.toml       # Python package configuration
-└── Makefile             # Common development tasks
-```
-
-## Common Makefile Targets
-
-| Command                    | Description                        |
-|----------------------------|------------------------------------|
-| `make test`                | Run all unit and integration tests |
-| `make compile FILE=<path>` | Compile a single QIR file          |
-| `make sim FILE=<path>`     | Compile and simulate a QIR file    |
-| `make lint`                | Run code quality checks            |
-| `make stubs`               | Regenerate Python type stubs       |
-| `make allcompile`          | Compile all test files             |
-| `make allsim`              | Simulate all test files            |
+Development setup, testing, release notes, and LLVM upgrade guidance live in [DEVELOPMENT.md](https://github.com/quantinuum/qir-qis/blob/main/DEVELOPMENT.md).
 
 ## Contributing
 
