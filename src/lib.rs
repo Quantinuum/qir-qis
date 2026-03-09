@@ -1286,11 +1286,76 @@ pub fn qir_ll_to_bc(ll_text: &str) -> Result<Vec<u8>, String> {
     Ok(module.write_bitcode_to_memory().as_slice().to_vec())
 }
 
+fn get_function_string_attributes(
+    function: inkwell::values::FunctionValue<'_>,
+) -> Result<Vec<(String, Option<String>)>, String> {
+    use inkwell::values::AsValueRef;
+    use llvm_sys::{
+        LLVMAttributeFunctionIndex,
+        core::{
+            LLVMGetAttributeCountAtIndex, LLVMGetAttributesAtIndex, LLVMGetStringAttributeKind,
+            LLVMGetStringAttributeValue, LLVMIsStringAttribute,
+        },
+        prelude::LLVMAttributeRef,
+    };
+    use std::slice;
+
+    let count = usize::try_from(unsafe {
+        LLVMGetAttributeCountAtIndex(function.as_value_ref(), LLVMAttributeFunctionIndex)
+    })
+    .map_err(|_| "Attribute count does not fit into usize".to_string())?;
+    let mut attrs: Vec<LLVMAttributeRef> = vec![std::ptr::null_mut(); count];
+
+    unsafe {
+        LLVMGetAttributesAtIndex(
+            function.as_value_ref(),
+            LLVMAttributeFunctionIndex,
+            attrs.as_mut_ptr(),
+        );
+    }
+
+    attrs
+        .into_iter()
+        .filter(|attr| !attr.is_null())
+        .filter(|attr| unsafe { LLVMIsStringAttribute(*attr) } != 0)
+        .map(|attr| {
+            let mut kind_len = 0_u32;
+            let kind_ptr = unsafe { LLVMGetStringAttributeKind(attr, &raw mut kind_len) };
+            if kind_ptr.is_null() {
+                return Err("LLVM returned a null attribute kind pointer".to_string());
+            }
+            let kind_len = usize::try_from(kind_len)
+                .map_err(|_| "Attribute kind length does not fit into usize".to_string())?;
+            let kind_bytes = unsafe { slice::from_raw_parts(kind_ptr.cast::<u8>(), kind_len) };
+            let kind = std::str::from_utf8(kind_bytes)
+                .map_err(|e| format!("Invalid UTF-8 in attribute kind: {e}"))?
+                .to_owned();
+
+            let mut value_len = 0_u32;
+            let value_ptr = unsafe { LLVMGetStringAttributeValue(attr, &raw mut value_len) };
+            if value_len == 0 {
+                return Ok((kind, None));
+            }
+            if value_ptr.is_null() {
+                return Err(format!(
+                    "LLVM returned a null attribute value pointer for `{kind}`"
+                ));
+            }
+            let value_len = usize::try_from(value_len)
+                .map_err(|_| format!("Attribute `{kind}` value length does not fit into usize"))?;
+            let value_bytes = unsafe { slice::from_raw_parts(value_ptr.cast::<u8>(), value_len) };
+            let value = std::str::from_utf8(value_bytes)
+                .map_err(|e| format!("Invalid UTF-8 in attribute `{kind}` value: {e}"))?
+                .to_owned();
+            Ok((kind, Some(value)))
+        })
+        .collect()
+}
+
 /// Get QIR entry point function attributes.
 ///
 /// These attributes are used to generate METADATA records in QIR output schemas.
 /// This function assumes that QIR has been validated using `validate_qir`.
-/// Only the known QIR entry attributes are returned.
 ///
 /// # Errors
 /// Returns an error string if the input bitcode is invalid.
@@ -1298,18 +1363,8 @@ pub fn get_entry_attributes(
     bc_bytes: &[u8],
 ) -> Result<std::collections::BTreeMap<String, Option<String>>, String> {
     use crate::convert::find_entry_function;
-    use inkwell::{
-        attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
-    };
+    use inkwell::{context::Context, memory_buffer::MemoryBuffer, module::Module};
     use std::collections::BTreeMap;
-
-    const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
-        "entry_point",
-        "qir_profiles",
-        "output_labeling_schema",
-        "required_num_qubits",
-        "required_num_results",
-    ];
 
     let ctx = Context::create();
     let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
@@ -1318,23 +1373,8 @@ pub fn get_entry_attributes(
 
     let mut metadata = BTreeMap::new();
     if let Ok(entry_fn) = find_entry_function(&module) {
-        for key in ENTRY_ATTRIBUTE_KEYS {
-            let Some(attr) = entry_fn.get_string_attribute(AttributeLoc::Function, key) else {
-                continue;
-            };
-            if let Ok(value) = attr.get_string_value().to_str() {
-                metadata.insert(
-                    key.to_owned(),
-                    if value.is_empty() {
-                        None
-                    } else {
-                        Some(value.to_owned())
-                    },
-                );
-            } else {
-                log::warn!("Invalid UTF-8 value for attribute `{key}`");
-                metadata.insert(key.to_owned(), None);
-            }
+        for (key, value) in get_function_string_attributes(entry_fn)? {
+            metadata.insert(key, value);
         }
     }
     Ok(metadata)
@@ -1478,6 +1518,31 @@ mod test {
         assert_eq!(
             attrs.get("required_num_results"),
             Some(&Some("2".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_get_entry_attributes_includes_optional_custom_attr() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="2" "required_num_results"="2" "custom_attr"="custom_value" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let attrs = get_entry_attributes(&bc_bytes).unwrap();
+        assert_eq!(
+            attrs.get("custom_attr"),
+            Some(&Some("custom_value".to_string()))
         );
     }
 }
