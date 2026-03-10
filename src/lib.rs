@@ -1518,7 +1518,7 @@ mod test {
     }
 
     #[test]
-    fn test_get_entry_attributes_includes_optional_custom_attr() {
+    fn test_entry_attributes_includes_optional_custom_attr() {
         let ll_text = r#"
 define i64 @Entry_Point_Name() #0 {
 entry:
