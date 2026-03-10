@@ -15,6 +15,11 @@ use inkwell::values::{
     ArrayValue, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, GlobalValue,
     InstructionOpcode, InstructionValue, PointerValue,
 };
+use llvm_sys::{
+    LLVMAttributeFunctionIndex,
+    core::{LLVMGetAttributeCountAtIndex, LLVMGetAttributesAtIndex, LLVMIsStringAttribute},
+    prelude::LLVMAttributeRef,
+};
 
 use crate::decompose::QirTypes;
 
@@ -181,17 +186,31 @@ pub fn find_entry_function<'a>(module: &Module<'a>) -> Result<FunctionValue<'a>,
     Err("No entry function found".to_string())
 }
 
-/// Retrieves known QIR entry-point string attributes from a function.
-///
-/// This compatibility helper preserves the previous public API surface while
-/// avoiding generic LLVM attribute iteration on platforms where that has been
-/// unstable. Attributes outside [`ENTRY_ATTRIBUTE_KEYS`] are ignored.
-#[deprecated(note = "Use direct get_string_attribute lookups for known QIR entry attributes")]
+/// Retrieves all string attributes from a function.
 #[must_use]
 pub fn get_string_attrs(function: FunctionValue) -> Vec<Attribute> {
-    ENTRY_ATTRIBUTE_KEYS
+    use inkwell::values::AsValueRef;
+
+    let count = usize::try_from(unsafe {
+        LLVMGetAttributeCountAtIndex(function.as_value_ref(), LLVMAttributeFunctionIndex)
+    })
+    .unwrap_or(0);
+    let mut attrs: Vec<LLVMAttributeRef> = vec![std::ptr::null_mut(); count];
+
+    unsafe {
+        LLVMGetAttributesAtIndex(
+            function.as_value_ref(),
+            LLVMAttributeFunctionIndex,
+            attrs.as_mut_ptr(),
+        );
+    }
+
+    attrs
         .iter()
-        .filter_map(|key| function.get_string_attribute(AttributeLoc::Function, key))
+        .copied()
+        .filter(|attr| !attr.is_null())
+        .filter(|attr| unsafe { LLVMIsStringAttribute(*attr) } != 0)
+        .map(|attr| unsafe { Attribute::new(attr) })
         .collect()
 }
 

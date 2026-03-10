@@ -1286,70 +1286,41 @@ pub fn qir_ll_to_bc(ll_text: &str) -> Result<Vec<u8>, String> {
     Ok(module.write_bitcode_to_memory().as_slice().to_vec())
 }
 
-fn get_function_string_attributes(
-    function: inkwell::values::FunctionValue<'_>,
-) -> Result<Vec<(String, Option<String>)>, String> {
-    use inkwell::values::AsValueRef;
-    use llvm_sys::{
-        LLVMAttributeFunctionIndex,
-        core::{
-            LLVMGetAttributeCountAtIndex, LLVMGetAttributesAtIndex, LLVMGetStringAttributeKind,
-            LLVMGetStringAttributeValue, LLVMIsStringAttribute,
-        },
-        prelude::LLVMAttributeRef,
-    };
+fn decode_string_attribute(
+    attr: inkwell::attributes::Attribute,
+) -> Result<(String, Option<String>), String> {
+    use llvm_sys::core::{LLVMGetStringAttributeKind, LLVMGetStringAttributeValue};
     use std::slice;
 
-    let count = usize::try_from(unsafe {
-        LLVMGetAttributeCountAtIndex(function.as_value_ref(), LLVMAttributeFunctionIndex)
-    })
-    .map_err(|_| "Attribute count does not fit into usize".to_string())?;
-    let mut attrs: Vec<LLVMAttributeRef> = vec![std::ptr::null_mut(); count];
-
-    unsafe {
-        LLVMGetAttributesAtIndex(
-            function.as_value_ref(),
-            LLVMAttributeFunctionIndex,
-            attrs.as_mut_ptr(),
-        );
+    let mut kind_len = 0_u32;
+    let kind_ptr = unsafe { LLVMGetStringAttributeKind(attr.as_mut_ptr(), &raw mut kind_len) };
+    if kind_ptr.is_null() {
+        return Err("LLVM returned a null attribute kind pointer".to_string());
     }
+    let kind_len = usize::try_from(kind_len)
+        .map_err(|_| "Attribute kind length does not fit into usize".to_string())?;
+    let kind_bytes = unsafe { slice::from_raw_parts(kind_ptr.cast::<u8>(), kind_len) };
+    let kind = std::str::from_utf8(kind_bytes)
+        .map_err(|e| format!("Invalid UTF-8 in attribute kind: {e}"))?
+        .to_owned();
 
-    attrs
-        .into_iter()
-        .filter(|attr| !attr.is_null())
-        .filter(|attr| unsafe { LLVMIsStringAttribute(*attr) } != 0)
-        .map(|attr| {
-            let mut kind_len = 0_u32;
-            let kind_ptr = unsafe { LLVMGetStringAttributeKind(attr, &raw mut kind_len) };
-            if kind_ptr.is_null() {
-                return Err("LLVM returned a null attribute kind pointer".to_string());
-            }
-            let kind_len = usize::try_from(kind_len)
-                .map_err(|_| "Attribute kind length does not fit into usize".to_string())?;
-            let kind_bytes = unsafe { slice::from_raw_parts(kind_ptr.cast::<u8>(), kind_len) };
-            let kind = std::str::from_utf8(kind_bytes)
-                .map_err(|e| format!("Invalid UTF-8 in attribute kind: {e}"))?
-                .to_owned();
-
-            let mut value_len = 0_u32;
-            let value_ptr = unsafe { LLVMGetStringAttributeValue(attr, &raw mut value_len) };
-            if value_len == 0 {
-                return Ok((kind, None));
-            }
-            if value_ptr.is_null() {
-                return Err(format!(
-                    "LLVM returned a null attribute value pointer for `{kind}`"
-                ));
-            }
-            let value_len = usize::try_from(value_len)
-                .map_err(|_| format!("Attribute `{kind}` value length does not fit into usize"))?;
-            let value_bytes = unsafe { slice::from_raw_parts(value_ptr.cast::<u8>(), value_len) };
-            let value = std::str::from_utf8(value_bytes)
-                .map_err(|e| format!("Invalid UTF-8 in attribute `{kind}` value: {e}"))?
-                .to_owned();
-            Ok((kind, Some(value)))
-        })
-        .collect()
+    let mut value_len = 0_u32;
+    let value_ptr = unsafe { LLVMGetStringAttributeValue(attr.as_mut_ptr(), &raw mut value_len) };
+    if value_len == 0 {
+        return Ok((kind, None));
+    }
+    if value_ptr.is_null() {
+        return Err(format!(
+            "LLVM returned a null attribute value pointer for `{kind}`"
+        ));
+    }
+    let value_len = usize::try_from(value_len)
+        .map_err(|_| format!("Attribute `{kind}` value length does not fit into usize"))?;
+    let value_bytes = unsafe { slice::from_raw_parts(value_ptr.cast::<u8>(), value_len) };
+    let value = std::str::from_utf8(value_bytes)
+        .map_err(|e| format!("Invalid UTF-8 in attribute `{kind}` value: {e}"))?
+        .to_owned();
+    Ok((kind, Some(value)))
 }
 
 /// Get QIR entry point function attributes.
@@ -1362,7 +1333,7 @@ fn get_function_string_attributes(
 pub fn get_entry_attributes(
     bc_bytes: &[u8],
 ) -> Result<std::collections::BTreeMap<String, Option<String>>, String> {
-    use crate::convert::find_entry_function;
+    use crate::convert::{find_entry_function, get_string_attrs};
     use inkwell::{context::Context, memory_buffer::MemoryBuffer, module::Module};
     use std::collections::BTreeMap;
 
@@ -1373,8 +1344,9 @@ pub fn get_entry_attributes(
 
     let mut metadata = BTreeMap::new();
     if let Ok(entry_fn) = find_entry_function(&module) {
-        for (key, value) in get_function_string_attributes(entry_fn)? {
-            metadata.insert(key, value);
+        for attr in get_string_attrs(entry_fn) {
+            let (kind_id, value) = decode_string_attribute(attr)?;
+            metadata.insert(kind_id, value);
         }
     }
     Ok(metadata)
