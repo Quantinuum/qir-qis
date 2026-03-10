@@ -1098,8 +1098,8 @@ pub fn qir_to_qis(
     use crate::{
         aux::process_entry_function,
         convert::{
-            ENTRY_ATTRIBUTE_KEYS, add_qmain_wrapper, create_qubit_array, find_entry_function,
-            free_all_qubits, process_ir_defined_q_fns,
+            add_qmain_wrapper, create_qubit_array, find_entry_function, free_all_qubits,
+            get_string_attrs, process_ir_defined_q_fns,
         },
         decompose::add_decompositions,
         opt::optimize,
@@ -1149,8 +1149,9 @@ pub fn qir_to_qis(
         .map_err(|e| format!("LLVM module verification failed: {e}"))?;
 
     // Clean up the translated module
-    for key in ENTRY_ATTRIBUTE_KEYS {
-        entry_fn.remove_string_attribute(AttributeLoc::Function, key);
+    for attr in get_string_attrs(entry_fn) {
+        let kind = decode_string_attribute_kind(attr)?;
+        entry_fn.remove_string_attribute(AttributeLoc::Function, &kind);
     }
 
     // TODO: remove global module metadata
@@ -1486,7 +1487,10 @@ define_stub_info_gatherer!(stub_info);
 mod test {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    use crate::{get_entry_attributes, qir_ll_to_bc};
+    use crate::{get_entry_attributes, qir_ll_to_bc, qir_to_qis};
+    use inkwell::{
+        attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
+    };
 
     #[test]
     fn test_get_entry_attributes() {
@@ -1535,6 +1539,38 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         assert_eq!(
             attrs.get("custom_attr"),
             Some(&Some("custom_value".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_qir_to_qis_strips_custom_entry_attrs() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="2" "required_num_results"="2" "custom_attr"="custom_value" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let qis_bytes = qir_to_qis(&bc_bytes, 2, "aarch64", None).unwrap();
+
+        let ctx = Context::create();
+        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&qis_bytes, "qis");
+        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx).unwrap();
+        let entry_fn = module.get_function("___user_qir_Entry_Point_Name").unwrap();
+
+        assert!(
+            entry_fn
+                .get_string_attribute(AttributeLoc::Function, "custom_attr")
+                .is_none()
         );
     }
 }
