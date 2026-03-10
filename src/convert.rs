@@ -195,6 +195,9 @@ pub fn get_string_attrs(function: FunctionValue) -> Vec<Attribute> {
         LLVMGetAttributeCountAtIndex(function.as_value_ref(), LLVMAttributeFunctionIndex)
     })
     .unwrap_or(0);
+    if count == 0 {
+        return Vec::new();
+    }
     let mut attrs: Vec<LLVMAttributeRef> = vec![std::ptr::null_mut(); count];
 
     unsafe {
