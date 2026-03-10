@@ -1223,7 +1223,6 @@ pub fn qir_to_qis(
     crate::llvm_verify::verify_module(&module, "LLVM module verification failed")?;
 
     // Clean up the translated module
-    // Clean up the translated module.
     for attr in get_string_attrs(entry_fn) {
         let kind = decode_string_attribute_kind(attr)?;
         entry_fn.remove_string_attribute(AttributeLoc::Function, &kind);
@@ -1634,7 +1633,12 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 !3 = !{i32 1, !"dynamic_result_management", i1 false}
 "#;
         let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
-        let qis_bytes = qir_to_qis(&bc_bytes, 2, "aarch64", None).unwrap();
+        let (opt_level, target) = if cfg!(windows) {
+            (0, "native")
+        } else {
+            (2, "aarch64")
+        };
+        let qis_bytes = qir_to_qis(&bc_bytes, opt_level, target, None).unwrap();
 
         let ctx = Context::create();
         let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&qis_bytes, "qis");
