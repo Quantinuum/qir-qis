@@ -1223,6 +1223,7 @@ pub fn qir_to_qis(
     crate::llvm_verify::verify_module(&module, "LLVM module verification failed")?;
 
     // Clean up the translated module
+    // Clean up the translated module.
     for attr in get_string_attrs(entry_fn) {
         let kind = decode_string_attribute_kind(attr)?;
         entry_fn.remove_string_attribute(AttributeLoc::Function, &kind);

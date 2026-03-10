@@ -227,8 +227,6 @@ pub fn find_entry_function<'a>(module: &Module<'a>) -> Result<FunctionValue<'a>,
 /// Retrieves all string attributes from a function.
 #[must_use]
 pub fn get_string_attrs(function: FunctionValue) -> Vec<Attribute> {
-    use inkwell::values::AsValueRef;
-
     let count = usize::try_from(unsafe {
         LLVMGetAttributeCountAtIndex(function.as_value_ref(), LLVMAttributeFunctionIndex)
     })
@@ -236,8 +234,8 @@ pub fn get_string_attrs(function: FunctionValue) -> Vec<Attribute> {
     if count == 0 {
         return Vec::new();
     }
-    let mut attrs: Vec<LLVMAttributeRef> = vec![std::ptr::null_mut(); count];
 
+    let mut attrs: Vec<LLVMAttributeRef> = vec![std::ptr::null_mut(); count];
     unsafe {
         LLVMGetAttributesAtIndex(
             function.as_value_ref(),
