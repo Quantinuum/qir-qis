@@ -17,9 +17,21 @@ use inkwell::values::{
 use llvm_sys::core::{
     LLVMGetAsString, LLVMGetNumOperands, LLVMGetOperand, LLVMGetValueName2, LLVMIsConstantString,
 };
+use llvm_sys::{
+    LLVMAttributeFunctionIndex,
+    core::{LLVMGetAttributeCountAtIndex, LLVMGetAttributesAtIndex, LLVMIsStringAttribute},
+    prelude::LLVMAttributeRef,
+};
 
 pub const INIT_QARRAY_FN: &str = "qir_qis.init_qubit";
 pub const LOAD_QUBIT_FN: &str = "qir_qis.load_qubit";
+pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
+    "entry_point",
+    "qir_profiles",
+    "output_labeling_schema",
+    "required_num_qubits",
+    "required_num_results",
+];
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
 
@@ -215,10 +227,31 @@ pub fn find_entry_function<'a>(module: &Module<'a>) -> Result<FunctionValue<'a>,
 /// Retrieves all string attributes from a function.
 #[must_use]
 pub fn get_string_attrs(function: FunctionValue) -> Vec<Attribute> {
-    function
-        .attributes(AttributeLoc::Function)
+    use inkwell::values::AsValueRef;
+
+    let count = usize::try_from(unsafe {
+        LLVMGetAttributeCountAtIndex(function.as_value_ref(), LLVMAttributeFunctionIndex)
+    })
+    .unwrap_or(0);
+    if count == 0 {
+        return Vec::new();
+    }
+    let mut attrs: Vec<LLVMAttributeRef> = vec![std::ptr::null_mut(); count];
+
+    unsafe {
+        LLVMGetAttributesAtIndex(
+            function.as_value_ref(),
+            LLVMAttributeFunctionIndex,
+            attrs.as_mut_ptr(),
+        );
+    }
+
+    attrs
         .iter()
-        .filter_map(|attr| if attr.is_string() { Some(*attr) } else { None })
+        .copied()
+        .filter(|attr| !attr.is_null())
+        .filter(|attr| unsafe { LLVMIsStringAttribute(*attr) } != 0)
+        .map(|attr| unsafe { Attribute::new(attr) })
         .collect()
 }
 

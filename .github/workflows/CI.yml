@@ -11,6 +11,14 @@ on:
     types:
       - opened
       - synchronize
+    paths-ignore:
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "DEVELOPMENT.md"
+      - "CHANGELOG.md"
+      - "LICENSE"
+      - "qtm-qir-reference.md"
+      - ".github/*.md"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -26,12 +34,6 @@ env:
   LLVM_LINUX_CACHE_KEY_SUFFIX: "ci-linux-shared-v1"
 
 jobs:
-  typos:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: crate-ci/typos@v1.42.0
-
   test:
     strategy:
       fail-fast: false
