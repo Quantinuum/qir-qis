@@ -1,6 +1,6 @@
 [package]
 name = "qir-qis"
-version = "0.1.3"
+version = "0.1.4"
 authors = ["Kartik Singhal <kartik.singhal@quantinuum.com>"]
 edition = "2024"
 rust-version = "1.91"
