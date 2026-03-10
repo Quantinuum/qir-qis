@@ -1286,10 +1286,8 @@ pub fn qir_ll_to_bc(ll_text: &str) -> Result<Vec<u8>, String> {
     Ok(module.write_bitcode_to_memory().as_slice().to_vec())
 }
 
-fn decode_string_attribute(
-    attr: inkwell::attributes::Attribute,
-) -> Result<(String, Option<String>), String> {
-    use llvm_sys::core::{LLVMGetStringAttributeKind, LLVMGetStringAttributeValue};
+fn decode_string_attribute_kind(attr: inkwell::attributes::Attribute) -> Result<String, String> {
+    use llvm_sys::core::LLVMGetStringAttributeKind;
     use std::slice;
 
     let mut kind_len = 0_u32;
@@ -1300,14 +1298,22 @@ fn decode_string_attribute(
     let kind_len = usize::try_from(kind_len)
         .map_err(|_| "Attribute kind length does not fit into usize".to_string())?;
     let kind_bytes = unsafe { slice::from_raw_parts(kind_ptr.cast::<u8>(), kind_len) };
-    let kind = std::str::from_utf8(kind_bytes)
-        .map_err(|e| format!("Invalid UTF-8 in attribute kind: {e}"))?
-        .to_owned();
+    std::str::from_utf8(kind_bytes)
+        .map_err(|e| format!("Invalid UTF-8 in attribute kind: {e}"))
+        .map(str::to_owned)
+}
+
+fn decode_string_attribute_value(
+    attr: inkwell::attributes::Attribute,
+    kind: &str,
+) -> Result<Option<String>, String> {
+    use llvm_sys::core::LLVMGetStringAttributeValue;
+    use std::slice;
 
     let mut value_len = 0_u32;
     let value_ptr = unsafe { LLVMGetStringAttributeValue(attr.as_mut_ptr(), &raw mut value_len) };
     if value_len == 0 {
-        return Ok((kind, None));
+        return Ok(None);
     }
     if value_ptr.is_null() {
         return Err(format!(
@@ -1320,7 +1326,7 @@ fn decode_string_attribute(
     let value = std::str::from_utf8(value_bytes)
         .map_err(|e| format!("Invalid UTF-8 in attribute `{kind}` value: {e}"))?
         .to_owned();
-    Ok((kind, Some(value)))
+    Ok(Some(value))
 }
 
 /// Get QIR entry point function attributes.
@@ -1345,8 +1351,22 @@ pub fn get_entry_attributes(
     let mut metadata = BTreeMap::new();
     if let Ok(entry_fn) = find_entry_function(&module) {
         for attr in get_string_attrs(entry_fn) {
-            let (kind_id, value) = decode_string_attribute(attr)?;
-            metadata.insert(kind_id, value);
+            let kind_id = match decode_string_attribute_kind(attr) {
+                Ok(kind_id) => kind_id,
+                Err(err) => {
+                    log::warn!("Skipping attribute with invalid kind: {err}");
+                    continue;
+                }
+            };
+            match decode_string_attribute_value(attr, &kind_id) {
+                Ok(value) => {
+                    metadata.insert(kind_id, value);
+                }
+                Err(err) => {
+                    log::warn!("{err}");
+                    metadata.insert(kind_id, None);
+                }
+            }
         }
     }
     Ok(metadata)
