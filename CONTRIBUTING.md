@@ -4,7 +4,7 @@ Thank you for your interest in contributing! We welcome contributions from the c
 
 ## Getting Started
 
-See the [Development section](README.md#development) in the README for setup instructions, testing, and build processes.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for setup instructions, test commands, build processes, and LLVM maintenance guidance. For release notes, see [CHANGELOG.md](CHANGELOG.md).
 
 ## How to Contribute
 
@@ -69,12 +69,6 @@ type(scope): brief description
 - `docs: update LLVM installation instructions`
 
 ## Testing
-
-See [README Testing section](README.md#testing) for details on:
-
-- Running the test suite
-- Testing individual files
-- Simulation testing with Selene
 
 Always add tests for new features and ensure all tests pass before submitting a PR.
 
