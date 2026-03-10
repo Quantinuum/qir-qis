@@ -1105,14 +1105,15 @@ pub fn qir_to_qis(
         opt::optimize,
         utils::add_generator_metadata,
     };
-    use inkwell::{attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer};
+    use inkwell::{
+        attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
+    };
     use std::{collections::BTreeMap, env};
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range(bc_bytes, "bitcode");
-    let module = ctx
-        .create_module_from_ir(memory_buffer)
-        .map_err(|e| format!("Failed to create module: {e}"))?;
+    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
+    let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+        .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
 
     let _ = add_decompositions(&ctx, &module);
 
@@ -1149,11 +1150,8 @@ pub fn qir_to_qis(
 
     // Clean up the translated module
     for attr in get_string_attrs(entry_fn) {
-        let kind_id = attr
-            .get_string_kind_id()
-            .to_str()
-            .map_err(|e| format!("Invalid UTF-8 in attribute kind ID: {e}"))?;
-        entry_fn.remove_string_attribute(AttributeLoc::Function, kind_id);
+        let kind = decode_string_attribute_kind(attr)?;
+        entry_fn.remove_string_attribute(AttributeLoc::Function, &kind);
     }
 
     // TODO: remove global module metadata
@@ -1210,14 +1208,15 @@ fn get_wasm_functions(
 pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), String> {
     use crate::{
         aux::{validate_functions, validate_module_flags, validate_module_layout_and_triple},
-        convert::find_entry_function,
+        convert::{ENTRY_ATTRIBUTE_KEYS, find_entry_function},
     };
-    use inkwell::{attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer};
+    use inkwell::{
+        attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
+    };
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range(bc_bytes, "bitcode");
-    let module = ctx
-        .create_module_from_ir(memory_buffer)
+    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
+    let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
         .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
     let mut errors = Vec::new();
 
@@ -1229,13 +1228,11 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
         }
 
         // Enforce required attributes
-        let required_attrs = [
-            "required_num_qubits",
-            "required_num_results",
-            "qir_profiles",
-            "output_labeling_schema",
-        ];
-        for &attr in &required_attrs {
+        for attr in ENTRY_ATTRIBUTE_KEYS
+            .iter()
+            .copied()
+            .filter(|attr| *attr != "entry_point")
+        {
             let val = entry_fn.get_string_attribute(AttributeLoc::Function, attr);
             if val.is_none() {
                 errors.push(format!("Missing required attribute: `{attr}`"));
@@ -1282,12 +1279,55 @@ pub fn qir_ll_to_bc(ll_text: &str) -> Result<Vec<u8>, String> {
     use inkwell::{context::Context, memory_buffer::MemoryBuffer};
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range(ll_text.as_bytes(), "qir");
+    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(ll_text.as_bytes(), "qir");
     let module = ctx
         .create_module_from_ir(memory_buffer)
         .map_err(|e| format!("Failed to create module from LLVM IR: {e}"))?;
 
     Ok(module.write_bitcode_to_memory().as_slice().to_vec())
+}
+
+fn decode_string_attribute_kind(attr: inkwell::attributes::Attribute) -> Result<String, String> {
+    use llvm_sys::core::LLVMGetStringAttributeKind;
+    use std::slice;
+
+    let mut kind_len = 0_u32;
+    let kind_ptr = unsafe { LLVMGetStringAttributeKind(attr.as_mut_ptr(), &raw mut kind_len) };
+    if kind_ptr.is_null() {
+        return Err("LLVM returned a null attribute kind pointer".to_string());
+    }
+    let kind_len = usize::try_from(kind_len)
+        .map_err(|_| "Attribute kind length does not fit into usize".to_string())?;
+    let kind_bytes = unsafe { slice::from_raw_parts(kind_ptr.cast::<u8>(), kind_len) };
+    std::str::from_utf8(kind_bytes)
+        .map_err(|e| format!("Invalid UTF-8 in attribute kind: {e}"))
+        .map(str::to_owned)
+}
+
+fn decode_string_attribute_value(
+    attr: inkwell::attributes::Attribute,
+    kind: &str,
+) -> Result<Option<String>, String> {
+    use llvm_sys::core::LLVMGetStringAttributeValue;
+    use std::slice;
+
+    let mut value_len = 0_u32;
+    let value_ptr = unsafe { LLVMGetStringAttributeValue(attr.as_mut_ptr(), &raw mut value_len) };
+    if value_len == 0 {
+        return Ok(None);
+    }
+    if value_ptr.is_null() {
+        return Err(format!(
+            "LLVM returned a null attribute value pointer for `{kind}`"
+        ));
+    }
+    let value_len = usize::try_from(value_len)
+        .map_err(|_| format!("Attribute `{kind}` value length does not fit into usize"))?;
+    let value_bytes = unsafe { slice::from_raw_parts(value_ptr.cast::<u8>(), value_len) };
+    let value = std::str::from_utf8(value_bytes)
+        .map_err(|e| format!("Invalid UTF-8 in attribute `{kind}` value: {e}"))?
+        .to_owned();
+    Ok(Some(value))
 }
 
 /// Get QIR entry point function attributes.
@@ -1301,36 +1341,32 @@ pub fn get_entry_attributes(
     bc_bytes: &[u8],
 ) -> Result<std::collections::BTreeMap<String, Option<String>>, String> {
     use crate::convert::{find_entry_function, get_string_attrs};
-    use inkwell::{context::Context, memory_buffer::MemoryBuffer};
+    use inkwell::{context::Context, memory_buffer::MemoryBuffer, module::Module};
     use std::collections::BTreeMap;
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range(bc_bytes, "bitcode");
-    let module = ctx
-        .create_module_from_ir(memory_buffer)
-        .map_err(|e| format!("Failed to create module from QIR bitcode: {e}"))?;
+    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
+    let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+        .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
 
     let mut metadata = BTreeMap::new();
     if let Ok(entry_fn) = find_entry_function(&module) {
         for attr in get_string_attrs(entry_fn) {
-            let kind_id = if let Ok(kind_id) = attr.get_string_kind_id().to_str() {
-                kind_id.to_owned()
-            } else {
-                log::warn!("Skipping invalid UTF-8 attribute kind ID");
-                continue;
+            let kind_id = match decode_string_attribute_kind(attr) {
+                Ok(kind_id) => kind_id,
+                Err(err) => {
+                    log::warn!("Skipping attribute with invalid kind: {err}");
+                    continue;
+                }
             };
-            if let Ok(value) = attr.get_string_value().to_str() {
-                metadata.insert(
-                    kind_id,
-                    if value.is_empty() {
-                        None
-                    } else {
-                        Some(value.to_owned())
-                    },
-                );
-            } else {
-                log::warn!("Invalid UTF-8 value for attribute `{kind_id}`");
-                metadata.insert(kind_id, None);
+            match decode_string_attribute_value(attr, &kind_id) {
+                Ok(value) => {
+                    metadata.insert(kind_id, value);
+                }
+                Err(err) => {
+                    log::warn!("{err}");
+                    metadata.insert(kind_id, None);
+                }
             }
         }
     }
@@ -1451,7 +1487,10 @@ define_stub_info_gatherer!(stub_info);
 mod test {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    use crate::{get_entry_attributes, qir_ll_to_bc};
+    use crate::{get_entry_attributes, qir_ll_to_bc, qir_to_qis};
+    use inkwell::{
+        attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
+    };
 
     #[test]
     fn test_get_entry_attributes() {
@@ -1475,6 +1514,63 @@ mod test {
         assert_eq!(
             attrs.get("required_num_results"),
             Some(&Some("2".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_entry_attributes_includes_optional_custom_attr() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="2" "required_num_results"="2" "custom_attr"="custom_value" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let attrs = get_entry_attributes(&bc_bytes).unwrap();
+        assert_eq!(
+            attrs.get("custom_attr"),
+            Some(&Some("custom_value".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_qir_to_qis_strips_custom_entry_attrs() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="2" "required_num_results"="2" "custom_attr"="custom_value" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let qis_bytes = qir_to_qis(&bc_bytes, 2, "aarch64", None).unwrap();
+
+        let ctx = Context::create();
+        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&qis_bytes, "qis");
+        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx).unwrap();
+        let entry_fn = module.get_function("___user_qir_Entry_Point_Name").unwrap();
+
+        assert!(
+            entry_fn
+                .get_string_attribute(AttributeLoc::Function, "custom_attr")
+                .is_none()
         );
     }
 }

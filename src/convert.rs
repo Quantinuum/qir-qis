@@ -15,11 +15,23 @@ use inkwell::values::{
     ArrayValue, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, GlobalValue,
     InstructionOpcode, InstructionValue, PointerValue,
 };
+use llvm_sys::{
+    LLVMAttributeFunctionIndex,
+    core::{LLVMGetAttributeCountAtIndex, LLVMGetAttributesAtIndex, LLVMIsStringAttribute},
+    prelude::LLVMAttributeRef,
+};
 
 use crate::decompose::QirTypes;
 
 pub const INIT_QARRAY_FN: &str = "qir_qis.init_qubit";
 pub const LOAD_QUBIT_FN: &str = "qir_qis.load_qubit";
+pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
+    "entry_point",
+    "qir_profiles",
+    "output_labeling_schema",
+    "required_num_qubits",
+    "required_num_results",
+];
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
 
@@ -164,12 +176,11 @@ pub fn convert_globals<'ctx>(
 /// Returns an error if no entry function is found.
 pub fn find_entry_function<'a>(module: &Module<'a>) -> Result<FunctionValue<'a>, String> {
     for function in module.get_functions() {
-        for attr in get_string_attrs(function) {
-            if let Ok(attr_name) = attr.get_string_kind_id().to_str()
-                && attr_name == "entry_point"
-            {
-                return Ok(function);
-            }
+        if function
+            .get_string_attribute(AttributeLoc::Function, "entry_point")
+            .is_some()
+        {
+            return Ok(function);
         }
     }
     Err("No entry function found".to_string())
@@ -178,10 +189,31 @@ pub fn find_entry_function<'a>(module: &Module<'a>) -> Result<FunctionValue<'a>,
 /// Retrieves all string attributes from a function.
 #[must_use]
 pub fn get_string_attrs(function: FunctionValue) -> Vec<Attribute> {
-    function
-        .attributes(AttributeLoc::Function)
+    use inkwell::values::AsValueRef;
+
+    let count = usize::try_from(unsafe {
+        LLVMGetAttributeCountAtIndex(function.as_value_ref(), LLVMAttributeFunctionIndex)
+    })
+    .unwrap_or(0);
+    if count == 0 {
+        return Vec::new();
+    }
+    let mut attrs: Vec<LLVMAttributeRef> = vec![std::ptr::null_mut(); count];
+
+    unsafe {
+        LLVMGetAttributesAtIndex(
+            function.as_value_ref(),
+            LLVMAttributeFunctionIndex,
+            attrs.as_mut_ptr(),
+        );
+    }
+
+    attrs
         .iter()
-        .filter_map(|attr| if attr.is_string() { Some(*attr) } else { None })
+        .copied()
+        .filter(|attr| !attr.is_null())
+        .filter(|attr| unsafe { LLVMIsStringAttribute(*attr) } != 0)
+        .map(|attr| unsafe { Attribute::new(attr) })
         .collect()
 }
 
