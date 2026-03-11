@@ -5,7 +5,7 @@ ENV LLVM_CONFIG_STRIP_CFLAGS=1
 
 RUN dnf install -y \
     curl \
-    envsubst \
+    gettext \
     jq \
     xz \
     libffi-devel \
