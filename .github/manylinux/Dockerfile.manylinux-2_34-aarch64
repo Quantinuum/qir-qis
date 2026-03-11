@@ -2,7 +2,7 @@ FROM quay.io/pypa/manylinux_2_34_aarch64@sha256:c4ef6b53c536ab5ac10700d2ea43653a
 
 ARG LLVM_VERSION=21.1.8
 ENV LLVM_CONFIG_STRIP_CFLAGS=1
-ARG LLVM_RPM_REPO=https://download.copr.fedorainfracloud.org/results/%40fedora-llvm-team/llvm-snapshots-big-merge-20250710/centos-stream-9-aarch64/09261470-llvm
+ARG LLVM_RPM_BASE=https://download.copr.fedorainfracloud.org/results/%40fedora-llvm-team/llvm-snapshots-big-merge-20250710/centos-stream-9-aarch64/09261470-llvm
 
 RUN dnf install -y \
     curl \
@@ -16,20 +16,17 @@ RUN dnf install -y \
     python3 && \
     dnf clean all
 
-RUN printf '%s\n' \
-    '[llvm21-arm]' \
-    'name=LLVM 21 ARM RPM snapshot' \
-    "baseurl=${LLVM_RPM_REPO}" \
-    'enabled=1' \
-    'gpgcheck=0' \
-    >/etc/yum.repos.d/llvm21-arm.repo && \
-    dnf makecache --refresh && \
-    dnf install -y \
-      clang \
-      llvm \
-      llvm-devel \
-      llvm-static \
-      lld && \
+RUN dnf install -y \
+      "${LLVM_RPM_BASE}/llvm-filesystem-21.0.0~pre20250710.ge8a50a2568bf7c-1.el9.aarch64.rpm" \
+      "${LLVM_RPM_BASE}/llvm-libs-21.0.0~pre20250710.ge8a50a2568bf7c-1.el9.aarch64.rpm" \
+      "${LLVM_RPM_BASE}/llvm-21.0.0~pre20250710.ge8a50a2568bf7c-1.el9.aarch64.rpm" \
+      "${LLVM_RPM_BASE}/llvm-devel-21.0.0~pre20250710.ge8a50a2568bf7c-1.el9.aarch64.rpm" \
+      "${LLVM_RPM_BASE}/llvm-static-21.0.0~pre20250710.ge8a50a2568bf7c-1.el9.aarch64.rpm" \
+      "${LLVM_RPM_BASE}/clang-libs-21.0.0~pre20250710.ge8a50a2568bf7c-1.el9.aarch64.rpm" \
+      "${LLVM_RPM_BASE}/clang-resource-filesystem-21.0.0~pre20250710.ge8a50a2568bf7c-1.el9.aarch64.rpm" \
+      "${LLVM_RPM_BASE}/clang-21.0.0~pre20250710.ge8a50a2568bf7c-1.el9.aarch64.rpm" \
+      "${LLVM_RPM_BASE}/lld-libs-21.0.0~pre20250710.ge8a50a2568bf7c-1.el9.aarch64.rpm" \
+      "${LLVM_RPM_BASE}/lld-21.0.0~pre20250710.ge8a50a2568bf7c-1.el9.aarch64.rpm" && \
     llvm-config --version | grep -E '^21\.' && \
     ! llvm-config --libnames --link-static | grep -q 'Polly' && \
     mkdir -p /opt && \
