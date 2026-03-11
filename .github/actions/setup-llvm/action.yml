@@ -34,29 +34,34 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Cache LLVM (Linux)
-      if: runner.os == 'Linux' && inputs.enable-linux == 'true'
-      id: llvm-cache-linux
-      uses: actions/cache@v4
-      with:
-        path: ${{ runner.temp }}/llvm
-        key: llvm-${{ inputs.llvm-version }}-${{ runner.os }}-${{ inputs.linux-cache-key-suffix }}
-
     - name: Install LLVM (Linux)
-      if: runner.os == 'Linux' && inputs.enable-linux == 'true' && steps.llvm-cache-linux.outputs.cache-hit != 'true'
-      uses: KyleMayes/install-llvm-action@v2
-      with:
-        version: ${{ inputs.llvm-version }}
-        directory: ${{ runner.temp }}/llvm
-        env: false
+      if: runner.os == 'Linux' && inputs.enable-linux == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        llvm_version="${{ inputs.llvm-version }}"
+        llvm_major="${llvm_version%%.*}"
+        script_path="${RUNNER_TEMP}/llvm.sh"
+        curl -fsSL https://apt.llvm.org/llvm.sh -o "${script_path}"
+        chmod +x "${script_path}"
+        sudo "${script_path}" "${llvm_major}"
+        sudo apt-get install -y \
+          "llvm-${llvm_major}-dev" \
+          "clang-${llvm_major}" \
+          "lld-${llvm_major}" \
+          "libpolly-${llvm_major}-dev"
 
     - name: Configure LLVM (Linux)
       if: runner.os == 'Linux' && inputs.enable-linux == 'true'
       shell: bash
       run: |
-        llvm_root="${{ runner.temp }}/llvm"
+        llvm_version="${{ inputs.llvm-version }}"
+        llvm_major="${llvm_version%%.*}"
+        llvm_root="/usr/lib/llvm-${llvm_major}"
+        echo "${llvm_root}/bin" >>"$GITHUB_PATH"
         echo "LLVM_PATH=${llvm_root}" >>"$GITHUB_ENV"
         echo "${{ inputs.llvm-sys-prefix-env-var }}=${llvm_root}" >>"$GITHUB_ENV"
+        echo "LLVM_CONFIG_PATH=${llvm_root}/bin/llvm-config" >>"$GITHUB_ENV"
         if [ -n "${LD_LIBRARY_PATH:-}" ]; then
           echo "LD_LIBRARY_PATH=${llvm_root}/lib:${LD_LIBRARY_PATH}" >>"$GITHUB_ENV"
         else
