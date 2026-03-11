@@ -121,7 +121,6 @@ jobs:
           key: sccache-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             sccache-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
-      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-rust-${{ runner.os }}-${{ env.LLVM_RUST_CACHE_FAMILY }}

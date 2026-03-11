@@ -2,6 +2,14 @@ name: Wheels & Release
 
 on:
   pull_request:
+    paths-ignore:
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "DEVELOPMENT.md"
+      - "CHANGELOG.md"
+      - "LICENSE"
+      - "qtm-qir-reference.md"
+      - ".github/*.md"
   push:
     branches:
       - main
