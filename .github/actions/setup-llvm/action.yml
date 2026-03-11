@@ -45,7 +45,11 @@ runs:
         curl -fsSL https://apt.llvm.org/llvm.sh -o "${script_path}"
         chmod +x "${script_path}"
         sudo "${script_path}" "${llvm_major}"
-        sudo apt-get install -y "llvm-${llvm_major}-dev" "clang-${llvm_major}" "lld-${llvm_major}"
+        sudo apt-get install -y \
+          "llvm-${llvm_major}-dev" \
+          "clang-${llvm_major}" \
+          "lld-${llvm_major}" \
+          "libpolly-${llvm_major}-dev"
 
     - name: Configure LLVM (Linux)
       if: runner.os == 'Linux' && inputs.enable-linux == 'true'
