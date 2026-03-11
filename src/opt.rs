@@ -93,13 +93,18 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
     if opt_level == 0 {
         let target_config =
             get_target_config(target).map_err(|e| format!("Failed to get target machine: {e}"))?;
-        let triple = if target_config == NATIVE_CONFIG {
-            TargetMachine::get_default_triple()
-        } else {
-            let (_, _, triple, _) = target_config;
-            TargetTriple::create(triple)
-        };
-        module.set_triple(&triple);
+        #[cfg(not(windows))]
+        {
+            let triple = if target_config == NATIVE_CONFIG {
+                TargetMachine::get_default_triple()
+            } else {
+                let (_, _, triple, _) = target_config;
+                TargetTriple::create(triple)
+            };
+            module.set_triple(&triple);
+        }
+        #[cfg(windows)]
+        let _ = (module, target_config);
         return Ok(());
     }
 
