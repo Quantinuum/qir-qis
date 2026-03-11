@@ -4,11 +4,9 @@ ARG LLVM_VERSION=21.1.8
 ENV LLVM_CONFIG_STRIP_CFLAGS=1
 
 RUN dnf install -y \
-    cmake \
     curl \
-    gcc \
-    gcc-c++ \
-    ninja-build \
+    envsubst \
+    jq \
     xz \
     libffi-devel \
     zlib-devel \
@@ -17,23 +15,25 @@ RUN dnf install -y \
     ncurses-compat-libs \
     ncurses-devel \
     python3 && \
+    dnf install -y --skip-broken 'dnf-command(copr)' 'dnf5-command(copr)' && \
     dnf clean all
 
-RUN curl -L -o /tmp/llvm-project.src.tar.xz \
-    "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz" && \
-    tar -xf /tmp/llvm-project.src.tar.xz -C /tmp && \
-    mkdir -p /tmp/llvm-build /opt/llvm && \
-    cmake -S /tmp/llvm-project-${LLVM_VERSION}.src/llvm \
-      -B /tmp/llvm-build \
-      -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=/opt/llvm \
-      -DLLVM_TARGETS_TO_BUILD="AArch64;X86" \
-      -DBUILD_SHARED_LIBS=OFF \
-      -DLLVM_BUILD_LLVM_DYLIB=OFF \
-      -DLLVM_LINK_LLVM_DYLIB=OFF && \
-    cmake --build /tmp/llvm-build --target install --parallel "$(nproc)" && \
-    rm -rf /tmp/llvm-project-${LLVM_VERSION}.src /tmp/llvm-project.src.tar.xz /tmp/llvm-build
+RUN dnf -y copr enable @fedora-llvm-team/llvm-snapshots && \
+    repo_file=$(dnf repoinfo --json '*llvm-snapshots*' | jq -r '.[0].repo_file_path') && \
+    distname=$(rpm --eval '%{?fedora:fedora}%{?rhel:rhel}') && \
+    envsubst '$distname' < "${repo_file}" > /tmp/llvm-snapshots.repo && \
+    cat /tmp/llvm-snapshots.repo > "${repo_file}" && \
+    dnf install -y \
+      clang \
+      llvm \
+      llvm-devel \
+      llvm-static \
+      lld \
+      polly-devel && \
+    mkdir -p /opt && \
+    ln -s "$(llvm-config --prefix)" /opt/llvm && \
+    dnf clean all && \
+    rm -f /tmp/llvm-snapshots.repo
 
 COPY .github/manylinux/llvm-config-wrapper.sh /tmp/llvm-config-wrapper.sh
 RUN mv /opt/llvm/bin/llvm-config /opt/llvm/bin/llvm-config.real && \
