@@ -31,16 +31,20 @@ const X86_CONFIG: TargetConfig = ("x86-64", "x86-64", "x86_64-unknown-linux-gnu"
 /// Sentinel config for native codegen target
 const NATIVE_CONFIG: TargetConfig = ("", "", "", "");
 
+fn get_target_config(target: &str) -> Result<TargetConfig<'_>, String> {
+    match target {
+        "x86-64" => Ok(X86_CONFIG),
+        "aarch64" => Ok(AARCH64_CONFIG),
+        "native" => Ok(NATIVE_CONFIG),
+        _ => Err(format!("Invalid target architecture: {target}")),
+    }
+}
+
 fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<TargetMachine, String> {
     // Ensure targets are initialized
     let _ = *TARGET_INIT;
 
-    let target_config = match target {
-        "x86-64" => X86_CONFIG,
-        "aarch64" => AARCH64_CONFIG,
-        "native" => NATIVE_CONFIG,
-        _ => return Err(format!("Invalid target architecture: {target}")),
-    };
+    let target_config = get_target_config(target)?;
     let reloc_mode = RelocMode::PIC;
     let code_model = CodeModel::Default;
     if target_config == NATIVE_CONFIG {
@@ -87,6 +91,15 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
     // Avoid creating a TargetMachine in this mode; TargetMachine teardown has
     // caused access violations in some Windows environments.
     if opt_level == 0 {
+        let target_config =
+            get_target_config(target).map_err(|e| format!("Failed to get target machine: {e}"))?;
+        let triple = if target_config == NATIVE_CONFIG {
+            TargetMachine::get_default_triple()
+        } else {
+            let (_, _, triple, _) = target_config;
+            TargetTriple::create(triple)
+        };
+        module.set_triple(&triple);
         return Ok(());
     }
 
