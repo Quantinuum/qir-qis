@@ -1,0 +1,172 @@
+name: Setup LLVM
+description: Install and configure LLVM across Linux, macOS, and Windows with shared CI logic.
+
+inputs:
+  llvm-version:
+    description: Full LLVM version (for example, 21.1.8).
+    required: false
+    default: "21.1.8"
+  llvm-sys-prefix-env-var:
+    description: Versioned llvm-sys prefix environment variable to export.
+    required: false
+    default: "LLVM_SYS_211_PREFIX"
+  enable-linux:
+    description: Run Linux LLVM setup.
+    required: false
+    default: "true"
+  enable-macos:
+    description: Run macOS LLVM setup.
+    required: false
+    default: "true"
+  enable-windows:
+    description: Run Windows LLVM setup.
+    required: false
+    default: "true"
+  linux-cache-key-suffix:
+    description: Extra suffix to separate Linux LLVM caches across jobs.
+    required: false
+    default: "v1"
+  windows-cache-key-suffix:
+    description: Extra suffix to separate Windows LLVM caches across jobs.
+    required: false
+    default: "v1"
+
+runs:
+  using: composite
+  steps:
+    - name: Install LLVM (Linux)
+      if: runner.os == 'Linux' && inputs.enable-linux == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        llvm_version="${{ inputs.llvm-version }}"
+        llvm_major="${llvm_version%%.*}"
+        script_path="${RUNNER_TEMP}/llvm.sh"
+        curl -fsSL https://apt.llvm.org/llvm.sh -o "${script_path}"
+        chmod +x "${script_path}"
+        sudo "${script_path}" "${llvm_major}"
+        sudo apt-get install -y \
+          "llvm-${llvm_major}-dev" \
+          "clang-${llvm_major}" \
+          "lld-${llvm_major}" \
+          "libpolly-${llvm_major}-dev"
+
+    - name: Configure LLVM (Linux)
+      if: runner.os == 'Linux' && inputs.enable-linux == 'true'
+      shell: bash
+      run: |
+        llvm_version="${{ inputs.llvm-version }}"
+        llvm_major="${llvm_version%%.*}"
+        llvm_root="/usr/lib/llvm-${llvm_major}"
+        echo "${llvm_root}/bin" >>"$GITHUB_PATH"
+        echo "LLVM_PATH=${llvm_root}" >>"$GITHUB_ENV"
+        echo "${{ inputs.llvm-sys-prefix-env-var }}=${llvm_root}" >>"$GITHUB_ENV"
+        echo "LLVM_CONFIG_PATH=${llvm_root}/bin/llvm-config" >>"$GITHUB_ENV"
+        if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+          echo "LD_LIBRARY_PATH=${llvm_root}/lib:${LD_LIBRARY_PATH}" >>"$GITHUB_ENV"
+        else
+          echo "LD_LIBRARY_PATH=${llvm_root}/lib" >>"$GITHUB_ENV"
+        fi
+
+    - name: Install LLVM (macOS)
+      if: runner.os == 'macOS' && inputs.enable-macos == 'true'
+      shell: bash
+      run: |
+        llvm_version="${{ inputs.llvm-version }}"
+        llvm_major="${llvm_version%%.*}"
+        brew install "llvm@${llvm_major}"
+        if [ "$(uname -m)" = "arm64" ]; then
+          llvm_prefix="/opt/homebrew/opt/llvm@${llvm_major}"
+        else
+          llvm_prefix="/usr/local/opt/llvm@${llvm_major}"
+        fi
+        echo "${llvm_prefix}/bin" >>"$GITHUB_PATH"
+        echo "${{ inputs.llvm-sys-prefix-env-var }}=${llvm_prefix}" >>"$GITHUB_ENV"
+        echo "DYLD_FALLBACK_LIBRARY_PATH=${llvm_prefix}/lib" >>"$GITHUB_ENV"
+
+    - name: Cache LLVM archive (Windows)
+      if: runner.os == 'Windows' && inputs.enable-windows == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}\clang+llvm-${{ inputs.llvm-version }}-x86_64-pc-windows-msvc.tar.xz
+        key: llvm-${{ inputs.llvm-version }}-win-x64-tarball-${{ inputs.windows-cache-key-suffix }}
+
+    - name: Cache vcpkg libxml2 (Windows)
+      if: runner.os == 'Windows' && inputs.enable-windows == 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          C:\vcpkg\downloads
+          C:\vcpkg\installed\x64-windows
+          C:\vcpkg\packages\libxml2_x64-windows
+        key: vcpkg-libxml2-x64-windows-${{ inputs.windows-cache-key-suffix }}
+
+    - name: Install and configure LLVM (Windows)
+      if: runner.os == 'Windows' && inputs.enable-windows == 'true'
+      shell: pwsh
+      run: |
+        $llvmVersion = "${{ inputs.llvm-version }}"
+        $llvmRoot = Join-Path $env:RUNNER_TEMP "llvm"
+        $extractDir = Join-Path $env:RUNNER_TEMP "llvm-extract"
+        $archiveName = "clang+llvm-$llvmVersion-x86_64-pc-windows-msvc.tar.xz"
+        $archive = Join-Path $env:RUNNER_TEMP $archiveName
+        $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvmVersion/$archiveName"
+
+        Remove-Item -Recurse -Force $llvmRoot, $extractDir -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Path $extractDir | Out-Null
+
+        if (!(Test-Path $archive)) {
+          Invoke-WebRequest -Uri $url -OutFile $archive
+        }
+        tar -xf $archive -C $extractDir
+
+        $expanded = Get-ChildItem $extractDir -Directory | Select-Object -First 1
+        if (-not $expanded) {
+          Write-Error "Failed to extract LLVM archive at $extractDir"
+          exit 1
+        }
+        Move-Item $expanded.FullName $llvmRoot
+
+        $llvmConfig = Join-Path $llvmRoot "bin\llvm-config.exe"
+        $llvmConfigFilter = Join-Path $llvmRoot "bin\llvm-config-filter.cmd"
+        if (!(Test-Path $llvmConfig)) {
+          Write-Error "llvm-config.exe missing at $llvmConfig"
+          exit 1
+        }
+
+        @'
+        @echo off
+        setlocal EnableDelayedExpansion
+        for /f "delims=" %%i in ('"%~dp0llvm-config.exe" %*') do (
+          set "line=%%i"
+          set "line=!line:libxml2s.lib=!"
+          echo(!line!
+        )
+        exit /b %ERRORLEVEL%
+        '@ | Out-File -FilePath $llvmConfigFilter -Encoding ascii
+
+        $xml2Static = Join-Path $llvmRoot "lib\libxml2s.lib"
+        if (!(Test-Path $xml2Static)) {
+          $vcpkgExe = "C:\vcpkg\vcpkg.exe"
+          $vcpkgXml2 = "C:\vcpkg\installed\x64-windows\lib\libxml2.lib"
+          if (Test-Path $vcpkgXml2) {
+            Copy-Item $vcpkgXml2 $xml2Static -Force
+            Write-Host "Created libxml2s.lib from cached vcpkg libxml2"
+          } elseif (Test-Path $vcpkgExe) {
+            & $vcpkgExe install libxml2:x64-windows
+            if (Test-Path $vcpkgXml2) {
+              Copy-Item $vcpkgXml2 $xml2Static -Force
+              Write-Host "Created libxml2s.lib from vcpkg libxml2"
+            }
+          }
+        }
+
+        if (!(Test-Path $xml2Static)) {
+          Write-Error "libxml2s.lib is missing and vcpkg fallback did not produce libxml2.lib"
+          exit 1
+        }
+
+        "PATH=$llvmRoot\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "LLVM_PATH=$llvmRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "${{ inputs.llvm-sys-prefix-env-var }}=$llvmRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "LLVM_CONFIG_PATH=$llvmConfigFilter" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

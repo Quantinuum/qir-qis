@@ -6,6 +6,31 @@ and [Labeled Output Schema](https://github.com/qir-alliance/qir-spec/blob/1.0/sp
 
 We document Quantinuum-specific QIS, runtime and platform functions here.
 
+## QIR 1.0 and QIR 2.0 Pointer Forms
+
+We accept both:
+
+- QIR 1.0 typed pointers (for example, `%Qubit*`, `%Result*`)
+- QIR 2.0 opaque pointers (`ptr`)
+
+Function names and semantics are identical across versions; only pointer spelling changes.
+
+Example equivalent declarations:
+
+```llvm
+; QIR 1.0
+declare void @__quantum__qis__rz__body(double, %Qubit*)
+declare void @__quantum__qis__mz__body(%Qubit*, %Result* writeonly)
+declare i1 @__quantum__rt__read_result(%Result* readonly)
+```
+
+```llvm
+; QIR 2.0
+declare void @__quantum__qis__rz__body(double, ptr)
+declare void @__quantum__qis__mz__body(ptr, ptr writeonly)
+declare i1 @__quantum__rt__read_result(ptr readonly)
+```
+
 ## Quantum Instruction Set
 
 ### Native Gate Set
