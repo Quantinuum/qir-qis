@@ -21,9 +21,12 @@ See [qtm-qir-reference.md](https://github.com/quantinuum/qir-qis/blob/main/qtm-q
 **Requirements:**
 
 - Rust >= 1.91.0
-- LLVM 14
+- LLVM 21
 
 ```sh
+# Point llvm-sys to your LLVM 21 installation
+export LLVM_SYS_211_PREFIX=/path/to/llvm21
+
 cargo build --release
 ```
 
@@ -107,6 +110,10 @@ cargo run --example rust_api
 git clone https://github.com/quantinuum/qir-qis.git
 cd qir-qis
 
+# Install LLVM 21 (macOS/Homebrew example)
+brew install llvm@21
+export LLVM_SYS_211_PREFIX=/opt/homebrew/opt/llvm@21
+
 # Install Rust dependencies and build
 cargo build
 
@@ -118,9 +125,11 @@ uv sync
 
 ```sh
 # Build Rust binary
+LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
 cargo build --release
 
 # Build Python package
+LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
 uv run maturin build --release
 ```
 
@@ -132,9 +141,11 @@ Tests require [cargo-nextest](https://nexte.st/docs/installation/pre-built-binar
 
 ```sh
 # Run all tests
+LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
 make test
 
 # Or directly with cargo
+LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
 cargo nextest run --all-targets --all-features
 ```
 

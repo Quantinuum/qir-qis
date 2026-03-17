@@ -11,6 +11,7 @@
 # ///
 """Example demonstrating the qir_qis Python API."""
 
+import sys
 from pathlib import Path
 
 from rich import print as rprint
@@ -32,10 +33,17 @@ attributes = get_entry_attributes(bc_bytes)
 rprint(f"Entry point attributes: {attributes}")
 
 # Compile to QIS
+if sys.platform.startswith("win"):
+    opt_level = 0
+    target = "native"
+else:
+    opt_level = 2
+    target = "aarch64"
+
 qis_bytes = qir_to_qis(
     bc_bytes,
-    opt_level=2,
-    target="aarch64",
+    opt_level=opt_level,
+    target=target,
 )
 
 # Write output

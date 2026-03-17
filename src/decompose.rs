@@ -13,11 +13,8 @@
 //! <https://github.com/quantinuum/qir-qis/blob/main/qtm-qir-reference.md#decompositions>
 
 use inkwell::module::{Linkage, Module};
-use inkwell::passes::PassManager;
 use inkwell::types::PointerType;
-use inkwell::{AddressSpace, builder::Builder, context::Context, values::FunctionValue};
-use llvm_sys::linker::LLVMLinkModules2;
-use llvm_sys::prelude::LLVMModuleRef;
+use inkwell::{builder::Builder, context::Context, values::FunctionValue};
 use std::f64::consts::PI;
 
 pub struct QirTypes<'ctx> {
@@ -27,11 +24,7 @@ pub struct QirTypes<'ctx> {
 impl<'ctx> QirTypes<'ctx> {
     #[must_use]
     pub fn new(context: &'ctx Context) -> Self {
-        let qubit_type = context
-            .get_struct_type("Qubit")
-            .unwrap_or_else(|| context.opaque_struct_type("Qubit"));
-        let qubit_ptr_type = qubit_type.ptr_type(AddressSpace::default());
-
+        let qubit_ptr_type = context.ptr_type(inkwell::AddressSpace::default());
         QirTypes { qubit_ptr_type }
     }
 }
@@ -43,79 +36,47 @@ struct NativeGates<'ctx> {
     rzz: FunctionValue<'ctx>,
 }
 
-/// Merges `src_module` into `dest_module` using LLVM's linker
-/// # Errors
-/// Returns an error if the linking fails.
-fn merge_modules(dest_module: &Module, src_module: Module) -> Result<(), String> {
-    let dest_ref = dest_module.as_mut_ptr() as LLVMModuleRef;
-    let src_ref = src_module.as_mut_ptr() as LLVMModuleRef;
-
-    let result = unsafe { LLVMLinkModules2(dest_ref, src_ref) };
-
-    if result != 0 {
-        return Err("Module linking failed".to_string());
-    }
-
-    // Prevent double-free since linker takes ownership
-    std::mem::forget(src_module);
-    Ok(())
-}
-
 /// Adds QIR decompositions to the given module.
 /// # Errors
 /// Returns an error if the module verification fails.
-pub fn add_decompositions(ctx: &Context, module: &Module) -> Result<(), String> {
-    let decompositions = ctx.create_module("decompositions");
-    build_decompositions(ctx, &decompositions);
-    // Set the data layout of the decompositions module to match the main module
-    // Prevents `warning: Linking two modules of different data layouts`
-    let data_layout = module.get_data_layout();
-    decompositions.set_data_layout(&data_layout);
-    merge_modules(module, decompositions).map_err(|e| format!("Failed to merge modules: {e}"))?;
-
-    // Run function inlining pass to use the decompositions
-    let pass_manager = PassManager::create(());
-    pass_manager.add_function_inlining_pass();
-    pass_manager.run_on(module);
-
-    module
-        .verify()
-        .map_err(|e| format!("Module verification failed: {e}"))?;
+pub fn add_decompositions<'ctx>(ctx: &'ctx Context, module: &Module<'ctx>) -> Result<(), String> {
+    build_decompositions(ctx, module)?;
+    crate::llvm_verify::verify_module(module, "Module verification failed")?;
 
     Ok(())
 }
 
 /// Builds the QIR decompositions for various quantum gates.
-fn build_decompositions<'ctx>(context: &'ctx Context, module: &Module<'ctx>) {
+fn build_decompositions<'ctx>(context: &'ctx Context, module: &Module<'ctx>) -> Result<(), String> {
     let qir_types = QirTypes::new(context);
     let builder = context.create_builder();
 
-    let native_gates = NativeGates {
-        rxy: declare_rxy(context, module, &qir_types),
-        rz: declare_rz(context, module, &qir_types),
-        rzz: declare_rzz(context, module, &qir_types),
-    };
+    let rxy = declare_rxy(context, module, &qir_types);
+    let rz = declare_rz(context, module, &qir_types);
+    let rzz = declare_rzz(context, module, &qir_types);
+    let native_gates = NativeGates { rxy, rz, rzz };
 
     // Single-qubit gates
-    let _ = define_h_gate(context, module, &builder, &qir_types, &native_gates);
-    let _ = define_x_gate(context, module, &builder, &qir_types, &native_gates);
-    let _ = define_y_gate(context, module, &builder, &qir_types, &native_gates);
-    let _ = define_z_gate(context, module, &builder, &qir_types, &native_gates);
-    let _ = define_s_gate(context, module, &builder, &qir_types, &native_gates);
-    let _ = define_s_adj_gate(context, module, &builder, &qir_types, &native_gates);
-    let _ = define_t_gate(context, module, &builder, &qir_types, &native_gates);
-    let _ = define_t_adj_gate(context, module, &builder, &qir_types, &native_gates);
-    let _ = define_rx_gate(context, module, &builder, &qir_types, &native_gates);
-    let _ = define_ry_gate(context, module, &builder, &qir_types, &native_gates);
+    define_h_gate(context, module, &builder, &qir_types, &native_gates)?;
+    define_x_gate(context, module, &builder, &qir_types, &native_gates)?;
+    define_y_gate(context, module, &builder, &qir_types, &native_gates)?;
+    define_z_gate(context, module, &builder, &qir_types, &native_gates)?;
+    define_s_gate(context, module, &builder, &qir_types, &native_gates)?;
+    define_s_adj_gate(context, module, &builder, &qir_types, &native_gates)?;
+    define_t_gate(context, module, &builder, &qir_types, &native_gates)?;
+    define_t_adj_gate(context, module, &builder, &qir_types, &native_gates)?;
+    define_rx_gate(context, module, &builder, &qir_types, &native_gates)?;
+    define_ry_gate(context, module, &builder, &qir_types, &native_gates)?;
 
     // Two-qubit gates
-    let _ = define_cz_gate(context, module, &builder, &qir_types, &native_gates);
-    let _ = define_cx_gate(context, module, &builder, &qir_types, &native_gates, "cx");
+    define_cz_gate(context, module, &builder, &qir_types, &native_gates)?;
+    define_cx_gate(context, module, &builder, &qir_types, &native_gates, "cx")?;
     // Legacy: Combine with above if we deprecate CNOT
-    let _ = define_cx_gate(context, module, &builder, &qir_types, &native_gates, "cnot");
+    define_cx_gate(context, module, &builder, &qir_types, &native_gates, "cnot")?;
 
     // Three-qubit gate
-    let _ = define_ccx_gate(context, module, &builder, &qir_types, &native_gates);
+    define_ccx_gate(context, module, &builder, &qir_types, &native_gates)?;
+    Ok(())
 }
 
 /// Declare the native QIR gate rxy
@@ -124,6 +85,9 @@ fn declare_rxy<'ctx>(
     module: &Module<'ctx>,
     qir_types: &QirTypes<'ctx>,
 ) -> FunctionValue<'ctx> {
+    if let Some(existing) = module.get_function("__quantum__qis__rxy__body") {
+        return existing;
+    }
     let fn_type = context.void_type().fn_type(
         &[
             context.f64_type().into(),
@@ -135,7 +99,7 @@ fn declare_rxy<'ctx>(
     module.add_function(
         "__quantum__qis__rxy__body",
         fn_type,
-        Some(Linkage::LinkOnceODR),
+        Some(Linkage::External),
     )
 }
 
@@ -145,15 +109,14 @@ fn declare_rz<'ctx>(
     module: &Module<'ctx>,
     qir_types: &QirTypes<'ctx>,
 ) -> FunctionValue<'ctx> {
+    if let Some(existing) = module.get_function("__quantum__qis__rz__body") {
+        return existing;
+    }
     let fn_type = context.void_type().fn_type(
         &[context.f64_type().into(), qir_types.qubit_ptr_type.into()],
         false,
     );
-    module.add_function(
-        "__quantum__qis__rz__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
-    )
+    module.add_function("__quantum__qis__rz__body", fn_type, Some(Linkage::External))
 }
 
 /// Declare the native QIR gate rzz
@@ -162,6 +125,9 @@ fn declare_rzz<'ctx>(
     module: &Module<'ctx>,
     qir_types: &QirTypes<'ctx>,
 ) -> FunctionValue<'ctx> {
+    if let Some(existing) = module.get_function("__quantum__qis__rzz__body") {
+        return existing;
+    }
     let fn_type = context.void_type().fn_type(
         &[
             context.f64_type().into(),
@@ -173,8 +139,21 @@ fn declare_rzz<'ctx>(
     module.add_function(
         "__quantum__qis__rzz__body",
         fn_type,
-        Some(Linkage::LinkOnceODR),
+        Some(Linkage::External),
     )
+}
+
+fn get_or_create_decomposition_function<'ctx>(
+    context: &'ctx Context,
+    module: &Module<'ctx>,
+    fn_name: &str,
+    param_types: &[inkwell::types::BasicMetadataTypeEnum<'ctx>],
+) -> FunctionValue<'ctx> {
+    if let Some(existing) = module.get_function(fn_name) {
+        return existing;
+    }
+    let fn_type = context.void_type().fn_type(param_types, false);
+    module.add_function(fn_name, fn_type, Some(Linkage::LinkOnceODR))
 }
 
 /// Define decomposition of H gate using native gates
@@ -187,14 +166,15 @@ fn define_h_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context
-        .void_type()
-        .fn_type(&[qir_types.qubit_ptr_type.into()], false);
-    let h = module.add_function(
+    let h = get_or_create_decomposition_function(
+        context,
+        module,
         "__quantum__qis__h__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
+        &[qir_types.qubit_ptr_type.into()],
     );
+    if h.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(h, "entry");
     builder.position_at_end(entry);
 
@@ -229,14 +209,15 @@ fn define_x_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context
-        .void_type()
-        .fn_type(&[qir_types.qubit_ptr_type.into()], false);
-    let x = module.add_function(
+    let x = get_or_create_decomposition_function(
+        context,
+        module,
         "__quantum__qis__x__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
+        &[qir_types.qubit_ptr_type.into()],
     );
+    if x.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(x, "entry");
     builder.position_at_end(entry);
 
@@ -263,14 +244,15 @@ fn define_y_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context
-        .void_type()
-        .fn_type(&[qir_types.qubit_ptr_type.into()], false);
-    let y = module.add_function(
+    let y = get_or_create_decomposition_function(
+        context,
+        module,
         "__quantum__qis__y__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
+        &[qir_types.qubit_ptr_type.into()],
     );
+    if y.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(y, "entry");
     builder.position_at_end(entry);
 
@@ -297,14 +279,15 @@ fn define_z_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context
-        .void_type()
-        .fn_type(&[qir_types.qubit_ptr_type.into()], false);
-    let z = module.add_function(
+    let z = get_or_create_decomposition_function(
+        context,
+        module,
         "__quantum__qis__z__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
+        &[qir_types.qubit_ptr_type.into()],
     );
+    if z.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(z, "entry");
     builder.position_at_end(entry);
 
@@ -330,14 +313,15 @@ fn define_s_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context
-        .void_type()
-        .fn_type(&[qir_types.qubit_ptr_type.into()], false);
-    let s = module.add_function(
+    let s = get_or_create_decomposition_function(
+        context,
+        module,
         "__quantum__qis__s__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
+        &[qir_types.qubit_ptr_type.into()],
     );
+    if s.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(s, "entry");
     builder.position_at_end(entry);
 
@@ -363,14 +347,15 @@ fn define_s_adj_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context
-        .void_type()
-        .fn_type(&[qir_types.qubit_ptr_type.into()], false);
-    let s = module.add_function(
+    let s = get_or_create_decomposition_function(
+        context,
+        module,
         "__quantum__qis__s__adj",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
+        &[qir_types.qubit_ptr_type.into()],
     );
+    if s.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(s, "entry");
     builder.position_at_end(entry);
 
@@ -396,14 +381,15 @@ fn define_t_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context
-        .void_type()
-        .fn_type(&[qir_types.qubit_ptr_type.into()], false);
-    let t = module.add_function(
+    let t = get_or_create_decomposition_function(
+        context,
+        module,
         "__quantum__qis__t__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
+        &[qir_types.qubit_ptr_type.into()],
     );
+    if t.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(t, "entry");
     builder.position_at_end(entry);
 
@@ -429,14 +415,15 @@ fn define_t_adj_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context
-        .void_type()
-        .fn_type(&[qir_types.qubit_ptr_type.into()], false);
-    let t = module.add_function(
+    let t = get_or_create_decomposition_function(
+        context,
+        module,
         "__quantum__qis__t__adj",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
+        &[qir_types.qubit_ptr_type.into()],
     );
+    if t.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(t, "entry");
     builder.position_at_end(entry);
 
@@ -462,15 +449,15 @@ fn define_rx_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context.void_type().fn_type(
-        &[context.f64_type().into(), qir_types.qubit_ptr_type.into()],
-        false,
-    );
-    let rx = module.add_function(
+    let rx = get_or_create_decomposition_function(
+        context,
+        module,
         "__quantum__qis__rx__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
+        &[context.f64_type().into(), qir_types.qubit_ptr_type.into()],
     );
+    if rx.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(rx, "entry");
     builder.position_at_end(entry);
 
@@ -499,15 +486,15 @@ fn define_ry_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context.void_type().fn_type(
-        &[context.f64_type().into(), qir_types.qubit_ptr_type.into()],
-        false,
-    );
-    let ry = module.add_function(
+    let ry = get_or_create_decomposition_function(
+        context,
+        module,
         "__quantum__qis__ry__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
+        &[context.f64_type().into(), qir_types.qubit_ptr_type.into()],
     );
+    if ry.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(ry, "entry");
     builder.position_at_end(entry);
 
@@ -540,18 +527,18 @@ fn define_cz_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context.void_type().fn_type(
+    let cz = get_or_create_decomposition_function(
+        context,
+        module,
+        "__quantum__qis__cz__body",
         &[
             qir_types.qubit_ptr_type.into(),
             qir_types.qubit_ptr_type.into(),
         ],
-        false,
     );
-    let cz = module.add_function(
-        "__quantum__qis__cz__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
-    );
+    if cz.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(cz, "entry");
     builder.position_at_end(entry);
 
@@ -593,18 +580,19 @@ fn define_cx_gate<'ctx>(
     native: &NativeGates<'ctx>,
     fn_name: &str,
 ) -> Result<(), String> {
-    let fn_type = context.void_type().fn_type(
+    let gate_symbol = format!("__quantum__qis__{fn_name}__body");
+    let cx = get_or_create_decomposition_function(
+        context,
+        module,
+        &gate_symbol,
         &[
             qir_types.qubit_ptr_type.into(),
             qir_types.qubit_ptr_type.into(),
         ],
-        false,
     );
-    let cx = module.add_function(
-        &format!("__quantum__qis__{fn_name}__body"),
-        fn_type,
-        Some(Linkage::LinkOnceODR),
-    );
+    if cx.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(cx, "entry");
     builder.position_at_end(entry);
 
@@ -657,19 +645,19 @@ fn define_ccx_gate<'ctx>(
     qir_types: &QirTypes<'ctx>,
     native: &NativeGates<'ctx>,
 ) -> Result<(), String> {
-    let fn_type = context.void_type().fn_type(
+    let ccx = get_or_create_decomposition_function(
+        context,
+        module,
+        "__quantum__qis__ccx__body",
         &[
             qir_types.qubit_ptr_type.into(),
             qir_types.qubit_ptr_type.into(),
             qir_types.qubit_ptr_type.into(),
         ],
-        false,
     );
-    let ccx = module.add_function(
-        "__quantum__qis__ccx__body",
-        fn_type,
-        Some(Linkage::LinkOnceODR),
-    );
+    if ccx.get_first_basic_block().is_some() {
+        return Ok(());
+    }
     let entry = context.append_basic_block(ccx, "entry");
     builder.position_at_end(entry);
 
