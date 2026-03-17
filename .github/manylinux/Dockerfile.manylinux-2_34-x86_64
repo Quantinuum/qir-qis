@@ -1,0 +1,25 @@
+FROM quay.io/pypa/manylinux_2_34_x86_64@sha256:e36baf9250643e8c521247a2eed8b9480237d9a0808b5d5e734de8cb2f21ca0c
+
+ARG LLVM_VERSION=21.1.8
+
+RUN dnf install -y \
+    curl \
+    xz \
+    libffi-devel \
+    zlib-devel \
+    libzstd-devel \
+    libxml2-devel \
+    ncurses-compat-libs \
+    ncurses-devel && \
+    dnf clean all
+
+RUN curl -L -o /tmp/llvm.tar.xz \
+    "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.xz" && \
+    mkdir -p /opt/llvm && \
+    tar -xf /tmp/llvm.tar.xz -C /opt/llvm --strip-components=1 && \
+    rm /tmp/llvm.tar.xz
+
+COPY llvm-config-wrapper.sh /tmp/llvm-config-wrapper.sh
+RUN mv /opt/llvm/bin/llvm-config /opt/llvm/bin/llvm-config.real && \
+    install -m 0755 /tmp/llvm-config-wrapper.sh /opt/llvm/bin/llvm-config && \
+    rm -f /tmp/llvm-config-wrapper.sh

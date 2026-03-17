@@ -20,10 +20,19 @@ on:
       - "qtm-qir-reference.md"
       - ".github/*.md"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: -D warnings
+  LLVM_VERSION: "21.1.8"
+  LLVM_SYS_PREFIX_ENV_VAR: "LLVM_SYS_211_PREFIX"
+  LLVM_RUST_CACHE_FAMILY: "llvm21"
+  LLVM_LINUX_CACHE_KEY_SUFFIX: "ci-linux-shared-v1"
+  LLVM_WINDOWS_CACHE_KEY_SUFFIX: "windows-shared-v1"
 
 jobs:
   test:
@@ -40,77 +49,95 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - name: Install LLVM (Linux)
-        if: runner.os == 'Linux'
-        uses: KyleMayes/install-llvm-action@v2
+      - name: Setup LLVM
+        uses: ./.github/actions/setup-llvm
         with:
-          version: "14.0"
-          directory: ${{ runner.temp }}/llvm
-          env: True
-      - name: Configure LLVM (Linux)
+          llvm-version: ${{ env.LLVM_VERSION }}
+          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
+          linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
+          windows-cache-key-suffix: ${{ env.LLVM_WINDOWS_CACHE_KEY_SUFFIX }}
+      - name: Configure linker flags for test
         if: runner.os == 'Linux'
-        shell: bash
-        run: echo "LLVM_SYS_140_PREFIX=$LLVM_PATH" >>"$GITHUB_ENV"
-      - name: Install LLVM (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
         run: |
-          if [ "$(uname -m)" = "arm64" ]; then
-            ARCH_PREFIX=arm64-apple-darwin22.3.0
-          else
-            ARCH_PREFIX=x86_64-apple-darwin
-          fi
-          curl -LO "https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz"
-          mkdir -p /tmp/llvm
-          tar xf "clang+llvm-14.0.6-${ARCH_PREFIX}.tar.xz" -C /tmp/llvm --strip-components=1
-          echo "/tmp/llvm/bin" >>"$GITHUB_PATH"
-          echo "LLVM_SYS_140_PREFIX=/tmp/llvm" >>"$GITHUB_ENV"
-          echo "DYLD_FALLBACK_LIBRARY_PATH=/tmp/llvm/lib" >>"$GITHUB_ENV"
-      - name: Install LLVM (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          curl -L -o LLVM-14.0.6-win64.7z https://github.com/PLC-lang/llvm-package-windows/releases/download/v14.0.6/LLVM-14.0.6-win64.7z
-          7z x LLVM-14.0.6-win64.7z "-oC:\LLVM" -y
-          "PATH=C:\LLVM\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LLVM_SYS_140_PREFIX=C:\LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          llvm_root="${LLVM_PATH}"
+          echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-rust-${{ runner.os }}-${{ env.LLVM_RUST_CACHE_FAMILY }}
+          cache-on-failure: true
+          cache-workspace-crates: true
+          cache-targets: true
       - name: Test (Windows suite)
         if: runner.os == 'Windows'
-        run: cargo nextest run --all-targets --all-features --test-threads=1 -E "not test(test_get_entry_attributes)"
+        run: cargo nextest run --lib --all-features --test-threads=1 -E "not test(test_get_entry_attributes)"
       - name: Test (Windows isolated get_entry_attributes)
         if: runner.os == 'Windows'
-        run: cargo test --all-targets --all-features test_get_entry_attributes -- --test-threads=1
+        run: cargo test --lib --all-features test_get_entry_attributes -- --test-threads=1
       - name: Test
         if: runner.os != 'Windows'
-        run: cargo nextest run --all-targets --all-features ${{ matrix.nextest_extra_args }}
+        # All exercised tests live in the library test binary. Avoid rebuilding
+        # empty bin/example harnesses, which is especially expensive with LLVM 21.
+        run: cargo nextest run --lib --all-features ${{ matrix.nextest_extra_args }}
+      - uses: astral-sh/setup-uv@v7
+        if: runner.os != 'Linux'
+      - name: Rust API example smoke
+        if: runner.os != 'Linux'
+        run: cargo run --example rust_api --all-features --profile test
+      - name: Python API example smoke
+        if: runner.os != 'Linux'
+        run: uv run examples/python_api.py
 
   lint:
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v6
-      - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@v2
+      - name: Setup LLVM
+        uses: ./.github/actions/setup-llvm
         with:
-          version: "14.0"
-          env: True
-      - name: Configure LLVM
-        shell: bash
-        run: echo "LLVM_SYS_140_PREFIX=$LLVM_PATH" >>"$GITHUB_ENV"
+          llvm-version: ${{ env.LLVM_VERSION }}
+          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
+          enable-macos: "false"
+          enable-windows: "false"
+          linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
+      - name: Configure linker flags for lint
+        run: |
+          llvm_root="${LLVM_PATH}"
+          echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
+      - uses: cargo-bins/cargo-binstall@v1.17.7
+      - name: Install lint tools
+        run: |
+          cargo binstall --no-confirm --force sccache
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            cargo binstall --no-confirm --force cargo-msrv
+          fi
+      - name: Cache sccache
+        uses: actions/cache@v5
         with:
-          components: clippy, rustfmt
+          path: ~/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
       - uses: Swatinem/rust-cache@v2
-      - name: Compile
-        run: cargo check --locked
+        with:
+          shared-key: ci-rust-${{ runner.os }}-${{ env.LLVM_RUST_CACHE_FAMILY }}
+          cache-on-failure: true
+          cache-workspace-crates: true
+          cache-targets: true
       - name: Run cargo fmt (check if all code is rustfmt-ed)
         run: cargo fmt --all --check
       - name: Run cargo clippy (deny warnings)
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      - uses: cargo-bins/cargo-binstall@main
-      - name: Install cargo-msrv
-        run: cargo binstall --no-confirm --force cargo-msrv
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Verify the MSRV
+        if: github.event_name != 'pull_request'
         run: cargo msrv verify
