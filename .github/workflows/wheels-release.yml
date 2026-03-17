@@ -7,6 +7,11 @@ on:
     tags:
       - '*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing tag to rebuild wheels for and publish from
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -27,6 +32,8 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
       - name: Setup LLVM (Windows)
         if: matrix.os == 'windows-latest'
@@ -94,6 +101,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
+          pattern: wheels-*
           path: wheelhouse
           merge-multiple: true
       - name: GH Release
@@ -101,8 +109,9 @@ jobs:
         with:
           files: wheelhouse/*.whl
           generate_release_notes: true
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
       - name: Publish to PyPI
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: wheelhouse/
