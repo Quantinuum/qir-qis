@@ -81,9 +81,8 @@ make lint
 
 `make lint` runs:
 
-- `prek` pre-commit checks
-- `ty`
-- `cargo clippy`
+- `prek` checks, including formatting, `typos`, and Rust lint/doc hooks
+- `ty` type checking
 
 ### Python Stubs
 
