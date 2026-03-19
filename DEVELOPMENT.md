@@ -11,16 +11,27 @@ cd qir-qis
 
 # Install LLVM 21 (macOS/Homebrew example)
 brew install llvm@21
-if [ "$(uname -m)" = "arm64" ]; then
-  export LLVM_SYS_211_PREFIX=/opt/homebrew/opt/llvm@21
-else
-  export LLVM_SYS_211_PREFIX=/usr/local/opt/llvm@21
-fi
+```
 
-# Install Rust dependencies and build
+### Configure LLVM Environment
+
+Set `LLVM_SYS_211_PREFIX` before running the build and test commands below. On macOS with Homebrew, `/path/to/llvm21` is typically `/opt/homebrew/opt/llvm@21`. On Linux, it is typically `/usr/lib/llvm-21`.
+
+```sh
+export LLVM_SYS_211_PREFIX=/path/to/llvm21
+```
+
+If you want this to persist across shells, add it to your shell startup file:
+
+```sh
+echo 'export LLVM_SYS_211_PREFIX=/path/to/llvm21' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Then install Rust dependencies and Python dependencies:
+
+```sh
 cargo build
-
-# Install Python dependencies
 uv sync
 ```
 
@@ -28,11 +39,9 @@ uv sync
 
 ```sh
 # Build Rust binary
-LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
 cargo build --release
 
 # Build Python package
-LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
 uv run maturin build --release
 ```
 
@@ -42,11 +51,9 @@ Tests require [cargo-nextest](https://nexte.st/docs/installation/pre-built-binar
 
 ```sh
 # Run all tests
-LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
 make test
 
 # Or directly with the same target as `make test`
-LLVM_SYS_211_PREFIX=${LLVM_SYS_211_PREFIX:-/opt/homebrew/opt/llvm@21} \
 cargo nextest run --all-targets --all-features
 ```
 
