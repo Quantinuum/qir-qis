@@ -10,7 +10,6 @@ compile:
 lint:
 	uvx prek run --all-files
 	uvx ty check
-	cargo clippy --all-targets --all-features -- -W clippy::pedantic -W clippy::nursery
 
 .PHONY: test
 test:

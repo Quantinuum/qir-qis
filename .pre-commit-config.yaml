@@ -31,9 +31,13 @@ repos:
     hooks:
       - id: refurb
 
-  - repo: https://github.com/berquist/pre-commit-rust
-    rev: 968f0f2
+  - repo: https://github.com/AndrejOrsula/pre-commit-cargo
+    rev: 0.5.0
     hooks:
       - id: cargo-fmt
-      - id: cargo-check
       - id: cargo-clippy
+        args: ["--all-targets", "--all-features", "--", "-W", "clippy::pedantic", "-W", "clippy::nursery"]
+      - id: cargo-test-doc
+        args: ["--all-features"]
+      - id: cargo-doc
+        args: ["--no-deps", "--document-private-items"]
