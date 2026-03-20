@@ -234,71 +234,30 @@ mod aux {
     }
 
     pub fn validate_module_flags(module: &Module, errors: &mut Vec<String>) {
-        #[cfg(windows)]
-        {
-            // Metadata traversal has been unstable in some Windows environments.
-            // Keep validation conservative there and rely on function-level checks.
-            let _ = (module, errors);
-            return;
-        }
-
-        #[cfg(not(windows))]
-        {
-            let ir = module.print_to_string().to_string_lossy().into_owned();
-            let metadata_nodes = collect_metadata_nodes(&ir);
-            validate_exact_module_flag(
-                &metadata_nodes,
-                "qir_major_version",
-                &["i32 1", "i32 2"],
-                errors,
-            );
-            validate_exact_module_flag(&metadata_nodes, "qir_minor_version", &["i32 0"], errors);
-            validate_exact_module_flag(
-                &metadata_nodes,
-                "dynamic_qubit_management",
-                &["i1 false"],
-                errors,
-            );
-            validate_exact_module_flag(
-                &metadata_nodes,
-                "dynamic_result_management",
-                &["i1 false"],
-                errors,
-            );
-        }
+        validate_exact_module_flag(module, "qir_major_version", &["i32 1", "i32 2"], errors);
+        validate_exact_module_flag(module, "qir_minor_version", &["i32 0"], errors);
+        validate_exact_module_flag(module, "dynamic_qubit_management", &["i1 false"], errors);
+        validate_exact_module_flag(module, "dynamic_result_management", &["i1 false"], errors);
     }
 
-    #[cfg(not(windows))]
-    fn collect_metadata_nodes(ir: &str) -> Vec<String> {
-        ir.lines()
-            .map(str::trim)
-            .filter(|line| line.starts_with('!') && line.contains(" = !{"))
-            .map(ToOwned::to_owned)
-            .collect()
+    fn get_module_flag_string(module: &Module, flag_name: &str) -> Option<String> {
+        module
+            .get_flag(flag_name)
+            .map(|flag| flag.print_to_string().to_string_lossy().trim().to_string())
     }
 
-    #[cfg(not(windows))]
     fn validate_exact_module_flag(
-        metadata_nodes: &[String],
+        module: &Module,
         flag_name: &str,
         expected_values: &[&str],
         errors: &mut Vec<String>,
     ) {
-        let entries: Vec<_> = metadata_nodes
-            .iter()
-            .filter(|body| body.contains(&format!(r#"!"{flag_name}""#)))
-            .collect();
-
-        if entries.is_empty() {
+        let Some(actual) = get_module_flag_string(module, flag_name) else {
             errors.push(format!("Missing required module flag: {flag_name}"));
             return;
-        }
+        };
 
-        if entries.iter().any(|body| {
-            expected_values
-                .iter()
-                .any(|expected| body.contains(&format!(r#"!"{flag_name}", {expected}"#)))
-        }) {
+        if expected_values.contains(&actual.as_str()) {
             return;
         }
 
@@ -1696,5 +1655,25 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             .expect("Compiled QIS bitcode should parse");
         assert!(module.get_function("qmain").is_some());
         assert!(module.get_function("___lazy_measure").is_some());
+    }
+
+    #[test]
+    fn test_validate_module_flags_uses_direct_module_flag_lookup() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        validate_qir(&bc_bytes, None).expect("Module flags should validate through direct lookup");
     }
 }
