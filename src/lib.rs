@@ -240,10 +240,12 @@ mod aux {
         validate_exact_module_flag(module, "dynamic_result_management", &["i1 false"], errors);
     }
 
-    fn get_module_flag_string(module: &Module, flag_name: &str) -> Option<String> {
-        module
-            .get_flag(flag_name)
-            .map(|flag| flag.print_to_string().to_string_lossy().trim().to_string())
+    fn collect_metadata_nodes(ir: &str) -> Vec<String> {
+        ir.lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with('!') && line.contains(" = !{"))
+            .map(ToOwned::to_owned)
+            .collect()
     }
 
     fn validate_exact_module_flag(
@@ -252,12 +254,23 @@ mod aux {
         expected_values: &[&str],
         errors: &mut Vec<String>,
     ) {
-        let Some(actual) = get_module_flag_string(module, flag_name) else {
+        let ir = module.print_to_string().to_string_lossy().into_owned();
+        let metadata_nodes = collect_metadata_nodes(&ir);
+        let entries: Vec<_> = metadata_nodes
+            .iter()
+            .filter(|body| body.contains(&format!(r#"!"{flag_name}""#)))
+            .collect();
+
+        if entries.is_empty() {
             errors.push(format!("Missing required module flag: {flag_name}"));
             return;
-        };
+        }
 
-        if expected_values.contains(&actual.as_str()) {
+        if entries.iter().any(|body| {
+            expected_values
+                .iter()
+                .any(|expected| body.contains(&format!(r#"!"{flag_name}", {expected}"#)))
+        }) {
             return;
         }
 
@@ -1658,7 +1671,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
-    fn test_validate_module_flags_uses_direct_module_flag_lookup() {
+    fn test_validate_module_flags_are_checked_cross_platform() {
         let ll_text = r#"
 define i64 @Entry_Point_Name() #0 {
 entry:
@@ -1674,6 +1687,6 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 !3 = !{i32 1, !"dynamic_result_management", i1 false}
 "#;
         let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
-        validate_qir(&bc_bytes, None).expect("Module flags should validate through direct lookup");
+        validate_qir(&bc_bytes, None).expect("Module flags should validate on every platform");
     }
 }
