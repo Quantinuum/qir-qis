@@ -155,8 +155,9 @@ mod aux {
 
     #[cfg(windows)]
     pub const fn validate_module_layout_and_triple(_module: &Module) {
-        // Best-effort warning path only. Avoid unstable getter APIs on
-        // Windows where these calls have been unreliable in CI.
+        // Best-effort warning path only. Avoid unstable getter APIs on Windows,
+        // where these calls have been unreliable in CI; re-checking locally on
+        // Windows Arm64 on March 23, 2026 reproduced STATUS_ACCESS_VIOLATION.
     }
 
     pub fn validate_functions(
