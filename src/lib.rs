@@ -51,7 +51,7 @@ pub mod opt;
 mod utils;
 
 mod aux {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     use crate::{
         convert::{
@@ -235,31 +235,65 @@ mod aux {
     }
 
     pub fn validate_module_flags(module: &Module, errors: &mut Vec<String>) {
-        validate_exact_module_flag(module, "qir_major_version", &["i32 1", "i32 2"], errors);
-        validate_exact_module_flag(module, "qir_minor_version", &["i32 0"], errors);
-        validate_exact_module_flag(module, "dynamic_qubit_management", &["i1 false"], errors);
-        validate_exact_module_flag(module, "dynamic_result_management", &["i1 false"], errors);
+        let module_flags = collect_module_flags(module);
+        validate_exact_module_flag(&module_flags, "qir_major_version", &["i32 1", "i32 2"], errors);
+        validate_exact_module_flag(&module_flags, "qir_minor_version", &["i32 0"], errors);
+        validate_exact_module_flag(&module_flags, "dynamic_qubit_management", &["i1 false"], errors);
+        validate_exact_module_flag(&module_flags, "dynamic_result_management", &["i1 false"], errors);
     }
 
-    pub(crate) fn collect_module_flags(module: &Module) -> BTreeMap<String, String> {
-        module
-            .get_global_metadata("llvm.module.flags")
-            .into_iter()
-            .filter_map(|entry| {
-                let values = entry.get_node_values();
-                if values.len() != 3 {
-                    return None;
-                }
+    pub(crate) struct ModuleFlags {
+        values: BTreeMap<String, Vec<String>>,
+        malformed: BTreeSet<String>,
+    }
 
-                let flag_name = values[1]
-                    .into_metadata_value()
-                    .get_string_value()
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_owned)?;
-                let flag_value = format_module_flag_value(values[2])?;
-                Some((flag_name, flag_value))
-            })
-            .collect()
+    impl ModuleFlags {
+        pub(crate) fn get(&self, flag_name: &str) -> Option<&[String]> {
+            self.values.get(flag_name).map(Vec::as_slice)
+        }
+
+        fn is_malformed(&self, flag_name: &str) -> bool {
+            self.malformed.contains(flag_name)
+        }
+    }
+
+    pub(crate) fn collect_module_flags(module: &Module) -> ModuleFlags {
+        let mut values = BTreeMap::<String, Vec<String>>::new();
+        let mut malformed = BTreeSet::new();
+
+        for entry in module.get_global_metadata("llvm.module.flags") {
+            let node_values = entry.get_node_values();
+            let flag_name = extract_module_flag_name(&node_values);
+
+            if node_values.len() != 3 {
+                if let Some(flag_name) = flag_name {
+                    malformed.insert(flag_name);
+                }
+                continue;
+            }
+
+            let Some(flag_name) = flag_name else {
+                continue;
+            };
+
+            let Some(flag_value) = format_module_flag_value(node_values[2]) else {
+                malformed.insert(flag_name);
+                continue;
+            };
+
+            values.entry(flag_name).or_default().push(flag_value);
+        }
+
+        ModuleFlags { values, malformed }
+    }
+
+    fn extract_module_flag_name(values: &[BasicMetadataValueEnum]) -> Option<String> {
+        values
+            .get(1)?
+            .into_metadata_value()
+            .get_string_value()
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
     }
 
     fn format_module_flag_value(value: BasicMetadataValueEnum) -> Option<String> {
@@ -290,18 +324,24 @@ mod aux {
     }
 
     fn validate_exact_module_flag(
-        module: &Module,
+        module_flags: &ModuleFlags,
         flag_name: &str,
         expected_values: &[&str],
         errors: &mut Vec<String>,
     ) {
-        let module_flags = collect_module_flags(module);
-        let Some(actual) = module_flags.get(flag_name) else {
+        let Some(actual_values) = module_flags.get(flag_name) else {
+            if module_flags.is_malformed(flag_name) {
+                errors.push(format!("Missing or unsupported module flag: {flag_name}"));
+                return;
+            }
             errors.push(format!("Missing required module flag: {flag_name}"));
             return;
         };
 
-        if expected_values.contains(&actual.as_str()) {
+        if actual_values
+            .iter()
+            .any(|actual| expected_values.contains(&actual.as_str()))
+        {
             return;
         }
 
@@ -1748,15 +1788,71 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             .expect("Failed to create module from inline IR");
 
         let flags = collect_module_flags(&module);
-        assert_eq!(flags.get("qir_major_version"), Some(&"i32 2".to_string()));
-        assert_eq!(flags.get("qir_minor_version"), Some(&"i32 0".to_string()));
         assert_eq!(
-            flags.get("dynamic_qubit_management"),
-            Some(&"i1 false".to_string())
+            flags.get("qir_major_version").map(|values| values.to_vec()),
+            Some(vec!["i32 2".to_string()])
         );
         assert_eq!(
-            flags.get("dynamic_result_management"),
-            Some(&"i1 false".to_string())
+            flags.get("qir_minor_version").map(|values| values.to_vec()),
+            Some(vec!["i32 0".to_string()])
         );
+        assert_eq!(
+            flags
+                .get("dynamic_qubit_management")
+                .map(|values| values.to_vec()),
+            Some(vec!["i1 false".to_string()])
+        );
+        assert_eq!(
+            flags
+                .get("dynamic_result_management")
+                .map(|values| values.to_vec()),
+            Some(vec!["i1 false".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_validate_module_flags_accept_duplicate_entries_if_one_matches() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", i32 99}
+!1 = !{i32 1, !"qir_major_version", i32 2}
+!2 = !{i32 7, !"qir_minor_version", i32 0}
+!3 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!4 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        validate_qir(&bc_bytes, None)
+            .expect("Module flags should validate when any duplicate entry matches");
+    }
+
+    #[test]
+    fn test_validate_module_flags_reports_malformed_required_flag() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", !4}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 99}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None).expect_err("Malformed module flag should fail");
+        assert!(err.contains("Missing or unsupported module flag: qir_major_version"));
     }
 }
