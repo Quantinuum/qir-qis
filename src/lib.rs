@@ -51,7 +51,7 @@ pub mod opt;
 mod utils;
 
 mod aux {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     use crate::{
         convert::{
@@ -71,7 +71,8 @@ mod aux {
         module::Module,
         types::{ArrayType, BasicTypeEnum},
         values::{
-            AnyValue, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, PointerValue,
+            AnyValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
+            FunctionValue, PointerValue,
         },
     };
 
@@ -154,8 +155,9 @@ mod aux {
 
     #[cfg(windows)]
     pub const fn validate_module_layout_and_triple(_module: &Module) {
-        // Best-effort warning path only. Avoid unstable getter APIs on
-        // Windows where these calls have been unreliable in CI.
+        // Best-effort warning path only. Avoid unstable getter APIs on Windows,
+        // where these calls have been unreliable in CI; re-checking locally on
+        // Windows Arm64 on March 23, 2026 reproduced STATUS_ACCESS_VIOLATION.
     }
 
     pub fn validate_functions(
@@ -234,71 +236,128 @@ mod aux {
     }
 
     pub fn validate_module_flags(module: &Module, errors: &mut Vec<String>) {
-        #[cfg(windows)]
-        {
-            // Metadata traversal has been unstable in some Windows environments.
-            // Keep validation conservative there and rely on function-level checks.
-            let _ = (module, errors);
-            return;
+        let module_flags = collect_module_flags(module);
+        validate_exact_module_flag(
+            &module_flags,
+            "qir_major_version",
+            &["i32 1", "i32 2"],
+            errors,
+        );
+        validate_exact_module_flag(&module_flags, "qir_minor_version", &["i32 0"], errors);
+        validate_exact_module_flag(
+            &module_flags,
+            "dynamic_qubit_management",
+            &["i1 false"],
+            errors,
+        );
+        validate_exact_module_flag(
+            &module_flags,
+            "dynamic_result_management",
+            &["i1 false"],
+            errors,
+        );
+    }
+
+    pub(crate) struct ModuleFlags {
+        values: BTreeMap<String, Vec<String>>,
+        malformed: BTreeSet<String>,
+    }
+
+    impl ModuleFlags {
+        pub(crate) fn get(&self, flag_name: &str) -> Option<&[String]> {
+            self.values.get(flag_name).map(Vec::as_slice)
         }
 
-        #[cfg(not(windows))]
-        {
-            let ir = module.print_to_string().to_string_lossy().into_owned();
-            let metadata_nodes = collect_metadata_nodes(&ir);
-            validate_exact_module_flag(
-                &metadata_nodes,
-                "qir_major_version",
-                &["i32 1", "i32 2"],
-                errors,
-            );
-            validate_exact_module_flag(&metadata_nodes, "qir_minor_version", &["i32 0"], errors);
-            validate_exact_module_flag(
-                &metadata_nodes,
-                "dynamic_qubit_management",
-                &["i1 false"],
-                errors,
-            );
-            validate_exact_module_flag(
-                &metadata_nodes,
-                "dynamic_result_management",
-                &["i1 false"],
-                errors,
-            );
+        fn is_malformed(&self, flag_name: &str) -> bool {
+            self.malformed.contains(flag_name)
         }
     }
 
-    #[cfg(not(windows))]
-    fn collect_metadata_nodes(ir: &str) -> Vec<String> {
-        ir.lines()
-            .map(str::trim)
-            .filter(|line| line.starts_with('!') && line.contains(" = !{"))
-            .map(ToOwned::to_owned)
-            .collect()
+    pub(crate) fn collect_module_flags(module: &Module) -> ModuleFlags {
+        let mut values = BTreeMap::<String, Vec<String>>::new();
+        let mut malformed = BTreeSet::new();
+
+        for entry in module.get_global_metadata("llvm.module.flags") {
+            let node_values = entry.get_node_values();
+            let flag_name = extract_module_flag_name(&node_values);
+
+            if node_values.len() != 3 {
+                if let Some(flag_name) = flag_name {
+                    malformed.insert(flag_name);
+                }
+                continue;
+            }
+
+            let Some(flag_name) = flag_name else {
+                continue;
+            };
+
+            let Some(flag_value) = format_module_flag_value(node_values[2]) else {
+                malformed.insert(flag_name);
+                continue;
+            };
+
+            values.entry(flag_name).or_default().push(flag_value);
+        }
+
+        ModuleFlags { values, malformed }
     }
 
-    #[cfg(not(windows))]
+    fn extract_module_flag_name(values: &[BasicMetadataValueEnum]) -> Option<String> {
+        values
+            .get(1)?
+            .into_metadata_value()
+            .get_string_value()
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+    }
+
+    fn format_module_flag_value(value: BasicMetadataValueEnum) -> Option<String> {
+        match value {
+            BasicMetadataValueEnum::IntValue(value) => {
+                let bit_width = value.get_type().get_bit_width();
+                let raw_value = value.get_zero_extended_constant()?;
+                if bit_width == 1 {
+                    Some(format!(
+                        "i1 {}",
+                        if raw_value == 0 { "false" } else { "true" }
+                    ))
+                } else {
+                    Some(format!("i{bit_width} {raw_value}"))
+                }
+            }
+            BasicMetadataValueEnum::MetadataValue(value) => value
+                .get_string_value()
+                .and_then(|string| string.to_str().ok())
+                .map(|string| format!("!\"{string}\"")),
+            BasicMetadataValueEnum::ArrayValue(_)
+            | BasicMetadataValueEnum::FloatValue(_)
+            | BasicMetadataValueEnum::PointerValue(_)
+            | BasicMetadataValueEnum::StructValue(_)
+            | BasicMetadataValueEnum::VectorValue(_)
+            | BasicMetadataValueEnum::ScalableVectorValue(_) => None,
+        }
+    }
+
     fn validate_exact_module_flag(
-        metadata_nodes: &[String],
+        module_flags: &ModuleFlags,
         flag_name: &str,
         expected_values: &[&str],
         errors: &mut Vec<String>,
     ) {
-        let entries: Vec<_> = metadata_nodes
-            .iter()
-            .filter(|body| body.contains(&format!(r#"!"{flag_name}""#)))
-            .collect();
-
-        if entries.is_empty() {
+        let Some(actual_values) = module_flags.get(flag_name) else {
+            if module_flags.is_malformed(flag_name) {
+                errors.push(format!("Missing or unsupported module flag: {flag_name}"));
+                return;
+            }
             errors.push(format!("Missing required module flag: {flag_name}"));
             return;
-        }
+        };
 
-        if entries.iter().any(|body| {
-            expected_values
-                .iter()
-                .any(|expected| body.contains(&format!(r#"!"{flag_name}", {expected}"#)))
-        }) {
+        if actual_values
+            .iter()
+            .any(|actual| expected_values.contains(&actual.as_str()))
+        {
             return;
         }
 
@@ -1696,5 +1755,120 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             .expect("Compiled QIS bitcode should parse");
         assert!(module.get_function("qmain").is_some());
         assert!(module.get_function("___lazy_measure").is_some());
+    }
+
+    #[test]
+    fn test_validate_module_flags_are_checked_cross_platform() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        validate_qir(&bc_bytes, None).expect("Module flags should validate on every platform");
+    }
+
+    #[test]
+    fn test_module_flag_parser_reads_existing_flags() {
+        use crate::aux::collect_module_flags;
+        use inkwell::{context::Context, memory_buffer::MemoryBuffer};
+
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let ctx = Context::create();
+        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(ll_text.as_bytes(), "qir");
+        let module = ctx
+            .create_module_from_ir(memory_buffer)
+            .expect("Failed to create module from inline IR");
+
+        let flags = collect_module_flags(&module);
+        assert_eq!(
+            flags.get("qir_major_version").map(|values| values.to_vec()),
+            Some(vec!["i32 2".to_string()])
+        );
+        assert_eq!(
+            flags.get("qir_minor_version").map(|values| values.to_vec()),
+            Some(vec!["i32 0".to_string()])
+        );
+        assert_eq!(
+            flags
+                .get("dynamic_qubit_management")
+                .map(|values| values.to_vec()),
+            Some(vec!["i1 false".to_string()])
+        );
+        assert_eq!(
+            flags
+                .get("dynamic_result_management")
+                .map(|values| values.to_vec()),
+            Some(vec!["i1 false".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_validate_module_flags_accept_duplicate_entries_if_one_matches() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", i32 99}
+!1 = !{i32 1, !"qir_major_version", i32 2}
+!2 = !{i32 7, !"qir_minor_version", i32 0}
+!3 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!4 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        validate_qir(&bc_bytes, None)
+            .expect("Module flags should validate when any duplicate entry matches");
+    }
+
+    #[test]
+    fn test_validate_module_flags_reports_malformed_required_flag() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", !4}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 99}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None).expect_err("Malformed module flag should fail");
+        assert!(err.contains("Missing or unsupported module flag: qir_major_version"));
     }
 }

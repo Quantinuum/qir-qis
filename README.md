@@ -95,6 +95,16 @@ See [examples/rust_api.rs](https://github.com/quantinuum/qir-qis/blob/main/examp
 cargo run --example rust_api
 ```
 
+## Platform Notes
+
+Windows support is functional, but a few LLVM integration paths still differ from Linux and macOS:
+
+- LLVM verifier failures return a generic error on Windows instead of the full verifier message.
+- Native target codegen on Windows uses conservative CPU settings instead of host CPU feature detection.
+- `-O0` optimization on Windows is a validation-only fast path and does not rewrite the module triple.
+
+These limitations are implementation details of the current LLVM/Inkwell integration rather than QIR feature differences.
+
 ## Contributing
 
 Contributions are welcome! Please read [CONTRIBUTING.md](https://github.com/quantinuum/qir-qis/blob/main/CONTRIBUTING.md) for:

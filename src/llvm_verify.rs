@@ -35,9 +35,12 @@ pub fn verify_module(module: &Module, error_prefix: &str) -> Result<(), String> 
 
     #[cfg(windows)]
     {
-        return Err(format!(
+        // Re-checked locally on Windows Arm64 on March 23, 2026: asking LLVM
+        // to populate the verifier message pointer led to process instability,
+        // so keep the Windows path on the null-pointer fallback for now.
+        Err(format!(
             "{error_prefix}: LLVM verifier failed (message pointer unavailable on this platform)"
-        ));
+        ))
     }
 
     #[cfg(not(windows))]
