@@ -236,10 +236,25 @@ mod aux {
 
     pub fn validate_module_flags(module: &Module, errors: &mut Vec<String>) {
         let module_flags = collect_module_flags(module);
-        validate_exact_module_flag(&module_flags, "qir_major_version", &["i32 1", "i32 2"], errors);
+        validate_exact_module_flag(
+            &module_flags,
+            "qir_major_version",
+            &["i32 1", "i32 2"],
+            errors,
+        );
         validate_exact_module_flag(&module_flags, "qir_minor_version", &["i32 0"], errors);
-        validate_exact_module_flag(&module_flags, "dynamic_qubit_management", &["i1 false"], errors);
-        validate_exact_module_flag(&module_flags, "dynamic_result_management", &["i1 false"], errors);
+        validate_exact_module_flag(
+            &module_flags,
+            "dynamic_qubit_management",
+            &["i1 false"],
+            errors,
+        );
+        validate_exact_module_flag(
+            &module_flags,
+            "dynamic_result_management",
+            &["i1 false"],
+            errors,
+        );
     }
 
     pub(crate) struct ModuleFlags {
