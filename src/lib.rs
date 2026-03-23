@@ -71,7 +71,8 @@ mod aux {
         module::Module,
         types::{ArrayType, BasicTypeEnum},
         values::{
-            AnyValue, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, PointerValue,
+            AnyValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
+            FunctionValue, PointerValue,
         },
     };
 
@@ -240,12 +241,47 @@ mod aux {
         validate_exact_module_flag(module, "dynamic_result_management", &["i1 false"], errors);
     }
 
-    fn collect_metadata_nodes(ir: &str) -> Vec<String> {
-        ir.lines()
-            .map(str::trim)
-            .filter(|line| line.starts_with('!') && line.contains(" = !{"))
-            .map(ToOwned::to_owned)
+    pub(crate) fn collect_module_flags(module: &Module) -> BTreeMap<String, String> {
+        module
+            .get_global_metadata("llvm.module.flags")
+            .into_iter()
+            .filter_map(|entry| {
+                let values = entry.get_node_values();
+                if values.len() != 3 {
+                    return None;
+                }
+
+                let flag_name = values[1]
+                    .into_metadata_value()
+                    .get_string_value()
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned)?;
+                let flag_value = format_module_flag_value(values[2])?;
+                Some((flag_name, flag_value))
+            })
             .collect()
+    }
+
+    fn format_module_flag_value(value: BasicMetadataValueEnum) -> Option<String> {
+        match value {
+            BasicMetadataValueEnum::IntValue(value) => {
+                let bit_width = value.get_type().get_bit_width();
+                let raw_value = value.get_zero_extended_constant()?;
+                if bit_width == 1 {
+                    Some(format!(
+                        "i1 {}",
+                        if raw_value == 0 { "false" } else { "true" }
+                    ))
+                } else {
+                    Some(format!("i{bit_width} {raw_value}"))
+                }
+            }
+            BasicMetadataValueEnum::MetadataValue(value) => value
+                .get_string_value()
+                .and_then(|string| string.to_str().ok())
+                .map(|string| format!("!\"{string}\"")),
+            _ => None,
+        }
     }
 
     fn validate_exact_module_flag(
@@ -254,23 +290,13 @@ mod aux {
         expected_values: &[&str],
         errors: &mut Vec<String>,
     ) {
-        let ir = module.print_to_string().to_string_lossy().into_owned();
-        let metadata_nodes = collect_metadata_nodes(&ir);
-        let entries: Vec<_> = metadata_nodes
-            .iter()
-            .filter(|body| body.contains(&format!(r#"!"{flag_name}""#)))
-            .collect();
-
-        if entries.is_empty() {
+        let module_flags = collect_module_flags(module);
+        let Some(actual) = module_flags.get(flag_name) else {
             errors.push(format!("Missing required module flag: {flag_name}"));
             return;
-        }
+        };
 
-        if entries.iter().any(|body| {
-            expected_values
-                .iter()
-                .any(|expected| body.contains(&format!(r#"!"{flag_name}", {expected}"#)))
-        }) {
+        if expected_values.contains(&actual.as_str()) {
             return;
         }
 
@@ -1688,5 +1714,44 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 "#;
         let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
         validate_qir(&bc_bytes, None).expect("Module flags should validate on every platform");
+    }
+
+    #[test]
+    fn test_module_flag_parser_reads_existing_flags() {
+        use crate::aux::collect_module_flags;
+        use inkwell::{context::Context, memory_buffer::MemoryBuffer};
+
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let ctx = Context::create();
+        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(ll_text.as_bytes(), "qir");
+        let module = ctx
+            .create_module_from_ir(memory_buffer)
+            .expect("Failed to create module from inline IR");
+
+        let flags = collect_module_flags(&module);
+        assert_eq!(flags.get("qir_major_version"), Some(&"i32 2".to_string()));
+        assert_eq!(flags.get("qir_minor_version"), Some(&"i32 0".to_string()));
+        assert_eq!(
+            flags.get("dynamic_qubit_management"),
+            Some(&"i1 false".to_string())
+        );
+        assert_eq!(
+            flags.get("dynamic_result_management"),
+            Some(&"i1 false".to_string())
+        );
     }
 }
