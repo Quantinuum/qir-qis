@@ -35,9 +35,9 @@ pub fn verify_module(module: &Module, error_prefix: &str) -> Result<(), String> 
 
     #[cfg(windows)]
     {
-        return Err(format!(
+        Err(format!(
             "{error_prefix}: LLVM verifier failed (message pointer unavailable on this platform)"
-        ));
+        ))
     }
 
     #[cfg(not(windows))]

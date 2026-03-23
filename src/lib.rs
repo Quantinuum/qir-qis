@@ -280,7 +280,12 @@ mod aux {
                 .get_string_value()
                 .and_then(|string| string.to_str().ok())
                 .map(|string| format!("!\"{string}\"")),
-            _ => None,
+            BasicMetadataValueEnum::ArrayValue(_)
+            | BasicMetadataValueEnum::FloatValue(_)
+            | BasicMetadataValueEnum::PointerValue(_)
+            | BasicMetadataValueEnum::StructValue(_)
+            | BasicMetadataValueEnum::VectorValue(_)
+            | BasicMetadataValueEnum::ScalableVectorValue(_) => None,
         }
     }
 
