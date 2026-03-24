@@ -53,8 +53,10 @@ def qir_to_qis(
 
     # Arguments
     - `bc_bytes` - The QIR bytes to translate.
-    - `opt_level` - The optimization level to use (0-3). Default is 2.
-    - `target` - Target architecture (default: "aarch64"; options: "x86-64", "native").
+    - `opt_level` - The optimization level to use (0-3). Default is 2 on
+      Linux/macOS and 0 on Windows.
+    - `target` - Target architecture (default: "aarch64" on Linux/macOS and
+      "native" on Windows; options: "x86-64", "native").
     - `wasm_bytes` - Optional WASM bytes for Wasm codegen.
 
     # Errors
