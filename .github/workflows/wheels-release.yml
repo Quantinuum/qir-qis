@@ -23,9 +23,44 @@ env:
   LLVM_WINDOWS_CACHE_KEY_SUFFIX: "windows-shared-v1"
 
 jobs:
+  prepare_release_context:
+    name: Prepare release context
+    runs-on: ubuntu-latest
+    outputs:
+      checkout_ref: ${{ steps.resolve.outputs.checkout_ref }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+    steps:
+      - name: Resolve release tag
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          GITHUB_REF_VALUE: ${{ github.ref }}
+          GITHUB_REF_NAME_VALUE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            release_tag="${INPUT_RELEASE_TAG#refs/tags/}"
+
+            if [ -z "$release_tag" ]; then
+              echo "release_tag input must name an existing tag" >&2
+              exit 1
+            fi
+
+            git ls-remote --exit-code --tags --refs origin "refs/tags/$release_tag" >/dev/null
+
+            echo "checkout_ref=refs/tags/$release_tag" >> "$GITHUB_OUTPUT"
+            echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          else
+            echo "checkout_ref=$GITHUB_REF_VALUE" >> "$GITHUB_OUTPUT"
+            echo "release_tag=$GITHUB_REF_NAME_VALUE" >> "$GITHUB_OUTPUT"
+          fi
+
   build_wheels:
     name: ${{ matrix.os }} wheels
     runs-on: ${{ matrix.os }}
+    needs: [prepare_release_context]
     strategy:
       fail-fast: false
       matrix:
@@ -33,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          ref: ${{ needs.prepare_release_context.outputs.checkout_ref }}
 
       - name: Setup LLVM (Windows)
         if: matrix.os == 'windows-latest'
@@ -92,7 +127,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [build_wheels]
+    needs: [prepare_release_context, build_wheels]
     permissions:
       # Use to sign the release artifacts
       id-token: write
@@ -109,7 +144,7 @@ jobs:
         with:
           files: wheelhouse/*.whl
           generate_release_notes: true
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          tag_name: ${{ needs.prepare_release_context.outputs.release_tag }}
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: pypa/gh-action-pypi-publish@release/v1
