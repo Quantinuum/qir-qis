@@ -27,7 +27,8 @@ dis:
 .PHONY: stubs
 stubs:
 	cargo run --bin stub_gen
-	make lint; uvx ruff check . --fix
+	uvx prek run --files qir_qis.pyi || true
+	uvx ruff check qir_qis.pyi --fix
 
 find_files = \
 	@find tests/data/ \
