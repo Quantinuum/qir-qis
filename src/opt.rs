@@ -82,27 +82,17 @@ fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<Targ
     }
 }
 
-#[cfg(windows)]
-fn validate_windows_codegen_mode(opt_level: u32, target: &str) -> Result<(), String> {
-    if opt_level > 0 {
-        return Err(format!(
-            "Optimized QIR-to-QIS conversion is currently unavailable on Windows with the LLVM 21 integration. Re-run with `opt_level=0` and preferably `target=\"native\"` (requested opt_level={opt_level}, target=\"{target}\")."
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn validate_windows_codegen_mode(_opt_level: u32, _target: &str) -> Result<(), String> {
-    Ok(())
-}
-
 /// Optimize the given LLVM module using the specified optimization level and target architecture.
 ///
 /// # Errors
 /// Returns an error if module verification fails
 pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), String> {
-    validate_windows_codegen_mode(opt_level, target)?;
+    #[cfg(windows)]
+    if opt_level > 0 {
+        return Err(format!(
+            "Optimized QIR-to-QIS conversion is currently unavailable on Windows with the LLVM 21 integration. Re-run with `opt_level=0` and preferably `target=\"native\"` (requested opt_level={opt_level}, target=\"{target}\")."
+        ));
+    }
 
     // O0 preserves semantics without running transformation passes.
     // Avoid creating a TargetMachine in this mode; TargetMachine teardown has
