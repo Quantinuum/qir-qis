@@ -37,18 +37,30 @@ jobs:
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
           GITHUB_REF_VALUE: ${{ github.ref }}
           GITHUB_REF_NAME_VALUE: ${{ github.ref_name }}
+          GITHUB_SERVER_URL_VALUE: ${{ github.server_url }}
+          GITHUB_REPOSITORY_VALUE: ${{ github.repository }}
         run: |
           set -euo pipefail
 
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            release_tag="${INPUT_RELEASE_TAG#refs/tags/}"
+            release_tag="$INPUT_RELEASE_TAG"
 
             if [ -z "$release_tag" ]; then
               echo "release_tag input must name an existing tag" >&2
               exit 1
             fi
 
-            git ls-remote --exit-code --tags --refs origin "refs/tags/$release_tag" >/dev/null
+            if [ "$release_tag" != "${release_tag#refs/tags/}" ]; then
+              echo "release_tag must be a tag name like 'v1.2.3', not '$release_tag'" >&2
+              exit 1
+            fi
+
+            git ls-remote --exit-code --tags --refs \
+              "$GITHUB_SERVER_URL_VALUE/$GITHUB_REPOSITORY_VALUE.git" \
+              "refs/tags/$release_tag" >/dev/null || {
+              echo "Tag '$release_tag' was not found on origin; please ensure the tag exists in the remote repository." >&2
+              exit 1
+            }
 
             echo "checkout_ref=refs/tags/$release_tag" >> "$GITHUB_OUTPUT"
             echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
