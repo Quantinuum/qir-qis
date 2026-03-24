@@ -2,7 +2,9 @@ use std::fs;
 use std::path::Path;
 use std::process::exit;
 
-use qir_qis::{get_entry_attributes, qir_ll_to_bc, qir_to_qis, validate_qir};
+use qir_qis::{
+    DEFAULT_OPT_LEVEL, DEFAULT_TARGET, get_entry_attributes, qir_ll_to_bc, qir_to_qis, validate_qir,
+};
 
 use bpaf::Bpaf;
 
@@ -10,12 +12,12 @@ use bpaf::Bpaf;
 #[bpaf(options)]
 struct Args {
     /// Optimization level (0, 1, 2, 3)
-    #[bpaf(short('O'), long("opt-level"), fallback(2u32))]
+    #[bpaf(short('O'), long("opt-level"), fallback(DEFAULT_OPT_LEVEL))]
     opt_level: u32,
 
     #[allow(clippy::doc_markdown)]
     /// Target architecture (e.g., "aarch64", "x86-64", "native")
-    #[bpaf(short('t'), long("target"), fallback(String::from("aarch64")))]
+    #[bpaf(short('t'), long("target"), fallback(String::from(DEFAULT_TARGET)))]
     target: String,
 
     /// Path to input LLVM IR file (.ll)
@@ -40,7 +42,13 @@ fn main() {
 
     println!("{:#?}", get_entry_attributes(&bc_bytes));
 
-    let qis_module = qir_to_qis(&bc_bytes, args.opt_level, &args.target, None).unwrap();
+    let qis_module = match qir_to_qis(&bc_bytes, args.opt_level, &args.target, None) {
+        Ok(qis_module) => qis_module,
+        Err(err) => {
+            eprintln!("QIR compilation failed: {err}");
+            exit(1);
+        }
+    };
     let qis_path = ll_path.with_extension("qis.bc");
     fs::write(&qis_path, qis_module).expect("Failed to write output file");
 }

@@ -50,6 +50,16 @@ mod llvm_verify;
 pub mod opt;
 mod utils;
 
+#[cfg(windows)]
+pub const DEFAULT_OPT_LEVEL: u32 = 0;
+#[cfg(not(windows))]
+pub const DEFAULT_OPT_LEVEL: u32 = 2;
+
+#[cfg(windows)]
+pub const DEFAULT_TARGET: &str = "native";
+#[cfg(not(windows))]
+pub const DEFAULT_TARGET: &str = "aarch64";
+
 mod aux {
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -1220,8 +1230,10 @@ mod aux {
 ///
 /// # Arguments
 /// - `bc_bytes` - The QIR bytes to translate.
-/// - `opt_level` - The optimization level to use (0-3).
-/// - `target` - Target architecture ("aarch64", "x86-64", "native").
+/// - `opt_level` - The optimization level to use (0-3). Platform defaults are
+///   exposed via [`DEFAULT_OPT_LEVEL`].
+/// - `target` - Target architecture ("aarch64", "x86-64", "native"). Platform
+///   defaults are exposed via [`DEFAULT_TARGET`].
 /// - `wasm_bytes` - Optional WASM bytes for Wasm codegen.
 ///
 /// # Errors
@@ -1566,8 +1578,10 @@ mod qir_qis {
     ///
     /// # Arguments
     /// - `bc_bytes` - The QIR bytes to translate.
-    /// - `opt_level` - The optimization level to use (0-3). Default is 2.
-    /// - `target` - Target architecture (default: "aarch64"; options: "x86-64", "native").
+    /// - `opt_level` - The optimization level to use (0-3). Default is 2 on
+    ///   Linux/macOS and 0 on Windows.
+    /// - `target` - Target architecture (default: "aarch64" on Linux/macOS and
+    ///   "native" on Windows; options: "x86-64", "native").
     /// - `wasm_bytes` - Optional WASM bytes for Wasm codegen.
     ///
     /// # Errors
@@ -1576,7 +1590,14 @@ mod qir_qis {
     #[pyfunction]
     #[allow(clippy::needless_pass_by_value)]
     #[allow(clippy::missing_errors_doc)]
-    #[pyo3(signature = (bc_bytes, *, opt_level = 2, target = "aarch64", wasm_bytes = None))]
+    #[cfg_attr(
+        windows,
+        pyo3(signature = (bc_bytes, *, opt_level = 0, target = "native", wasm_bytes = None))
+    )]
+    #[cfg_attr(
+        not(windows),
+        pyo3(signature = (bc_bytes, *, opt_level = 2, target = "aarch64", wasm_bytes = None))
+    )]
     pub fn qir_to_qis<'a>(
         bc_bytes: Cow<[u8]>,
         opt_level: u32,
@@ -1710,6 +1731,41 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
                 .get_string_attribute(inkwell::attributes::AttributeLoc::Function, "custom_attr")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn test_platform_default_conversion_settings_match_expectations() {
+        if cfg!(windows) {
+            assert_eq!(crate::DEFAULT_OPT_LEVEL, 0);
+            assert_eq!(crate::DEFAULT_TARGET, "native");
+        } else {
+            assert_eq!(crate::DEFAULT_OPT_LEVEL, 2);
+            assert_eq!(crate::DEFAULT_TARGET, "aarch64");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_windows_optimized_conversion_returns_actionable_error() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let err = qir_to_qis(&bc_bytes, 1, "native", None)
+            .expect_err("optimized conversion should fail fast on Windows");
+        assert!(err.contains("currently unavailable on Windows"));
+        assert!(err.contains("opt_level=0"));
     }
 
     #[test]
