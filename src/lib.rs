@@ -268,13 +268,13 @@ mod aux {
         );
     }
 
-    pub(crate) struct ModuleFlags {
+    pub struct ModuleFlags {
         values: BTreeMap<String, Vec<String>>,
         malformed: BTreeSet<String>,
     }
 
     impl ModuleFlags {
-        pub(crate) fn get(&self, flag_name: &str) -> Option<&[String]> {
+        pub fn get(&self, flag_name: &str) -> Option<&[String]> {
             self.values.get(flag_name).map(Vec::as_slice)
         }
 
@@ -283,7 +283,7 @@ mod aux {
         }
     }
 
-    pub(crate) fn collect_module_flags(module: &Module) -> ModuleFlags {
+    pub fn collect_module_flags(module: &Module) -> ModuleFlags {
         let mut values = BTreeMap::<String, Vec<String>>::new();
         let mut malformed = BTreeSet::new();
 
@@ -639,10 +639,10 @@ mod aux {
                     "",
                 )
             }
-            .map_err(|e| format!("Failed to build GEP for qubit handle: {e}",))?;
+            .map_err(|e| format!("Failed to build GEP for qubit handle: {e}"))?;
             builder
                 .build_load(i64_type, elem_ptr, "qbit")
-                .map_err(|e| format!("Failed to build load for qubit handle: {e}",))?
+                .map_err(|e| format!("Failed to build load for qubit handle: {e}"))?
         };
 
         // Create ___lazy_measure call
@@ -655,7 +655,7 @@ mod aux {
 
             let call = builder.build_call(meas_func, &[q_handle.into()], "meas");
             let call_result =
-                call.map_err(|e| format!("Failed to build call for lazy measure function: {e}",))?;
+                call.map_err(|e| format!("Failed to build call for lazy measure function: {e}"))?;
             match call_result.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(bv) => bv,
                 inkwell::values::ValueKind::Instruction(_) => {
@@ -698,7 +698,7 @@ mod aux {
             .ok_or_else(|| format!("{LOAD_QUBIT_FN} not found"))?;
         let idx_call = builder
             .build_call(idx_fn, &[qubit_ptr.into()], "qbit")
-            .map_err(|e| format!("Failed to build call to {LOAD_QUBIT_FN}: {e}",))?;
+            .map_err(|e| format!("Failed to build call to {LOAD_QUBIT_FN}: {e}"))?;
         let q_handle = match idx_call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(bv) => bv,
             inkwell::values::ValueKind::Instruction(_) => {
@@ -1861,23 +1861,23 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 
         let flags = collect_module_flags(&module);
         assert_eq!(
-            flags.get("qir_major_version").map(|values| values.to_vec()),
+            flags.get("qir_major_version").map(<[String]>::to_vec),
             Some(vec!["i32 2".to_string()])
         );
         assert_eq!(
-            flags.get("qir_minor_version").map(|values| values.to_vec()),
+            flags.get("qir_minor_version").map(<[String]>::to_vec),
             Some(vec!["i32 0".to_string()])
         );
         assert_eq!(
             flags
                 .get("dynamic_qubit_management")
-                .map(|values| values.to_vec()),
+                .map(<[String]>::to_vec),
             Some(vec!["i1 false".to_string()])
         );
         assert_eq!(
             flags
                 .get("dynamic_result_management")
-                .map(|values| values.to_vec()),
+                .map(<[String]>::to_vec),
             Some(vec!["i1 false".to_string()])
         );
     }
