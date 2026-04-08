@@ -1245,6 +1245,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use inkwell::{types::AnyType, values::BasicValue};
+    use proptest::prelude::*;
     use rstest::rstest;
 
     use std::fs;
@@ -1312,6 +1313,28 @@ mod tests {
         let context = Context::create();
         let module = context.create_module("test");
         let globals = convert_globals(&context, &module).unwrap();
+        assert!(globals.is_empty());
+    }
+
+    #[test]
+    fn test_convert_globals_ignores_non_constant_and_wrong_type_globals() {
+        let context = Context::create();
+        let module = context.create_module("test");
+
+        let i8_array = context.i8_type().array_type(4);
+        let i32_array = context.i32_type().array_type(4);
+
+        let non_constant = module.add_global(i8_array, None, "mutable_i8");
+        non_constant.set_initializer(&context.const_string(b"abc\0", false));
+        non_constant.set_linkage(Linkage::Internal);
+        non_constant.set_constant(false);
+
+        let wrong_type = module.add_global(i32_array, None, "constant_i32");
+        wrong_type.set_initializer(&i32_array.const_zero());
+        wrong_type.set_linkage(Linkage::Private);
+        wrong_type.set_constant(true);
+
+        let globals = convert_globals(&context, &module).expect("conversion should succeed");
         assert!(globals.is_empty());
     }
 
@@ -1583,6 +1606,51 @@ mod tests {
         assert_eq!(new_name, "res_empty_tag.2");
     }
 
+    proptest! {
+        #[test]
+        fn prop_build_result_global_sanitizes_names(label in "[A-Za-z0-9_ ./:-]{0,64}") {
+            let context = Context::create();
+            let (_, new_name) = build_result_global(&context, &label, "old_name", "TEST", Some(1))
+                .map_err(|err| TestCaseError::fail(format!("build_result_global failed unexpectedly: {err}")))?;
+
+            if label.is_empty() {
+                prop_assert_eq!(new_name, "res_empty_tag.1");
+            } else {
+                prop_assert!(new_name.starts_with("res_"));
+                prop_assert!(new_name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'));
+            }
+        }
+
+        #[test]
+        fn prop_build_result_global_empty_labels_get_distinct_names(
+            first_idx in 0usize..20usize,
+            second_idx in 0usize..20usize,
+        ) {
+            prop_assume!(first_idx != second_idx);
+            let context = Context::create();
+            let (_, first_name) = build_result_global(&context, "", "old_name", "TEST", Some(first_idx))
+                .map_err(|err| TestCaseError::fail(format!("first empty label failed unexpectedly: {err}")))?;
+            let (_, second_name) = build_result_global(&context, "", "old_name", "TEST", Some(second_idx))
+                .map_err(|err| TestCaseError::fail(format!("second empty label failed unexpectedly: {err}")))?;
+            prop_assert_ne!(first_name, second_name);
+        }
+
+        #[test]
+        fn prop_build_result_global_length_boundary(label_len in 0usize..260usize) {
+            let context = Context::create();
+            let label = "a".repeat(label_len);
+            let result = build_result_global(&context, &label, "old_name", "TEST", None);
+            let encoded_len = "USER:TEST:".len().saturating_add(label_len);
+            if encoded_len < 256 {
+                prop_assert!(result.is_ok());
+            } else {
+                prop_assert!(result.is_err());
+            }
+        }
+    }
+
     #[test]
     fn test_handle_tuple_or_array_output_array() {
         fn test_array_output(length: u64, expected_tag: &str, name: &str) {
@@ -1767,6 +1835,88 @@ mod tests {
         assert_eq!(global_name, "test_global");
     }
 
+    #[test]
+    fn test_parse_gep_named_non_gep_pointer_returns_pointer_name() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+
+        let fn_type = context.void_type().fn_type(&[], false);
+        let func = module.add_function("test_func", fn_type, None);
+        let block = context.append_basic_block(func, "entry");
+        builder.position_at_end(block);
+
+        let ptr = builder
+            .build_alloca(context.i8_type(), "scratch")
+            .expect("alloca should succeed");
+
+        let parsed_name = parse_gep(ptr.as_basic_value_enum()).expect("named pointer should parse");
+        assert_eq!(parsed_name, "scratch");
+    }
+
+    #[test]
+    fn test_parse_gep_unnamed_pointer_errors() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+
+        let fn_type = context.void_type().fn_type(&[], false);
+        let func = module.add_function("test_func", fn_type, None);
+        let block = context.append_basic_block(func, "entry");
+        builder.position_at_end(block);
+
+        let ptr = builder
+            .build_alloca(context.i8_type(), "")
+            .expect("alloca should succeed");
+
+        let err = parse_gep(ptr.as_basic_value_enum()).expect_err("unnamed pointer should fail");
+        assert_eq!(err, "Pointer does not reference a named global value");
+    }
+
+    #[test]
+    fn test_parse_gep_unnamed_constant_string_global_returns_label() {
+        let ll_text = r#"
+@0 = private constant [4 x i8] c"tag\00"
+
+declare void @use(ptr)
+
+define void @test_func() {
+entry:
+  call void @use(ptr getelementptr inbounds ([4 x i8], ptr @0, i64 0, i64 0))
+  ret void
+}
+"#;
+
+        let context = Context::create();
+        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+            ll_text.as_bytes(),
+            "gep",
+        );
+        let module = context
+            .create_module_from_ir(memory_buffer)
+            .expect("Failed to parse inline IR");
+        let func = module
+            .get_function("test_func")
+            .expect("test function should exist");
+        let call_instr = func
+            .get_first_basic_block()
+            .expect("entry block should exist")
+            .get_first_instruction()
+            .expect("call instruction should exist");
+        let operand = match call_instr
+            .get_operand(0)
+            .expect("call should have pointer operand")
+        {
+            inkwell::values::Operand::Value(value) => value,
+            inkwell::values::Operand::Block(_) => {
+                unreachable!("expected value operand")
+            }
+        };
+
+        let parsed_name = parse_gep(operand).expect("constant string GEP should resolve a label");
+        assert_eq!(parsed_name, "tag");
+    }
+
     fn get_qir_bytes(ll_path: &Path) -> Vec<u8> {
         let ll = fs::read_to_string(ll_path).expect("Failed to read input LLVM IR file");
         qir_ll_to_bc(&ll).expect("Failed to convert LLVM IR to bitcode")
@@ -1787,6 +1937,32 @@ mod tests {
 
         assert!(qir_qis::validate_qir(qir_bytes.clone().into(), None).is_err());
         assert!(qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).is_err());
+    }
+
+    #[test]
+    fn test_native_qir_to_qis_call_rejects_unknown_external_qis_decl() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+        let fn_type = context.void_type().fn_type(&[], false);
+        let defined_fn = module.add_function("defined_fn", fn_type, None);
+        let entry = context.append_basic_block(defined_fn, "entry");
+        builder.position_at_end(entry);
+
+        let unknown_decl = module.add_function("__quantum__qis__mystery__body", fn_type, None);
+        let call = builder
+            .build_call(unknown_decl, &[], "unknown_call")
+            .expect("call should build");
+
+        let err = native_qir_to_qis_call(
+            &context,
+            &module,
+            call.try_as_basic_value().unwrap_instruction(),
+            "__quantum__qis__mystery__body",
+            defined_fn,
+        )
+        .expect_err("unknown external declaration should fail");
+        assert!(err.contains("Unsupported function call"));
     }
 
     #[test]

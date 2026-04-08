@@ -1645,6 +1645,133 @@ mod test {
     #![allow(clippy::unwrap_used)]
     use crate::{get_entry_attributes, qir_ll_to_bc, qir_to_qis, validate_qir};
     use inkwell::{context::Context, memory_buffer::MemoryBuffer, module::Module};
+    use proptest::prelude::*;
+    #[cfg(feature = "wasm")]
+    use wasm_encoder::{ExportKind, ExportSection, Module as WasmModule};
+
+    const PROPERTY_FIXTURES: &[&str] = &[
+        "tests/data/base.ll",
+        "tests/data/base_array.ll",
+        "tests/data/adaptive.ll",
+        "tests/data/qir2_base.ll",
+        "tests/data/qir2_adaptive.ll",
+    ];
+
+    fn conservative_translation_settings() -> (u32, &'static str) {
+        (0, "native")
+    }
+
+    fn load_fixture_bitcode(path: &str) -> Vec<u8> {
+        let ll_text = std::fs::read_to_string(path).expect("Failed to read LLVM IR fixture");
+        qir_ll_to_bc(&ll_text).expect("Failed to convert LLVM IR fixture to bitcode")
+    }
+
+    fn verify_bitcode_module(bitcode: &[u8], name: &str) -> Result<(), String> {
+        let ctx = Context::create();
+        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bitcode, name);
+        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+            .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
+        crate::llvm_verify::verify_module(&module, "LLVM verifier rejected translated module")
+    }
+
+    #[cfg(feature = "wasm")]
+    fn build_wasm_exports(exports: &[(String, u32)]) -> Vec<u8> {
+        let mut module = WasmModule::new();
+        let mut export_section = ExportSection::new();
+        for (name, index) in exports {
+            export_section.export(name, ExportKind::Func, *index);
+        }
+        module.section(&export_section);
+        module.finish()
+    }
+
+    fn minimal_qir_with_body(
+        required_num_qubits: &str,
+        required_num_results: &str,
+        qir_major_flag: &str,
+        extra_decl: &str,
+        body: &str,
+    ) -> String {
+        format!(
+            r#"%Qubit = type opaque
+%Result = type opaque
+
+{extra_decl}
+
+define i64 @Entry_Point_Name() #0 {{
+entry:
+{body}
+  ret i64 0
+}}
+
+attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="{required_num_qubits}" "required_num_results"="{required_num_results}" }}
+
+!llvm.module.flags = !{{!0, !1, !2, !3}}
+!0 = !{{i32 1, !"qir_major_version", i32 {qir_major_flag}}}
+!1 = !{{i32 7, !"qir_minor_version", i32 0}}
+!2 = !{{i32 1, !"dynamic_qubit_management", i1 false}}
+!3 = !{{i32 1, !"dynamic_result_management", i1 false}}
+"#
+        )
+    }
+
+    fn minimal_qir_missing_attr(missing_attr: &str) -> String {
+        let attrs = [
+            ("entry_point", None),
+            ("qir_profiles", Some("base_profile")),
+            ("output_labeling_schema", Some("schema_id")),
+            ("required_num_qubits", Some("1")),
+            ("required_num_results", Some("1")),
+        ];
+        let rendered_attrs = attrs
+            .into_iter()
+            .filter(|(name, _)| *name != missing_attr)
+            .map(|(name, value)| {
+                value.map_or_else(
+                    || format!(r#""{name}""#),
+                    |value| format!(r#""{name}"="{value}""#),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        format!(
+            r#"
+define i64 @Entry_Point_Name() #0 {{
+entry:
+  ret i64 0
+}}
+
+attributes #0 = {{ {rendered_attrs} }}
+
+!llvm.module.flags = !{{!0, !1, !2, !3}}
+!0 = !{{i32 1, !"qir_major_version", i32 1}}
+!1 = !{{i32 7, !"qir_minor_version", i32 0}}
+!2 = !{{i32 1, !"dynamic_qubit_management", i1 false}}
+!3 = !{{i32 1, !"dynamic_result_management", i1 false}}
+"#
+        )
+    }
+
+    fn minimal_qir_with_duplicate_major_flags(first_major: &str, second_major: &str) -> String {
+        format!(
+            r#"
+define i64 @Entry_Point_Name() #0 {{
+entry:
+  ret i64 0
+}}
+
+attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }}
+
+!llvm.module.flags = !{{!0, !1, !2, !3, !4}}
+!0 = !{{i32 1, !"qir_major_version", i32 {first_major}}}
+!1 = !{{i32 1, !"qir_major_version", i32 {second_major}}}
+!2 = !{{i32 7, !"qir_minor_version", i32 0}}
+!3 = !{{i32 1, !"dynamic_qubit_management", i1 false}}
+!4 = !{{i32 1, !"dynamic_result_management", i1 false}}
+"#
+        )
+    }
 
     #[test]
     fn test_get_entry_attributes() {
@@ -1926,5 +2053,395 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
         let err = validate_qir(&bc_bytes, None).expect_err("Malformed module flag should fail");
         assert!(err.contains("Missing or unsupported module flag: qir_major_version"));
+    }
+
+    #[test]
+    fn test_validate_qir_missing_required_module_flag_reports_exact_message() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2}
+!0 = !{i32 7, !"qir_minor_version", i32 0}
+!1 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!2 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None).expect_err("Missing flag should fail");
+        assert!(err.contains("Missing required module flag: qir_major_version"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_bool_output_uses_bool_tag_and_print_bool() {
+        let ll_text = r#"
+%Result = type opaque
+
+@bool_out = private constant [2 x i8] c"b\00"
+
+declare void @__quantum__rt__bool_record_output(i1, ptr)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  call void @__quantum__rt__bool_record_output(i1 true, ptr getelementptr inbounds ([2 x i8], ptr @bool_out, i64 0, i64 0))
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let output_bc =
+            qir_to_qis(&bc_bytes, 0, "native", None).expect("bool output should compile");
+
+        let ctx = Context::create();
+        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&output_bc, "qis_module");
+        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+            .expect("Compiled QIS bitcode should parse");
+        let text = module.to_string();
+
+        assert!(text.contains("print_bool"));
+        assert!(text.contains("USER:BOOL:b"));
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_malformed_barrier_suffix() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__barrier2__adj(%Qubit*, %Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 1 to %Qubit*
+  %q1 = inttoptr i64 2 to %Qubit*
+  call void @__quantum__qis__barrier2__adj(%Qubit* %q0, %Qubit* %q1)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="2" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None).expect_err("malformed barrier suffix should fail");
+        assert!(err.contains("Unsupported QIR QIS function: __quantum__qis__barrier2__adj"));
+    }
+
+    #[test]
+    fn test_validate_qir_allows_external_pointer_returning_declarations() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare ptr @external_helper()
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        validate_qir(&bc_bytes, None)
+            .expect("external declarations without bodies should not be treated as IR-defined");
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_ir_defined_pointer_returning_function() {
+        let ll_text = r#"
+define ptr @helper() {
+entry:
+  ret ptr null
+}
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("IR-defined pointer-returning helper should fail validation");
+        assert!(err.contains("Function `helper` cannot return a pointer type"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_unknown_declared_qis_function() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__mystery__body(%Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 1 to %Qubit*
+  call void @__quantum__qis__mystery__body(%Qubit* %q0)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("unknown declared QIS function should fail");
+        assert!(err.contains("Unsupported QIR QIS function: __quantum__qis__mystery__body"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_u1q_synonym_lowers_to_rxy() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__u1q__body(double, double, %Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 1 to %Qubit*
+  call void @__quantum__qis__u1q__body(double 1.0, double 0.5, %Qubit* %q0)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let output_bc =
+            qir_to_qis(&bc_bytes, 0, "native", None).expect("u1q synonym should compile");
+
+        let ctx = Context::create();
+        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&output_bc, "qis_module");
+        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+            .expect("Compiled QIS bitcode should parse");
+        let text = module.to_string();
+
+        assert!(text.contains("___rxy"));
+    }
+
+    #[cfg(feature = "wasm")]
+    proptest! {
+        #[test]
+        fn prop_get_wasm_functions_round_trips_exact_exports(
+            exports in proptest::collection::btree_map("[A-Za-z_][A-Za-z0-9_]{0,8}", 0u32..32u32, 0..8)
+        ) {
+            let exports_vec = exports
+                .iter()
+                .map(|(name, index)| (name.clone(), *index))
+                .collect::<Vec<_>>();
+            let wasm = build_wasm_exports(&exports_vec);
+            let parsed = crate::get_wasm_functions(Some(&wasm))
+                .map_err(|err| TestCaseError::fail(format!("get_wasm_functions failed unexpectedly: {err}")))?;
+
+            prop_assert_eq!(parsed.len(), exports.len());
+            for (name, index) in exports {
+                prop_assert_eq!(parsed.get(&name), Some(&u64::from(index)));
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn prop_qir_ll_to_bc_rejects_malformed_ir(suffix in "\\PC{0,128}") {
+            let ll_text = format!("this is not valid llvm ir\n{suffix}");
+            prop_assert!(qir_ll_to_bc(&ll_text).is_err());
+        }
+
+        #[test]
+        fn prop_validate_qir_rejects_malformed_bitcode(tail in proptest::collection::vec(any::<u8>(), 0..256)) {
+            let mut bytes = b"NOTQIR".to_vec();
+            bytes.extend(tail);
+            prop_assert!(validate_qir(&bytes, None).is_err());
+        }
+
+        #[test]
+        fn prop_qir_to_qis_rejects_malformed_bitcode(tail in proptest::collection::vec(any::<u8>(), 0..256)) {
+            let mut bytes = b"NOTQIR".to_vec();
+            bytes.extend(tail);
+            let (opt_level, target) = conservative_translation_settings();
+            prop_assert!(qir_to_qis(&bytes, opt_level, target, None).is_err());
+        }
+
+        #[test]
+        fn prop_valid_fixtures_translate_to_verifiable_qis(fixture in proptest::sample::select(PROPERTY_FIXTURES)) {
+            let input_bc = load_fixture_bitcode(fixture);
+            prop_assert!(validate_qir(&input_bc, None).is_ok());
+
+            let (opt_level, target) = conservative_translation_settings();
+            let output_bc = qir_to_qis(&input_bc, opt_level, target, None)
+                .map_err(|err| TestCaseError::fail(format!("translation failed for {fixture}: {err}")))?;
+
+            verify_bitcode_module(&output_bc, "property_qis_module")
+                .map_err(|err| TestCaseError::fail(format!("verification failed for {fixture}: {err}")))?;
+        }
+
+        #[test]
+        fn prop_invalid_targets_fail_fast(target in "[a-z0-9_-]{1,12}") {
+            prop_assume!(target != "native");
+            prop_assume!(target != "aarch64");
+            prop_assume!(target != "x86-64");
+
+            let input_bc = load_fixture_bitcode("tests/data/base.ll");
+            prop_assert!(qir_to_qis(&input_bc, 0, &target, None).is_err());
+        }
+
+        #[test]
+        fn prop_missing_required_attrs_fail_validation(
+            missing_idx in 0usize..4usize
+        ) {
+            let missing_attr = [
+                "qir_profiles",
+                "output_labeling_schema",
+                "required_num_qubits",
+                "required_num_results",
+            ][missing_idx];
+            let ll_text = minimal_qir_missing_attr(missing_attr);
+            let bc = qir_ll_to_bc(&ll_text)
+                .map_err(|err| TestCaseError::fail(format!("inline IR should parse: {err}")))?;
+            let err = validate_qir(&bc, None)
+                .expect_err("validation should reject missing required attributes");
+            let expected = format!("Missing required attribute: `{missing_attr}`");
+            prop_assert!(err.contains(&expected));
+        }
+
+        #[test]
+        fn prop_zero_qubits_or_results_fail_validation(
+            zero_qubits in any::<bool>()
+        ) {
+            let (qubits, results) = if zero_qubits { ("0", "1") } else { ("1", "0") };
+            let ll_text = minimal_qir_with_body(qubits, results, "1", "", "");
+            let bc = qir_ll_to_bc(&ll_text)
+                .map_err(|err| TestCaseError::fail(format!("inline IR should parse: {err}")))?;
+            let err = validate_qir(&bc, None)
+                .expect_err("validation should reject zero resources");
+            prop_assert!(err.contains("Entry function must have at least one"));
+        }
+
+        #[test]
+        fn prop_qir_major_versions_accept_only_one_or_two(major in 0u32..5u32) {
+            let ll_text = minimal_qir_with_body("1", "1", &major.to_string(), "", "");
+            let bc = qir_ll_to_bc(&ll_text)
+                .map_err(|err| TestCaseError::fail(format!("inline IR should parse: {err}")))?;
+            let result = validate_qir(&bc, None);
+            if matches!(major, 1 | 2) {
+                prop_assert!(result.is_ok());
+            } else {
+                let err = result.expect_err("invalid major versions must fail");
+                prop_assert!(err.contains("Unsupported qir_major_version"));
+            }
+        }
+
+        #[test]
+        fn prop_duplicate_qir_major_flags_pass_if_any_match(
+            valid_first in any::<bool>(),
+            valid_second in any::<bool>(),
+        ) {
+            let first_major = if valid_first { "1" } else { "99" };
+            let second_major = if valid_second { "2" } else { "100" };
+            let ll_text = minimal_qir_with_duplicate_major_flags(first_major, second_major);
+            let bc = qir_ll_to_bc(&ll_text)
+                .map_err(|err| TestCaseError::fail(format!("inline IR should parse: {err}")))?;
+            let result = validate_qir(&bc, None);
+            if valid_first || valid_second {
+                prop_assert!(result.is_ok());
+            } else {
+                let err = result.expect_err("all-invalid duplicate major flags must fail");
+                prop_assert!(err.contains("Unsupported qir_major_version"));
+            }
+        }
+
+        #[test]
+        fn prop_barrier_validation_tracks_required_qubits(
+            required_num_qubits in 1u32..5u32,
+            barrier_arity in 1u32..5u32,
+        ) {
+            let barrier_name = format!("__quantum__qis__barrier{barrier_arity}__body");
+            let barrier_args = (0..barrier_arity)
+                .map(|idx| format!("%Qubit* %q{idx}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let extra_decl = format!(
+                "declare void @{barrier_name}({})",
+                std::iter::repeat_n("%Qubit*", usize::try_from(barrier_arity).unwrap_or(0))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            let body = (0..barrier_arity)
+                .map(|idx| {
+                    let one_based_idx = idx.saturating_add(1);
+                    format!("  %q{idx} = inttoptr i64 {one_based_idx} to %Qubit*")
+                })
+                .chain(std::iter::once(format!("  call void @{barrier_name}({barrier_args})")))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let ll_text = minimal_qir_with_body(
+                &required_num_qubits.to_string(),
+                "1",
+                "1",
+                &extra_decl,
+                &body,
+            );
+            let bc = qir_ll_to_bc(&ll_text)
+                .map_err(|err| TestCaseError::fail(format!("inline IR should parse: {err}")))?;
+            let result = validate_qir(&bc, None);
+            if barrier_arity <= required_num_qubits {
+                prop_assert!(result.is_ok());
+            } else {
+                let err = result.expect_err("oversized barrier arity must fail");
+                prop_assert!(err.contains("Barrier arity"));
+            }
+        }
+
+        #[test]
+        fn prop_get_entry_attributes_rejects_malformed_bitcode(
+            tail in proptest::collection::vec(any::<u8>(), 0..256)
+        ) {
+            let mut bytes = b"NOTQIR".to_vec();
+            bytes.extend(tail);
+            prop_assert!(get_entry_attributes(&bytes).is_err());
+        }
     }
 }
