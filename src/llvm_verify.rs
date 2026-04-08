@@ -57,3 +57,24 @@ pub fn verify_module(module: &Module, error_prefix: &str) -> Result<(), String> 
         Err(format!("{error_prefix}: {message}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::verify_module;
+    use inkwell::context::Context;
+
+    #[test]
+    fn test_verify_module_rejects_unterminated_function() {
+        let context = Context::create();
+        let module = context.create_module("invalid");
+        let fn_type = context.void_type().fn_type(&[], false);
+        let func = module.add_function("broken", fn_type, None);
+        let _ = context.append_basic_block(func, "entry");
+
+        let err = verify_module(&module, "verification failed")
+            .expect_err("unterminated function should fail verification");
+        assert!(err.contains("verification failed"));
+    }
+}

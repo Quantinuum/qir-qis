@@ -140,3 +140,38 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
         .map_err(|e| format!("Failed to run passes: {e}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::optimize;
+    use inkwell::context::Context;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_optimize_o0_sets_native_and_explicit_triples_differently() {
+        let native_ctx = Context::create();
+        let native_module = native_ctx.create_module("native");
+        optimize(&native_module, 0, "native").expect("native O0 optimize should succeed");
+
+        let aarch64_ctx = Context::create();
+        let aarch64_module = aarch64_ctx.create_module("aarch64");
+        optimize(&aarch64_module, 0, "aarch64").expect("aarch64 O0 optimize should succeed");
+
+        let native_triple = native_module
+            .get_triple()
+            .as_str()
+            .to_string_lossy()
+            .into_owned();
+        let aarch64_triple = aarch64_module
+            .get_triple()
+            .as_str()
+            .to_string_lossy()
+            .into_owned();
+
+        assert!(!native_triple.is_empty());
+        assert_eq!(aarch64_triple, "aarch64-unknown-linux-gnu");
+        assert_ne!(native_triple, aarch64_triple);
+    }
+}
