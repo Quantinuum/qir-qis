@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 use wasm_encoder::{ExportKind, ExportSection, Module};
 
 const FIXTURE: &str = include_str!("../../tests/data/ArithOps_switch.ll");
+const MAX_EXPORT_NAME_BYTES: usize = 256;
 static FIXTURE_BITCODE: LazyLock<Vec<u8>> =
     LazyLock::new(|| qir_qis::qir_ll_to_bc(FIXTURE).expect("fixture should compile to bitcode"));
 
@@ -17,6 +18,10 @@ fn encode_wasm_with_exported_name(name: &str) -> Vec<u8> {
 }
 
 fuzz_target!(|data: &[u8]| -> Corpus {
+    if data.len() > MAX_EXPORT_NAME_BYTES {
+        return Corpus::Reject;
+    }
+
     let Ok(export_name) = std::str::from_utf8(data) else {
         return Corpus::Reject;
     };
