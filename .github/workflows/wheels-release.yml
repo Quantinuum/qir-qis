@@ -17,6 +17,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && format('workflow_dispatch-{0}', inputs.release_tag) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   LLVM_VERSION: "21.1.8"
   LLVM_SYS_PREFIX_ENV_VAR: "LLVM_SYS_211_PREFIX"

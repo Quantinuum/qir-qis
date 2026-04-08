@@ -6,6 +6,9 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   LLVM_VERSION: "21.1.8"
   LLVM_SYS_PREFIX_ENV_VAR: "LLVM_SYS_211_PREFIX"
