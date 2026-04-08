@@ -24,6 +24,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0

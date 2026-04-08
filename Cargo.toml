@@ -33,13 +33,13 @@ inkwell = { version = "0.8", default-features = false, features = [
     "target-x86",
     "target-aarch64",
 ] }
-llvm-sys = "211.0.0"
+llvm-sys = "211.0.1"
 log = "0.4"
 pyo3 = { version = "0.28", features = [
     "abi3-py310",
     "anyhow",
 ], optional = true }
-pyo3-stub-gen = { version = "0.20", optional = true, features = [
+pyo3-stub-gen = { version = "0.21", optional = true, features = [
     "infer_signature",
 ], default-features = false }
 rstest = "0.26"
