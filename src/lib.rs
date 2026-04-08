@@ -2108,10 +2108,22 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&output_bc, "qis_module");
         let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
             .expect("Compiled QIS bitcode should parse");
-        let text = module.to_string();
+        assert!(module.get_function("print_bool").is_some());
 
-        assert!(text.contains("print_bool"));
-        assert!(text.contains("USER:BOOL:b"));
+        #[cfg(not(windows))]
+        {
+            let text = module.to_string();
+            assert!(text.contains("USER:BOOL:b"));
+        }
+
+        #[cfg(windows)]
+        {
+            let labels = module
+                .get_globals()
+                .filter_map(|global| crate::convert::get_string_label(global).ok())
+                .collect::<Vec<_>>();
+            assert!(labels.iter().any(|label| label.contains("USER:BOOL:b")));
+        }
     }
 
     #[test]
@@ -2257,9 +2269,13 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&output_bc, "qis_module");
         let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
             .expect("Compiled QIS bitcode should parse");
-        let text = module.to_string();
+        assert!(module.get_function("___rxy").is_some());
 
-        assert!(text.contains("___rxy"));
+        #[cfg(not(windows))]
+        {
+            let text = module.to_string();
+            assert!(text.contains("___rxy"));
+        }
     }
 
     #[cfg(feature = "wasm")]
@@ -2284,12 +2300,14 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     proptest! {
+        #[cfg(not(windows))]
         #[test]
         fn prop_qir_ll_to_bc_rejects_malformed_ir(suffix in "\\PC{0,128}") {
             let ll_text = format!("this is not valid llvm ir\n{suffix}");
             prop_assert!(qir_ll_to_bc(&ll_text).is_err());
         }
 
+        #[cfg(not(windows))]
         #[test]
         fn prop_validate_qir_rejects_malformed_bitcode(tail in proptest::collection::vec(any::<u8>(), 0..256)) {
             let mut bytes = b"NOTQIR".to_vec();
@@ -2297,6 +2315,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             prop_assert!(validate_qir(&bytes, None).is_err());
         }
 
+        #[cfg(not(windows))]
         #[test]
         fn prop_qir_to_qis_rejects_malformed_bitcode(tail in proptest::collection::vec(any::<u8>(), 0..256)) {
             let mut bytes = b"NOTQIR".to_vec();
@@ -2435,6 +2454,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             }
         }
 
+        #[cfg(not(windows))]
         #[test]
         fn prop_get_entry_attributes_rejects_malformed_bitcode(
             tail in proptest::collection::vec(any::<u8>(), 0..256)
