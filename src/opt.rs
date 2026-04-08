@@ -149,6 +149,8 @@ mod tests {
     use super::optimize;
     #[cfg(not(windows))]
     use inkwell::context::Context;
+    #[cfg(not(windows))]
+    use inkwell::targets::TargetMachine;
 
     #[cfg(not(windows))]
     #[test]
@@ -171,9 +173,15 @@ mod tests {
             .as_str()
             .to_string_lossy()
             .into_owned();
+        let default_triple = TargetMachine::get_default_triple()
+            .as_str()
+            .to_string_lossy()
+            .into_owned();
 
-        assert!(!native_triple.is_empty());
+        assert_eq!(native_triple, default_triple);
         assert_eq!(aarch64_triple, "aarch64-unknown-linux-gnu");
-        assert_ne!(native_triple, aarch64_triple);
+        if default_triple != aarch64_triple {
+            assert_ne!(native_triple, aarch64_triple);
+        }
     }
 }

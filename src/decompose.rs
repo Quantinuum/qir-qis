@@ -802,7 +802,7 @@ mod tests {
                     .to_str()
                     .ok()?
                     .to_string();
-                let args = (0..instr.get_num_operands().saturating_sub(1))
+                let args = (0..call.count_arguments())
                     .filter_map(|idx| match instr.get_operand(idx) {
                         Some(Operand::Value(value)) => Some(value.print_to_string().to_string()),
                         Some(Operand::Block(_)) | None => None,

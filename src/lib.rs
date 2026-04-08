@@ -1646,6 +1646,7 @@ mod test {
     use crate::{get_entry_attributes, qir_ll_to_bc, qir_to_qis, validate_qir};
     use inkwell::{context::Context, memory_buffer::MemoryBuffer, module::Module};
     use proptest::prelude::*;
+    use std::{collections::BTreeMap, sync::LazyLock};
     #[cfg(feature = "wasm")]
     use wasm_encoder::{ExportKind, ExportSection, Module as WasmModule};
 
@@ -1656,14 +1657,29 @@ mod test {
         "tests/data/qir2_base.ll",
         "tests/data/qir2_adaptive.ll",
     ];
+    static PROPERTY_FIXTURE_BITCODE: LazyLock<BTreeMap<&'static str, Vec<u8>>> =
+        LazyLock::new(|| {
+            PROPERTY_FIXTURES
+                .iter()
+                .map(|path| {
+                    let ll_text =
+                        std::fs::read_to_string(path).expect("Failed to read LLVM IR fixture");
+                    let bitcode = qir_ll_to_bc(&ll_text)
+                        .expect("Failed to convert LLVM IR fixture to bitcode");
+                    (*path, bitcode)
+                })
+                .collect()
+        });
 
     fn conservative_translation_settings() -> (u32, &'static str) {
         (0, "native")
     }
 
     fn load_fixture_bitcode(path: &str) -> Vec<u8> {
-        let ll_text = std::fs::read_to_string(path).expect("Failed to read LLVM IR fixture");
-        qir_ll_to_bc(&ll_text).expect("Failed to convert LLVM IR fixture to bitcode")
+        PROPERTY_FIXTURE_BITCODE
+            .get(path)
+            .cloned()
+            .expect("Fixture bitcode should be precompiled")
     }
 
     fn verify_bitcode_module(bitcode: &[u8], name: &str) -> Result<(), String> {
