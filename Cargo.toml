@@ -55,3 +55,5 @@ crate-type = ["cdylib", "rlib"]
 
 [dev-dependencies]
 insta = { version = "1", features = ["filters"] }
+proptest = "1"
+wasm-encoder = "0.244.0"

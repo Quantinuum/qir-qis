@@ -91,6 +91,34 @@ make lint
 - `prek` checks, including formatting, `typos`, and Rust lint/doc hooks
 - `ty` type checking
 
+### Robustness Tooling
+
+The repo also supports three complementary robustness checks:
+
+```sh
+# Mutation testing (install cargo-mutants first)
+make mutants
+
+# Build-check a single fuzz target (requires nightly + cargo-fuzz)
+make fuzz-check FUZZ_TARGET=validate_qir
+
+# Run a bounded fuzz target locally
+make fuzz FUZZ_TARGET=qir_to_qis FUZZ_RUN_ARGS=-max_total_time=30
+
+# Run all current fuzz targets with short local smoke budgets
+make fuzz-all
+```
+
+Recommended setup:
+
+```sh
+cargo install cargo-mutants cargo-fuzz
+rustup toolchain install nightly
+```
+
+The property-based tests run as part of the normal Rust test suite, so `make test`
+already exercises them.
+
 ### Python Stubs
 
 After modifying the Python API:

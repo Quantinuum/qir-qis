@@ -77,3 +77,49 @@ pub fn parse_wasm_functions(wasm_bytes: &[u8]) -> Result<BTreeMap<String, u64>, 
     }
     Ok(wasm_fns)
 }
+#[cfg(all(test, feature = "wasm"))]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::parse_wasm_functions;
+    use proptest::prelude::*;
+    use wasm_encoder::{ExportKind, ExportSection, Module};
+
+    fn build_wasm_exports(exports: &[(String, u32)]) -> Vec<u8> {
+        let mut module = Module::new();
+        let mut export_section = ExportSection::new();
+        for (name, index) in exports {
+            export_section.export(name, ExportKind::Func, *index);
+        }
+        module.section(&export_section);
+        module.finish()
+    }
+
+    proptest! {
+        #[test]
+        fn prop_parse_wasm_functions_round_trips_exports(
+            exports in proptest::collection::btree_map("[A-Za-z_][A-Za-z0-9_]{0,8}", 0u32..32u32, 0..8)
+        ) {
+            let exports_vec = exports
+                .iter()
+                .map(|(name, index)| (name.clone(), *index))
+                .collect::<Vec<_>>();
+            let wasm = build_wasm_exports(&exports_vec);
+            let parsed = parse_wasm_functions(&wasm)
+                .map_err(|err| TestCaseError::fail(format!("wasm parsing failed unexpectedly: {err}")))?;
+
+            prop_assert_eq!(parsed.len(), exports.len());
+            for (name, index) in exports {
+                prop_assert_eq!(parsed.get(&name), Some(&u64::from(index)));
+            }
+        }
+
+        #[test]
+        fn prop_parse_wasm_functions_rejects_malformed_input(
+            bytes in proptest::collection::vec(any::<u8>(), 0..256)
+        ) {
+            prop_assume!(bytes.len() < 4 || bytes[..4] != *b"\0asm");
+            prop_assert!(parse_wasm_functions(&bytes).is_err());
+        }
+    }
+}
