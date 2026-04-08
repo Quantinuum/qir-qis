@@ -145,7 +145,9 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
 mod tests {
     #![allow(clippy::expect_used)]
 
+    #[cfg(not(windows))]
     use super::optimize;
+    #[cfg(not(windows))]
     use inkwell::context::Context;
 
     #[cfg(not(windows))]
