@@ -12,6 +12,7 @@ on:
       - opened
       - synchronize
     paths-ignore:
+      - "AGENTS.md"
       - "README.md"
       - "CONTRIBUTING.md"
       - "DEVELOPMENT.md"
