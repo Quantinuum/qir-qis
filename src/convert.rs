@@ -1624,6 +1624,26 @@ mod tests {
         }
 
         #[test]
+        fn prop_build_result_global_is_stable_for_same_input(
+            label in "[A-Za-z0-9_ ./:-]{0,32}",
+            ty in prop_oneof![Just("RESULT"), Just("BOOL"), Just("INT"), Just("FLOAT"), Just("QIRARRAY"), Just("QIRTUPLE")],
+            empty_tag_index in prop::option::of(0usize..8usize),
+        ) {
+            let context = Context::create();
+            let (first_const, first_name) = build_result_global(&context, &label, "old_name", ty, empty_tag_index)
+                .map_err(|err| TestCaseError::fail(format!("first build_result_global call failed unexpectedly: {err}")))?;
+            let (second_const, second_name) = build_result_global(&context, &label, "old_name", ty, empty_tag_index)
+                .map_err(|err| TestCaseError::fail(format!("second build_result_global call failed unexpectedly: {err}")))?;
+
+            prop_assert_eq!(first_name, second_name);
+            prop_assert_eq!(first_const.get_type().len(), second_const.get_type().len());
+            prop_assert_eq!(
+                first_const.print_to_string().to_string(),
+                second_const.print_to_string().to_string()
+            );
+        }
+
+        #[test]
         fn prop_build_result_global_empty_labels_get_distinct_names(
             first_idx in 0usize..20usize,
             second_idx in 0usize..20usize,
@@ -1648,6 +1668,24 @@ mod tests {
             } else {
                 prop_assert!(result.is_err());
             }
+        }
+
+        #[test]
+        fn prop_build_result_global_distinct_sanitized_labels_do_not_collide(
+            first_label in "[A-Za-z0-9_ ./:-]{1,32}",
+            second_label in "[A-Za-z0-9_ ./:-]{1,32}",
+        ) {
+            let first_sanitized = sanitize_label_for_global_name(&first_label);
+            let second_sanitized = sanitize_label_for_global_name(&second_label);
+            prop_assume!(first_sanitized != second_sanitized);
+
+            let context = Context::create();
+            let (_, first_name) = build_result_global(&context, &first_label, "old_name", "TEST", None)
+                .map_err(|err| TestCaseError::fail(format!("first build_result_global call failed unexpectedly: {err}")))?;
+            let (_, second_name) = build_result_global(&context, &second_label, "old_name", "TEST", None)
+                .map_err(|err| TestCaseError::fail(format!("second build_result_global call failed unexpectedly: {err}")))?;
+
+            prop_assert_ne!(first_name, second_name);
         }
     }
 
@@ -1719,6 +1757,10 @@ mod tests {
                 .expect("updated global name should be utf8");
             assert!(new_name.starts_with("res_"));
             assert_eq!(expected_tag, "QIRARRAY");
+            let label =
+                get_string_label(*new_global).expect("updated global should remain a string");
+            assert!(label.contains(expected_tag));
+            assert!(label.ends_with(name));
 
             // Verify print_int function was created for the array output
             let print_fn = module.get_function("print_int");
@@ -1795,6 +1837,9 @@ mod tests {
             .to_str()
             .expect("updated global name should be utf8");
         assert!(new_name.starts_with("res_"));
+        let label = get_string_label(*new_global).expect("updated global should remain a string");
+        assert!(label.contains("QIRTUPLE"));
+        assert!(label.ends_with("tuple"));
     }
 
     #[test]
