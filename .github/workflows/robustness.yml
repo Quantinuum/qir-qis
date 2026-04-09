@@ -24,6 +24,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write
 
 env:
   CARGO_TERM_COLOR: always
