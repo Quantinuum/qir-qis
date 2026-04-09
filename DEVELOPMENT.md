@@ -35,6 +35,10 @@ cargo build
 uv sync
 ```
 
+## Agent Guidance
+
+If you are using an agentic coding tool, see [`AGENTS.md`](AGENTS.md). It captures the repo's standing expectations for preserving correctness guarantees while doing the main work of a PR, including when to add regression tests, property tests, fuzz coverage, or mutation-testing updates.
+
 ## Building
 
 ```sh
