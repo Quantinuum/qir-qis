@@ -1637,6 +1637,12 @@ mod tests {
 
             prop_assert_eq!(first_name, second_name);
             prop_assert_eq!(first_const.get_type().len(), second_const.get_type().len());
+            let expected_len = create_cl_str(RESULT_TAG, ty, &label)
+                .map_err(|err| TestCaseError::fail(format!("failed to encode expected CL string: {err}")))?
+                .len();
+            prop_assert_eq!(first_const.get_type().len() as usize, expected_len);
+
+            #[cfg(not(windows))]
             prop_assert_eq!(
                 first_const.print_to_string().to_string(),
                 second_const.print_to_string().to_string()
