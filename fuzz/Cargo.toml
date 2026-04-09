@@ -82,5 +82,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "result_index_contracts"
+path = "fuzz_targets/result_index_contracts.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]

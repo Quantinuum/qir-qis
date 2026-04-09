@@ -51,6 +51,7 @@ jobs:
           - mutated_fixture_contracts
           - declared_qis_calls
           - entry_contracts
+          - result_index_contracts
     steps:
       - uses: actions/checkout@v6
       - name: Setup LLVM
@@ -103,6 +104,7 @@ jobs:
           - mutated_fixture_contracts
           - declared_qis_calls
           - entry_contracts
+          - result_index_contracts
     steps:
       - uses: actions/checkout@v6
       - name: Setup LLVM
