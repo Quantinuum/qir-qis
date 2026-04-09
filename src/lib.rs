@@ -2229,6 +2229,95 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_validate_qir_accepts_barrier_matching_required_qubits() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__barrier2__body(%Qubit*, %Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 1 to %Qubit*
+  %q1 = inttoptr i64 2 to %Qubit*
+  call void @__quantum__qis__barrier2__body(%Qubit* %q0, %Qubit* %q1)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="2" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        validate_qir(&bc_bytes, None)
+            .expect("barrier arity matching required_num_qubits should validate");
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_unsupported_qtm_function() {
+        let ll_text = r#"
+declare void @___unknown_qtm()
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  call void @___unknown_qtm()
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("unsupported QTM declarations should fail validation");
+        assert!(err.contains("Unsupported Qtm QIS function: ___unknown_qtm"));
+    }
+
+    #[test]
+    fn test_validate_qir_allows_ir_defined_non_main_helper() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+define void @helper(%Qubit* %qubit) {
+entry:
+  call void @__quantum__qis__h__body(%Qubit* %qubit)
+  ret void
+}
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 1 to %Qubit*
+  call void @helper(%Qubit* %q0)
+  ret i64 0
+}
+
+declare void @__quantum__qis__h__body(%Qubit*)
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        validate_qir(&bc_bytes, None)
+            .expect("IR-defined helper functions with non-main names should be allowed");
+    }
+
+    #[test]
     fn test_validate_qir_allows_external_pointer_returning_declarations() {
         let ll_text = r#"
 %Qubit = type opaque

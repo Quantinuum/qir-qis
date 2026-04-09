@@ -845,10 +845,12 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn test_phase_decompositions_use_expected_signed_angles() {
+        let s = call_signatures("__quantum__qis__s__body");
         let s_adj = call_signatures("__quantum__qis__s__adj");
         let t = call_signatures("__quantum__qis__t__body");
         let t_adj = call_signatures("__quantum__qis__t__adj");
 
+        assert_eq!(s[0].1[0], printed_const(PI / 2.0));
         assert_eq!(s_adj[0].1[0], printed_const(PI / -2.0));
         assert_eq!(t[0].1[0], printed_const(PI / 4.0));
         assert_eq!(t_adj[0].1[0], printed_const(PI / -4.0));
@@ -879,6 +881,14 @@ mod tests {
         assert!(printed_args.contains(&printed_const(PI / 4.0)));
         assert!(printed_args.contains(&printed_const(PI / -4.0)));
         assert!(printed_args.contains(&printed_const(3.0 * PI / -4.0)));
+        assert_eq!(
+            printed_args
+                .iter()
+                .filter(|arg| *arg == &printed_const(PI / 2.0))
+                .count(),
+            5,
+            "CCX decomposition should emit five +pi/2 angle operands"
+        );
     }
 
     #[cfg(not(windows))]

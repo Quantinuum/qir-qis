@@ -1968,6 +1968,97 @@ entry:
         assert_eq!(parsed_name, "tag");
     }
 
+    #[test]
+    fn test_parse_gep_named_constant_expression_global_returns_global_name() {
+        let ll_text = r#"
+@named_global = private constant [6 x i8] c"value\00"
+
+declare void @use(ptr)
+
+define void @test_func() {
+entry:
+  call void @use(ptr getelementptr inbounds ([6 x i8], ptr @named_global, i64 0, i64 0))
+  ret void
+}
+"#;
+
+        let context = Context::create();
+        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+            ll_text.as_bytes(),
+            "gep_named",
+        );
+        let module = context
+            .create_module_from_ir(memory_buffer)
+            .expect("Failed to parse inline IR");
+        let func = module
+            .get_function("test_func")
+            .expect("test function should exist");
+        let call_instr = func
+            .get_first_basic_block()
+            .expect("entry block should exist")
+            .get_first_instruction()
+            .expect("call instruction should exist");
+        let operand = match call_instr
+            .get_operand(0)
+            .expect("call should have pointer operand")
+        {
+            inkwell::values::Operand::Value(value) => value,
+            inkwell::values::Operand::Block(_) => {
+                unreachable!("expected value operand")
+            }
+        };
+
+        let parsed_name =
+            parse_gep(operand).expect("named constant-expression GEP should resolve a global name");
+        assert_eq!(parsed_name, "named_global");
+    }
+
+    #[test]
+    fn test_parse_gep_ignores_percent_prefixed_llvm_names() {
+        let ll_text = r"
+declare void @use(ptr)
+
+define void @test_func() {
+entry:
+  %0 = alloca i8, align 1
+  call void @use(ptr %0)
+  ret void
+}
+";
+
+        let context = Context::create();
+        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+            ll_text.as_bytes(),
+            "gep_percent_name",
+        );
+        let module = context
+            .create_module_from_ir(memory_buffer)
+            .expect("Failed to parse inline IR");
+        let func = module
+            .get_function("test_func")
+            .expect("test function should exist");
+        let call_instr = func
+            .get_first_basic_block()
+            .expect("entry block should exist")
+            .get_first_instruction()
+            .expect("first instruction should exist")
+            .get_next_instruction()
+            .expect("call instruction should exist");
+        let operand = match call_instr
+            .get_operand(0)
+            .expect("call should have pointer operand")
+        {
+            inkwell::values::Operand::Value(value) => value,
+            inkwell::values::Operand::Block(_) => {
+                unreachable!("expected value operand")
+            }
+        };
+
+        let err =
+            parse_gep(operand).expect_err("percent-prefixed LLVM SSA names should be ignored");
+        assert_eq!(err, "Pointer does not reference a named global value");
+    }
+
     fn get_qir_bytes(ll_path: &Path) -> Vec<u8> {
         let ll = fs::read_to_string(ll_path).expect("Failed to read input LLVM IR file");
         qir_ll_to_bc(&ll).expect("Failed to convert LLVM IR to bitcode")
@@ -2014,6 +2105,46 @@ entry:
         )
         .expect_err("unknown external declaration should fail");
         assert!(err.contains("Unsupported function call"));
+    }
+
+    #[test]
+    fn test_process_ir_defined_q_fns_skips_entry_function() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+        let fn_type = context.void_type().fn_type(&[], false);
+
+        let unknown_decl = module.add_function("__quantum__qis__mystery__body", fn_type, None);
+        let entry_fn = module.add_function("Entry_Point_Name", fn_type, None);
+        let entry_block = context.append_basic_block(entry_fn, "entry");
+        builder.position_at_end(entry_block);
+        let _ = builder
+            .build_call(unknown_decl, &[], "unknown_call")
+            .expect("call should build");
+        let _ = builder.build_return(None);
+
+        process_ir_defined_q_fns(&context, &module, entry_fn)
+            .expect("entry function should be excluded from IR-defined helper processing");
+    }
+
+    #[test]
+    fn test_prune_unused_ir_qis_helpers_keeps_declarations() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let fn_type = context.void_type().fn_type(&[], false);
+
+        let decl = module.add_function("__quantum__qis__h__body", fn_type, None);
+        prune_unused_ir_qis_helpers(&module);
+
+        assert!(
+            module.get_function("__quantum__qis__h__body").is_some(),
+            "unused declarations should not be pruned"
+        );
+        assert_eq!(
+            decl.count_basic_blocks(),
+            0,
+            "the retained helper should remain a declaration"
+        );
     }
 
     #[test]

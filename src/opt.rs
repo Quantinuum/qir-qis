@@ -184,4 +184,16 @@ mod tests {
             assert_ne!(native_triple, aarch64_triple);
         }
     }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_optimize_o0_accepts_explicit_x86_64_target() {
+        let context = Context::create();
+        let module = context.create_module("x86_64");
+
+        optimize(&module, 0, "x86-64").expect("explicit x86-64 O0 optimize should succeed");
+
+        let triple = module.get_triple().as_str().to_string_lossy().into_owned();
+        assert_eq!(triple, "x86_64-unknown-linux-gnu");
+    }
 }
