@@ -15,7 +15,8 @@ use inkwell::values::{
     GlobalValue, InstructionOpcode, InstructionValue, PointerValue,
 };
 use llvm_sys::core::{
-    LLVMGetAsString, LLVMGetNumOperands, LLVMGetOperand, LLVMGetValueName2, LLVMIsConstantString,
+    LLVMGetAsString, LLVMGetNumOperands, LLVMGetOperand, LLVMGetValueName2, LLVMIsAGlobalVariable,
+    LLVMIsConstantString,
 };
 use llvm_sys::{
     LLVMAttributeFunctionIndex,
@@ -1019,18 +1020,13 @@ pub fn parse_gep(gep: BasicValueEnum) -> Result<String, String> {
             // 2) a constant string label (for unnamed globals like @0, @1, ...).
             let mut stack = vec![ptr.as_value_ref()];
             while let Some(value_ref) = stack.pop() {
-                let is_const_str = unsafe { LLVMIsConstantString(value_ref) } != 0;
-                if is_const_str {
-                    let mut len: usize = 0;
-                    let str_ptr = unsafe { LLVMGetAsString(value_ref, &raw mut len) };
-                    if !str_ptr.is_null() && len > 0 {
-                        let raw = unsafe { std::slice::from_raw_parts(str_ptr.cast::<u8>(), len) };
-                        let until_nul = raw.split(|b| *b == 0).next().unwrap_or(raw);
-                        let label = std::str::from_utf8(until_nul)
-                            .map_err(|e| format!("Invalid UTF-8 in constant string: {e}"))?;
-                        if !label.is_empty() {
-                            return Ok(label.to_string());
-                        }
+                let global_ref = unsafe { LLVMIsAGlobalVariable(value_ref) };
+                if !global_ref.is_null() {
+                    let global = unsafe { GlobalValue::new(global_ref) };
+                    if let Ok(label) = get_string_label(global)
+                        && !label.is_empty()
+                    {
+                        return Ok(label);
                     }
                 }
 
