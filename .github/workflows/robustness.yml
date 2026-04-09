@@ -4,6 +4,17 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 8 * * 1"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "fuzz/**"
+      - "Makefile"
+      - ".github/workflows/robustness.yml"
   pull_request:
     types:
       - opened
@@ -35,7 +46,7 @@ env:
 
 jobs:
   fuzz-smoke:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -88,7 +99,7 @@ jobs:
         run: cargo +nightly fuzz run --target "${RUST_HOST_TARGET}" ${{ matrix.target }} -- -max_total_time=20
 
   fuzz-long:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -155,7 +166,7 @@ jobs:
         run: exit 1
 
   mutants:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
