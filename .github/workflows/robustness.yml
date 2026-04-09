@@ -50,6 +50,7 @@ jobs:
           - mutated_fixture_bitcode
           - mutated_fixture_contracts
           - declared_qis_calls
+          - entry_contracts
     steps:
       - uses: actions/checkout@v6
       - name: Setup LLVM
@@ -101,6 +102,7 @@ jobs:
           - mutated_fixture_bitcode
           - mutated_fixture_contracts
           - declared_qis_calls
+          - entry_contracts
     steps:
       - uses: actions/checkout@v6
       - name: Setup LLVM

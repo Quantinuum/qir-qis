@@ -75,5 +75,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "entry_contracts"
+path = "fuzz_targets/entry_contracts.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]

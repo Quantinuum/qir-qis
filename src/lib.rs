@@ -1797,6 +1797,26 @@ attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_
         )
     }
 
+    fn minimal_qir_with_duplicate_dynamic_flags(first_flag: &str, second_flag: &str) -> String {
+        format!(
+            r#"
+define i64 @Entry_Point_Name() #0 {{
+entry:
+  ret i64 0
+}}
+
+attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }}
+
+!llvm.module.flags = !{{!0, !1, !2, !3, !4}}
+!0 = !{{i32 1, !"qir_major_version", i32 1}}
+!1 = !{{i32 7, !"qir_minor_version", i32 0}}
+!2 = !{{i32 1, !"dynamic_qubit_management", i1 {first_flag}}}
+!3 = !{{i32 1, !"dynamic_qubit_management", i1 {second_flag}}}
+!4 = !{{i32 1, !"dynamic_result_management", i1 false}}
+"#
+        )
+    }
+
     #[test]
     fn test_get_entry_attributes() {
         let ll_text = std::fs::read_to_string("tests/data/base-attrs.ll")
@@ -1841,6 +1861,35 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 "#;
         let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
         let attrs = get_entry_attributes(&bc_bytes).unwrap();
+        assert_eq!(
+            attrs.get("custom_attr"),
+            Some(&Some("custom_value".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_get_entry_attributes_is_order_independent() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "custom_attr"="custom_value" "required_num_results"="2" "output_labeling_schema"="labeled" "entry_point" "required_num_qubits"="2" "qir_profiles"="base_profile" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let attrs = get_entry_attributes(&bc_bytes).expect("entry attributes should parse");
+        assert!(matches!(attrs.get("entry_point"), Some(None)));
+        assert_eq!(
+            attrs.get("qir_profiles"),
+            Some(&Some("base_profile".to_string()))
+        );
         assert_eq!(
             attrs.get("custom_attr"),
             Some(&Some("custom_value".to_string()))
@@ -2440,6 +2489,25 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             } else {
                 let err = result.expect_err("all-invalid duplicate major flags must fail");
                 prop_assert!(err.contains("Unsupported qir_major_version"));
+            }
+        }
+
+        #[test]
+        fn prop_duplicate_dynamic_qubit_flags_pass_if_any_match(
+            valid_first in any::<bool>(),
+            valid_second in any::<bool>(),
+        ) {
+            let first_flag = if valid_first { "false" } else { "true" };
+            let second_flag = if valid_second { "false" } else { "true" };
+            let ll_text = minimal_qir_with_duplicate_dynamic_flags(first_flag, second_flag);
+            let bc = qir_ll_to_bc(&ll_text)
+                .map_err(|err| TestCaseError::fail(format!("inline IR should parse: {err}")))?;
+            let result = validate_qir(&bc, None);
+            if valid_first || valid_second {
+                prop_assert!(result.is_ok());
+            } else {
+                let err = result.expect_err("all-invalid duplicate dynamic flags must fail");
+                prop_assert!(err.contains("dynamic_qubit_management"));
             }
         }
 

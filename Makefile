@@ -32,7 +32,7 @@ fuzz:
 
 .PHONY: fuzz-all
 fuzz-all:
-	@for target in qir_ll_to_bc validate_qir parse_wasm_functions qir_to_qis get_entry_attributes validate_fixture_with_wasm mutated_fixture_bitcode mutated_fixture_contracts declared_qis_calls; do \
+	@for target in qir_ll_to_bc validate_qir parse_wasm_functions qir_to_qis get_entry_attributes validate_fixture_with_wasm mutated_fixture_bitcode mutated_fixture_contracts declared_qis_calls entry_contracts; do \
 		cargo +nightly fuzz check --target $(RUST_HOST_TARGET) "$$target" || exit 1; \
 		cargo +nightly fuzz run --target $(RUST_HOST_TARGET) "$$target" -- -max_total_time=15 || exit 1; \
 	done
