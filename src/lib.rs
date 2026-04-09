@@ -666,8 +666,7 @@ mod aux {
 
         // Store measurement result
         let result_idx = get_index(result_ptr)?;
-        let result_idx_usize = usize::try_from(result_idx)
-            .map_err(|e| format!("Failed to convert result index to usize: {e}"))?;
+        let result_idx_usize = checked_result_index(result_idx, result_ssa.len())?;
         result_ssa[result_idx_usize] = Some((meas, None));
 
         if *fn_name == "__quantum__qis__mresetz__body" {
@@ -858,16 +857,14 @@ mod aux {
         let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
         let result_ptr = call_args[0].into_pointer_value();
         let result_idx = get_index(result_ptr)?;
-        let meas_handle = result_ssa[usize::try_from(result_idx)
-            .map_err(|e| format!("Failed to convert result index to usize: {e}"))?]
-        .ok_or_else(|| "Expected measurement handle".to_string())?;
+        let result_idx_usize = checked_result_index(result_idx, result_ssa.len())?;
+        let meas_handle = result_ssa[result_idx_usize]
+            .ok_or_else(|| "Expected measurement handle".to_string())?;
 
         let builder = ctx.create_builder();
         builder.position_before(instr);
 
         // Compute or reuse the bool value for this meas_handle
-        let result_idx_usize = usize::try_from(result_idx)
-            .map_err(|e| format!("Failed to convert result index to usize: {e}"))?;
         let bool_val = result_ssa[result_idx_usize]
             .and_then(|v| v.1)
             .and_then(|val| val.as_instruction_value())
@@ -955,6 +952,17 @@ mod aux {
         }
         instr.erase_from_basic_block();
         Ok(())
+    }
+
+    pub fn checked_result_index(result_idx: u64, result_ssa_len: usize) -> Result<usize, String> {
+        let result_idx_usize = usize::try_from(result_idx)
+            .map_err(|e| format!("Failed to convert result index to usize: {e}"))?;
+        if result_idx_usize >= result_ssa_len {
+            return Err(format!(
+                "Result index {result_idx} exceeds required_num_results ({result_ssa_len})"
+            ));
+        }
+        Ok(result_idx_usize)
     }
 
     fn handle_classical_record_output(args: &mut ProcessCallArgs) -> Result<(), String> {
@@ -2292,6 +2300,13 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             let text = module.to_string();
             assert!(text.contains("___rxy"));
         }
+    }
+
+    #[test]
+    fn test_checked_result_index_rejects_out_of_bounds_values() {
+        let err = crate::aux::checked_result_index(5, 1)
+            .expect_err("out-of-bounds result indices should fail cleanly");
+        assert_eq!(err, "Result index 5 exceeds required_num_results (1)");
     }
 
     #[cfg(feature = "wasm")]

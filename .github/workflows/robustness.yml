@@ -48,6 +48,7 @@ jobs:
           - get_entry_attributes
           - validate_fixture_with_wasm
           - mutated_fixture_bitcode
+          - mutated_fixture_contracts
     steps:
       - uses: actions/checkout@v6
       - name: Setup LLVM
@@ -97,6 +98,7 @@ jobs:
           - get_entry_attributes
           - validate_fixture_with_wasm
           - mutated_fixture_bitcode
+          - mutated_fixture_contracts
     steps:
       - uses: actions/checkout@v6
       - name: Setup LLVM

@@ -61,5 +61,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "mutated_fixture_contracts"
+path = "fuzz_targets/mutated_fixture_contracts.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]
