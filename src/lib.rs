@@ -2129,6 +2129,29 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_validate_qir_reports_exact_single_expected_module_flag_value() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 99}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("unsupported single-valued module flag should fail");
+        assert!(err.contains("Unsupported qir_minor_version: expected i32 0"));
+    }
+
+    #[test]
     fn test_validate_qir_missing_required_module_flag_reports_exact_message() {
         let ll_text = r#"
 define i64 @Entry_Point_Name() #0 {
@@ -2255,6 +2278,33 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
         validate_qir(&bc_bytes, None)
             .expect("barrier arity matching required_num_qubits should validate");
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_zero_arity_barrier() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__barrier0__body()
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  call void @__quantum__qis__barrier0__body()
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None).expect_err("barrier0 should be rejected");
+        assert!(err.contains("Unsupported QIR QIS function: __quantum__qis__barrier0__body"));
     }
 
     #[test]

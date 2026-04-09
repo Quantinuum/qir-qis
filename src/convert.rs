@@ -1969,6 +1969,50 @@ entry:
     }
 
     #[test]
+    fn test_parse_gep_empty_constant_string_global_errors() {
+        let ll_text = r#"
+@0 = private constant [1 x i8] c"\00"
+
+declare void @use(ptr)
+
+define void @test_func() {
+entry:
+  call void @use(ptr getelementptr inbounds ([1 x i8], ptr @0, i64 0, i64 0))
+  ret void
+}
+"#;
+
+        let context = Context::create();
+        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+            ll_text.as_bytes(),
+            "gep_empty_label",
+        );
+        let module = context
+            .create_module_from_ir(memory_buffer)
+            .expect("Failed to parse inline IR");
+        let func = module
+            .get_function("test_func")
+            .expect("test function should exist");
+        let call_instr = func
+            .get_first_basic_block()
+            .expect("entry block should exist")
+            .get_first_instruction()
+            .expect("call instruction should exist");
+        let operand = match call_instr
+            .get_operand(0)
+            .expect("call should have pointer operand")
+        {
+            inkwell::values::Operand::Value(value) => value,
+            inkwell::values::Operand::Block(_) => {
+                unreachable!("expected value operand")
+            }
+        };
+
+        let err = parse_gep(operand).expect_err("empty constant string labels should be ignored");
+        assert_eq!(err, "Pointer does not reference a named global value");
+    }
+
+    #[test]
     fn test_parse_gep_named_constant_expression_global_returns_global_name() {
         let ll_text = r#"
 @named_global = private constant [6 x i8] c"value\00"
