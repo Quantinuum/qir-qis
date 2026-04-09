@@ -68,5 +68,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "declared_qis_calls"
+path = "fuzz_targets/declared_qis_calls.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]
