@@ -15,7 +15,8 @@ use inkwell::values::{
     GlobalValue, InstructionOpcode, InstructionValue, PointerValue,
 };
 use llvm_sys::core::{
-    LLVMGetAsString, LLVMGetNumOperands, LLVMGetOperand, LLVMGetValueName2, LLVMIsConstantString,
+    LLVMGetAsString, LLVMGetNumOperands, LLVMGetOperand, LLVMGetValueName2, LLVMIsAGlobalVariable,
+    LLVMIsConstantString,
 };
 use llvm_sys::{
     LLVMAttributeFunctionIndex,
@@ -1019,18 +1020,13 @@ pub fn parse_gep(gep: BasicValueEnum) -> Result<String, String> {
             // 2) a constant string label (for unnamed globals like @0, @1, ...).
             let mut stack = vec![ptr.as_value_ref()];
             while let Some(value_ref) = stack.pop() {
-                let is_const_str = unsafe { LLVMIsConstantString(value_ref) } != 0;
-                if is_const_str {
-                    let mut len: usize = 0;
-                    let str_ptr = unsafe { LLVMGetAsString(value_ref, &raw mut len) };
-                    if !str_ptr.is_null() && len > 0 {
-                        let raw = unsafe { std::slice::from_raw_parts(str_ptr.cast::<u8>(), len) };
-                        let until_nul = raw.split(|b| *b == 0).next().unwrap_or(raw);
-                        let label = std::str::from_utf8(until_nul)
-                            .map_err(|e| format!("Invalid UTF-8 in constant string: {e}"))?;
-                        if !label.is_empty() {
-                            return Ok(label.to_string());
-                        }
+                let global_ref = unsafe { LLVMIsAGlobalVariable(value_ref) };
+                if !global_ref.is_null() {
+                    let global = unsafe { GlobalValue::new(global_ref) };
+                    if let Ok(label) = get_string_label(global)
+                        && !label.is_empty()
+                    {
+                        return Ok(label);
                     }
                 }
 
@@ -1245,6 +1241,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use inkwell::{types::AnyType, values::BasicValue};
+    use proptest::prelude::*;
     use rstest::rstest;
 
     use std::fs;
@@ -1312,6 +1309,28 @@ mod tests {
         let context = Context::create();
         let module = context.create_module("test");
         let globals = convert_globals(&context, &module).unwrap();
+        assert!(globals.is_empty());
+    }
+
+    #[test]
+    fn test_convert_globals_ignores_non_constant_and_wrong_type_globals() {
+        let context = Context::create();
+        let module = context.create_module("test");
+
+        let i8_array = context.i8_type().array_type(4);
+        let i32_array = context.i32_type().array_type(4);
+
+        let non_constant = module.add_global(i8_array, None, "mutable_i8");
+        non_constant.set_initializer(&context.const_string(b"abc\0", false));
+        non_constant.set_linkage(Linkage::Internal);
+        non_constant.set_constant(false);
+
+        let wrong_type = module.add_global(i32_array, None, "constant_i32");
+        wrong_type.set_initializer(&i32_array.const_zero());
+        wrong_type.set_linkage(Linkage::Private);
+        wrong_type.set_constant(true);
+
+        let globals = convert_globals(&context, &module).expect("conversion should succeed");
         assert!(globals.is_empty());
     }
 
@@ -1583,6 +1602,95 @@ mod tests {
         assert_eq!(new_name, "res_empty_tag.2");
     }
 
+    proptest! {
+        #[test]
+        fn prop_build_result_global_sanitizes_names(label in "[A-Za-z0-9_ ./:-]{0,64}") {
+            let context = Context::create();
+            let (_, new_name) = build_result_global(&context, &label, "old_name", "TEST", Some(1))
+                .map_err(|err| TestCaseError::fail(format!("build_result_global failed unexpectedly: {err}")))?;
+
+            if label.is_empty() {
+                prop_assert_eq!(new_name, "res_empty_tag.1");
+            } else {
+                prop_assert!(new_name.starts_with("res_"));
+                prop_assert!(new_name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'));
+            }
+        }
+
+        #[test]
+        fn prop_build_result_global_is_stable_for_same_input(
+            label in "[A-Za-z0-9_ ./:-]{0,32}",
+            ty in prop_oneof![Just("RESULT"), Just("BOOL"), Just("INT"), Just("FLOAT"), Just("QIRARRAY"), Just("QIRTUPLE")],
+            empty_tag_index in prop::option::of(0usize..8usize),
+        ) {
+            let context = Context::create();
+            let (first_const, first_name) = build_result_global(&context, &label, "old_name", ty, empty_tag_index)
+                .map_err(|err| TestCaseError::fail(format!("first build_result_global call failed unexpectedly: {err}")))?;
+            let (second_const, second_name) = build_result_global(&context, &label, "old_name", ty, empty_tag_index)
+                .map_err(|err| TestCaseError::fail(format!("second build_result_global call failed unexpectedly: {err}")))?;
+
+            prop_assert_eq!(first_name, second_name);
+            prop_assert_eq!(first_const.get_type().len(), second_const.get_type().len());
+            let expected_len = create_cl_str(RESULT_TAG, ty, &label)
+                .map_err(|err| TestCaseError::fail(format!("failed to encode expected CL string: {err}")))?
+                .len();
+            prop_assert_eq!(first_const.get_type().len() as usize, expected_len);
+
+            #[cfg(not(windows))]
+            prop_assert_eq!(
+                first_const.print_to_string().to_string(),
+                second_const.print_to_string().to_string()
+            );
+        }
+
+        #[test]
+        fn prop_build_result_global_empty_labels_get_distinct_names(
+            first_idx in 0usize..20usize,
+            second_idx in 0usize..20usize,
+        ) {
+            prop_assume!(first_idx != second_idx);
+            let context = Context::create();
+            let (_, first_name) = build_result_global(&context, "", "old_name", "TEST", Some(first_idx))
+                .map_err(|err| TestCaseError::fail(format!("first empty label failed unexpectedly: {err}")))?;
+            let (_, second_name) = build_result_global(&context, "", "old_name", "TEST", Some(second_idx))
+                .map_err(|err| TestCaseError::fail(format!("second empty label failed unexpectedly: {err}")))?;
+            prop_assert_ne!(first_name, second_name);
+        }
+
+        #[test]
+        fn prop_build_result_global_length_boundary(label_len in 0usize..260usize) {
+            let context = Context::create();
+            let label = "a".repeat(label_len);
+            let result = build_result_global(&context, &label, "old_name", "TEST", None);
+            let encoded_len = "USER:TEST:".len().saturating_add(label_len);
+            if encoded_len < 256 {
+                prop_assert!(result.is_ok());
+            } else {
+                prop_assert!(result.is_err());
+            }
+        }
+
+        #[test]
+        fn prop_build_result_global_distinct_sanitized_labels_do_not_collide(
+            first_label in "[A-Za-z0-9_ ./:-]{1,32}",
+            second_label in "[A-Za-z0-9_ ./:-]{1,32}",
+        ) {
+            let first_sanitized = sanitize_label_for_global_name(&first_label);
+            let second_sanitized = sanitize_label_for_global_name(&second_label);
+            prop_assume!(first_sanitized != second_sanitized);
+
+            let context = Context::create();
+            let (_, first_name) = build_result_global(&context, &first_label, "old_name", "TEST", None)
+                .map_err(|err| TestCaseError::fail(format!("first build_result_global call failed unexpectedly: {err}")))?;
+            let (_, second_name) = build_result_global(&context, &second_label, "old_name", "TEST", None)
+                .map_err(|err| TestCaseError::fail(format!("second build_result_global call failed unexpectedly: {err}")))?;
+
+            prop_assert_ne!(first_name, second_name);
+        }
+    }
+
     #[test]
     fn test_handle_tuple_or_array_output_array() {
         fn test_array_output(length: u64, expected_tag: &str, name: &str) {
@@ -1651,6 +1759,10 @@ mod tests {
                 .expect("updated global name should be utf8");
             assert!(new_name.starts_with("res_"));
             assert_eq!(expected_tag, "QIRARRAY");
+            let label =
+                get_string_label(*new_global).expect("updated global should remain a string");
+            assert!(label.contains(expected_tag));
+            assert!(label.ends_with(name));
 
             // Verify print_int function was created for the array output
             let print_fn = module.get_function("print_int");
@@ -1727,6 +1839,9 @@ mod tests {
             .to_str()
             .expect("updated global name should be utf8");
         assert!(new_name.starts_with("res_"));
+        let label = get_string_label(*new_global).expect("updated global should remain a string");
+        assert!(label.contains("QIRTUPLE"));
+        assert!(label.ends_with("tuple"));
     }
 
     #[test]
@@ -1767,6 +1882,223 @@ mod tests {
         assert_eq!(global_name, "test_global");
     }
 
+    #[test]
+    fn test_parse_gep_named_non_gep_pointer_returns_pointer_name() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+
+        let fn_type = context.void_type().fn_type(&[], false);
+        let func = module.add_function("test_func", fn_type, None);
+        let block = context.append_basic_block(func, "entry");
+        builder.position_at_end(block);
+
+        let ptr = builder
+            .build_alloca(context.i8_type(), "scratch")
+            .expect("alloca should succeed");
+
+        let parsed_name = parse_gep(ptr.as_basic_value_enum()).expect("named pointer should parse");
+        assert_eq!(parsed_name, "scratch");
+    }
+
+    #[test]
+    fn test_parse_gep_unnamed_pointer_errors() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+
+        let fn_type = context.void_type().fn_type(&[], false);
+        let func = module.add_function("test_func", fn_type, None);
+        let block = context.append_basic_block(func, "entry");
+        builder.position_at_end(block);
+
+        let ptr = builder
+            .build_alloca(context.i8_type(), "")
+            .expect("alloca should succeed");
+
+        let err = parse_gep(ptr.as_basic_value_enum()).expect_err("unnamed pointer should fail");
+        assert_eq!(err, "Pointer does not reference a named global value");
+    }
+
+    #[test]
+    fn test_parse_gep_unnamed_constant_string_global_returns_label() {
+        let ll_text = r#"
+@0 = private constant [4 x i8] c"tag\00"
+
+declare void @use(ptr)
+
+define void @test_func() {
+entry:
+  call void @use(ptr getelementptr inbounds ([4 x i8], ptr @0, i64 0, i64 0))
+  ret void
+}
+"#;
+
+        let context = Context::create();
+        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+            ll_text.as_bytes(),
+            "gep",
+        );
+        let module = context
+            .create_module_from_ir(memory_buffer)
+            .expect("Failed to parse inline IR");
+        let func = module
+            .get_function("test_func")
+            .expect("test function should exist");
+        let call_instr = func
+            .get_first_basic_block()
+            .expect("entry block should exist")
+            .get_first_instruction()
+            .expect("call instruction should exist");
+        let operand = match call_instr
+            .get_operand(0)
+            .expect("call should have pointer operand")
+        {
+            inkwell::values::Operand::Value(value) => value,
+            inkwell::values::Operand::Block(_) => {
+                unreachable!("expected value operand")
+            }
+        };
+
+        let parsed_name = parse_gep(operand).expect("constant string GEP should resolve a label");
+        assert_eq!(parsed_name, "tag");
+    }
+
+    #[test]
+    fn test_parse_gep_empty_constant_string_global_errors() {
+        let ll_text = r#"
+@0 = private constant [1 x i8] c"\00"
+
+declare void @use(ptr)
+
+define void @test_func() {
+entry:
+  call void @use(ptr getelementptr inbounds ([1 x i8], ptr @0, i64 0, i64 0))
+  ret void
+}
+"#;
+
+        let context = Context::create();
+        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+            ll_text.as_bytes(),
+            "gep_empty_label",
+        );
+        let module = context
+            .create_module_from_ir(memory_buffer)
+            .expect("Failed to parse inline IR");
+        let func = module
+            .get_function("test_func")
+            .expect("test function should exist");
+        let call_instr = func
+            .get_first_basic_block()
+            .expect("entry block should exist")
+            .get_first_instruction()
+            .expect("call instruction should exist");
+        let operand = match call_instr
+            .get_operand(0)
+            .expect("call should have pointer operand")
+        {
+            inkwell::values::Operand::Value(value) => value,
+            inkwell::values::Operand::Block(_) => {
+                unreachable!("expected value operand")
+            }
+        };
+
+        let err = parse_gep(operand).expect_err("empty constant string labels should be ignored");
+        assert_eq!(err, "Pointer does not reference a named global value");
+    }
+
+    #[test]
+    fn test_parse_gep_named_constant_expression_global_returns_global_name() {
+        let ll_text = r#"
+@named_global = private constant [6 x i8] c"value\00"
+
+declare void @use(ptr)
+
+define void @test_func() {
+entry:
+  call void @use(ptr getelementptr inbounds ([6 x i8], ptr @named_global, i64 0, i64 0))
+  ret void
+}
+"#;
+
+        let context = Context::create();
+        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+            ll_text.as_bytes(),
+            "gep_named",
+        );
+        let module = context
+            .create_module_from_ir(memory_buffer)
+            .expect("Failed to parse inline IR");
+        let func = module
+            .get_function("test_func")
+            .expect("test function should exist");
+        let call_instr = func
+            .get_first_basic_block()
+            .expect("entry block should exist")
+            .get_first_instruction()
+            .expect("call instruction should exist");
+        let operand = match call_instr
+            .get_operand(0)
+            .expect("call should have pointer operand")
+        {
+            inkwell::values::Operand::Value(value) => value,
+            inkwell::values::Operand::Block(_) => {
+                unreachable!("expected value operand")
+            }
+        };
+
+        let parsed_name =
+            parse_gep(operand).expect("named constant-expression GEP should resolve a global name");
+        assert_eq!(parsed_name, "named_global");
+    }
+
+    #[test]
+    fn test_parse_gep_ignores_percent_prefixed_llvm_names() {
+        let ll_text = r"
+declare void @use(ptr)
+
+define void @test_func() {
+entry:
+  %0 = alloca i8, align 1
+  call void @use(ptr %0)
+  ret void
+}
+";
+
+        let context = Context::create();
+        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+            ll_text.as_bytes(),
+            "gep_percent_name",
+        );
+        let module = context
+            .create_module_from_ir(memory_buffer)
+            .expect("Failed to parse inline IR");
+        let func = module
+            .get_function("test_func")
+            .expect("test function should exist");
+        let call_instr = func
+            .get_first_basic_block()
+            .expect("entry block should exist")
+            .get_first_instruction()
+            .expect("first instruction should exist")
+            .get_next_instruction()
+            .expect("call instruction should exist");
+        let operand = match call_instr
+            .get_operand(0)
+            .expect("call should have pointer operand")
+        {
+            inkwell::values::Operand::Value(value) => value,
+            inkwell::values::Operand::Block(_) => {
+                unreachable!("expected value operand")
+            }
+        };
+
+        let err =
+            parse_gep(operand).expect_err("percent-prefixed LLVM SSA names should be ignored");
+        assert_eq!(err, "Pointer does not reference a named global value");
+    }
+
     fn get_qir_bytes(ll_path: &Path) -> Vec<u8> {
         let ll = fs::read_to_string(ll_path).expect("Failed to read input LLVM IR file");
         qir_ll_to_bc(&ll).expect("Failed to convert LLVM IR to bitcode")
@@ -1787,6 +2119,72 @@ mod tests {
 
         assert!(qir_qis::validate_qir(qir_bytes.clone().into(), None).is_err());
         assert!(qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).is_err());
+    }
+
+    #[test]
+    fn test_native_qir_to_qis_call_rejects_unknown_external_qis_decl() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+        let fn_type = context.void_type().fn_type(&[], false);
+        let defined_fn = module.add_function("defined_fn", fn_type, None);
+        let entry = context.append_basic_block(defined_fn, "entry");
+        builder.position_at_end(entry);
+
+        let unknown_decl = module.add_function("__quantum__qis__mystery__body", fn_type, None);
+        let call = builder
+            .build_call(unknown_decl, &[], "unknown_call")
+            .expect("call should build");
+
+        let err = native_qir_to_qis_call(
+            &context,
+            &module,
+            call.try_as_basic_value().unwrap_instruction(),
+            "__quantum__qis__mystery__body",
+            defined_fn,
+        )
+        .expect_err("unknown external declaration should fail");
+        assert!(err.contains("Unsupported function call"));
+    }
+
+    #[test]
+    fn test_process_ir_defined_q_fns_skips_entry_function() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+        let fn_type = context.void_type().fn_type(&[], false);
+
+        let unknown_decl = module.add_function("__quantum__qis__mystery__body", fn_type, None);
+        let entry_fn = module.add_function("Entry_Point_Name", fn_type, None);
+        let entry_block = context.append_basic_block(entry_fn, "entry");
+        builder.position_at_end(entry_block);
+        let _ = builder
+            .build_call(unknown_decl, &[], "unknown_call")
+            .expect("call should build");
+        let _ = builder.build_return(None);
+
+        process_ir_defined_q_fns(&context, &module, entry_fn)
+            .expect("entry function should be excluded from IR-defined helper processing");
+    }
+
+    #[test]
+    fn test_prune_unused_ir_qis_helpers_keeps_declarations() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let fn_type = context.void_type().fn_type(&[], false);
+
+        let decl = module.add_function("__quantum__qis__h__body", fn_type, None);
+        prune_unused_ir_qis_helpers(&module);
+
+        assert!(
+            module.get_function("__quantum__qis__h__body").is_some(),
+            "unused declarations should not be pruned"
+        );
+        assert_eq!(
+            decl.count_basic_blocks(),
+            0,
+            "the retained helper should remain a declaration"
+        );
     }
 
     #[test]

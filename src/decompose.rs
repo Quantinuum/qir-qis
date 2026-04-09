@@ -768,3 +768,147 @@ fn define_ccx_gate<'ctx>(
     let _ = builder.build_return(None);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::add_decompositions;
+    #[cfg(not(windows))]
+    use inkwell::context::Context;
+    #[cfg(not(windows))]
+    use inkwell::values::{AnyValue, CallSiteValue, Operand};
+    #[cfg(not(windows))]
+    use std::f64::consts::PI;
+
+    #[cfg(not(windows))]
+    fn call_signatures(fn_name: &str) -> Vec<(String, Vec<String>)> {
+        let context = Context::create();
+        let module = context.create_module("decompose_test");
+        add_decompositions(&context, &module).expect("decompositions should build");
+        let function = module
+            .get_function(fn_name)
+            .expect("decomposition function should exist");
+
+        function
+            .get_basic_blocks()
+            .into_iter()
+            .flat_map(inkwell::basic_block::BasicBlock::get_instructions)
+            .filter_map(|instr| {
+                let call = CallSiteValue::try_from(instr).ok()?;
+                let called_name = call
+                    .get_called_fn_value()?
+                    .get_name()
+                    .to_str()
+                    .ok()?
+                    .to_string();
+                let args = (0..call.count_arguments())
+                    .filter_map(|idx| match instr.get_operand(idx) {
+                        Some(Operand::Value(value)) => Some(value.print_to_string().to_string()),
+                        Some(Operand::Block(_)) | None => None,
+                    })
+                    .collect::<Vec<_>>();
+                Some((called_name, args))
+            })
+            .collect()
+    }
+
+    #[cfg(not(windows))]
+    fn printed_const(value: f64) -> String {
+        let context = Context::create();
+        context
+            .f64_type()
+            .const_float(value)
+            .print_to_string()
+            .to_string()
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_ry_decomposition_uses_rxy_with_positive_half_pi() {
+        let calls = call_signatures("__quantum__qis__ry__body");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "__quantum__qis__rxy__body");
+        assert_eq!(calls[0].1[1], printed_const(PI / 2.0));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_y_decomposition_uses_pi_and_positive_half_pi() {
+        let calls = call_signatures("__quantum__qis__y__body");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "__quantum__qis__rxy__body");
+        assert_eq!(calls[0].1[0], printed_const(PI));
+        assert_eq!(calls[0].1[1], printed_const(PI / 2.0));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_phase_decompositions_use_expected_signed_angles() {
+        let s = call_signatures("__quantum__qis__s__body");
+        let s_adj = call_signatures("__quantum__qis__s__adj");
+        let t = call_signatures("__quantum__qis__t__body");
+        let t_adj = call_signatures("__quantum__qis__t__adj");
+
+        assert_eq!(s[0].1[0], printed_const(PI / 2.0));
+        assert_eq!(s_adj[0].1[0], printed_const(PI / -2.0));
+        assert_eq!(t[0].1[0], printed_const(PI / 4.0));
+        assert_eq!(t_adj[0].1[0], printed_const(PI / -4.0));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_cz_decomposition_contains_expected_native_sequence() {
+        let calls = call_signatures("__quantum__qis__cz__body");
+        assert_eq!(calls[0].0, "__quantum__qis__rzz__body");
+        assert_eq!(calls[0].1[0], printed_const(PI / 2.0));
+        assert_eq!(calls[1].0, "__quantum__qis__rz__body");
+        assert_eq!(calls[1].1[0], printed_const(PI / -2.0));
+        assert_eq!(calls[2].0, "__quantum__qis__rz__body");
+        assert_eq!(calls[2].1[0], printed_const(PI / -2.0));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_ccx_decomposition_contains_expected_fractional_pi_angles() {
+        let calls = call_signatures("__quantum__qis__ccx__body");
+        let printed_args = calls
+            .iter()
+            .flat_map(|(_, args)| args.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(printed_args.contains(&printed_const(PI / -2.0)));
+        assert!(printed_args.contains(&printed_const(PI / 4.0)));
+        assert!(printed_args.contains(&printed_const(PI / -4.0)));
+        assert!(printed_args.contains(&printed_const(3.0 * PI / -4.0)));
+        assert_eq!(
+            printed_args
+                .iter()
+                .filter(|arg| *arg == &printed_const(PI / 2.0))
+                .count(),
+            5,
+            "CCX decomposition should emit five +pi/2 angle operands"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_rx_and_ry_decompositions_are_materialized() {
+        let rx = call_signatures("__quantum__qis__rx__body");
+        let ry = call_signatures("__quantum__qis__ry__body");
+
+        assert!(!rx.is_empty());
+        assert!(!ry.is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_add_decompositions_windows_smoke() {
+        let context = inkwell::context::Context::create();
+        let module = context.create_module("decompose_windows_smoke");
+        add_decompositions(&context, &module).expect("decompositions should build on Windows");
+
+        assert!(module.get_function("__quantum__qis__ry__body").is_some());
+        assert!(module.get_function("__quantum__qis__ccx__body").is_some());
+    }
+}

@@ -71,6 +71,12 @@ jobs:
           echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
+        if: runner.os != 'Windows'
+      - uses: cargo-bins/cargo-binstall@v1.17.7
+        if: runner.os == 'Windows'
+      - name: Install cargo-nextest
+        if: runner.os == 'Windows'
+        run: cargo binstall --no-confirm --force cargo-nextest
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-rust-${{ runner.os }}-${{ env.LLVM_RUST_CACHE_FAMILY }}

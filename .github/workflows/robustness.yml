@@ -1,0 +1,199 @@
+name: Robustness
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 1"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "fuzz/**"
+      - "Makefile"
+      - ".github/workflows/robustness.yml"
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "fuzz/**"
+      - "Makefile"
+      - ".github/workflows/robustness.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  LLVM_VERSION: "21.1.8"
+  LLVM_SYS_PREFIX_ENV_VAR: "LLVM_SYS_211_PREFIX"
+  LLVM_LINUX_CACHE_KEY_SUFFIX: "robustness-linux-shared-v1"
+
+jobs:
+  fuzz-smoke:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - qir_ll_to_bc
+          - validate_qir
+          - parse_wasm_functions
+          - qir_to_qis
+          - get_entry_attributes
+          - validate_fixture_with_wasm
+          - mutated_fixture_bitcode
+          - mutated_fixture_contracts
+          - declared_qis_calls
+          - entry_contracts
+          - result_index_contracts
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup LLVM
+        uses: ./.github/actions/setup-llvm
+        with:
+          llvm-version: ${{ env.LLVM_VERSION }}
+          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
+          enable-macos: "false"
+          enable-windows: "false"
+          linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
+      - name: Configure linker flags
+        run: |
+          llvm_root="${LLVM_PATH}"
+          echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
+      - uses: cargo-bins/cargo-binstall@v1.17.7
+      - name: Install cargo-fuzz
+        run: cargo binstall --no-confirm --force cargo-fuzz
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Detect Rust host target
+        run: |
+          echo "RUST_HOST_TARGET=$(rustc -vV | grep '^host' | cut -d' ' -f2)" >>"$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: robustness-fuzz-${{ runner.os }}-llvm21
+          cache-on-failure: true
+          cache-workspace-crates: true
+          cache-targets: true
+      - name: Fuzz check
+        run: cargo +nightly fuzz check --target "${RUST_HOST_TARGET}" ${{ matrix.target }}
+      - name: Fuzz smoke
+        run: cargo +nightly fuzz run --target "${RUST_HOST_TARGET}" ${{ matrix.target }} -- -max_total_time=20
+
+  fuzz-long:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - qir_ll_to_bc
+          - validate_qir
+          - parse_wasm_functions
+          - qir_to_qis
+          - get_entry_attributes
+          - validate_fixture_with_wasm
+          - mutated_fixture_bitcode
+          - mutated_fixture_contracts
+          - declared_qis_calls
+          - entry_contracts
+          - result_index_contracts
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup LLVM
+        uses: ./.github/actions/setup-llvm
+        with:
+          llvm-version: ${{ env.LLVM_VERSION }}
+          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
+          enable-macos: "false"
+          enable-windows: "false"
+          linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
+      - name: Configure linker flags
+        run: |
+          llvm_root="${LLVM_PATH}"
+          echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
+      - uses: cargo-bins/cargo-binstall@v1.17.7
+      - name: Install cargo-fuzz
+        run: cargo binstall --no-confirm --force cargo-fuzz
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Detect Rust host target
+        run: |
+          echo "RUST_HOST_TARGET=$(rustc -vV | grep '^host' | cut -d' ' -f2)" >>"$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: robustness-fuzz-${{ runner.os }}-llvm21
+          cache-on-failure: true
+          cache-workspace-crates: true
+          cache-targets: true
+      - name: Fuzz check
+        run: cargo +nightly fuzz check --target "${RUST_HOST_TARGET}" ${{ matrix.target }}
+      - name: Fuzz campaign
+        id: fuzz_run
+        continue-on-error: true
+        run: cargo +nightly fuzz run --target "${RUST_HOST_TARGET}" ${{ matrix.target }} -- -max_total_time=300
+      - name: Upload fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}-artifacts
+          path: |
+            fuzz/artifacts/${{ matrix.target }}
+            fuzz/corpus/${{ matrix.target }}
+          if-no-files-found: ignore
+      - name: Fail on campaign crash
+        if: steps.fuzz_run.outcome == 'failure'
+        run: exit 1
+
+  mutants:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup LLVM
+        uses: ./.github/actions/setup-llvm
+        with:
+          llvm-version: ${{ env.LLVM_VERSION }}
+          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
+          enable-macos: "false"
+          enable-windows: "false"
+          linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
+      - name: Configure linker flags
+        run: |
+          llvm_root="${LLVM_PATH}"
+          echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: cargo-bins/cargo-binstall@v1.17.7
+      - name: Install cargo-mutants
+        run: cargo binstall --no-confirm --force cargo-mutants
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: robustness-mutants-${{ runner.os }}-llvm21
+          cache-on-failure: true
+          cache-workspace-crates: true
+          cache-targets: true
+      - name: Run cargo-mutants
+        run: cargo mutants --package qir-qis --all-features --test-tool cargo

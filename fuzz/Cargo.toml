@@ -1,0 +1,93 @@
+[package]
+name = "qir-qis-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+qir-qis = { path = "..", default-features = false, features = ["wasm"] }
+wasm-encoder = "0.244.0"
+
+[[bin]]
+name = "qir_ll_to_bc"
+path = "fuzz_targets/qir_ll_to_bc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "validate_qir"
+path = "fuzz_targets/validate_qir.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_wasm_functions"
+path = "fuzz_targets/parse_wasm_functions.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "qir_to_qis"
+path = "fuzz_targets/qir_to_qis.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "get_entry_attributes"
+path = "fuzz_targets/get_entry_attributes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "validate_fixture_with_wasm"
+path = "fuzz_targets/validate_fixture_with_wasm.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mutated_fixture_bitcode"
+path = "fuzz_targets/mutated_fixture_bitcode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mutated_fixture_contracts"
+path = "fuzz_targets/mutated_fixture_contracts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "declared_qis_calls"
+path = "fuzz_targets/declared_qis_calls.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "entry_contracts"
+path = "fuzz_targets/entry_contracts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "result_index_contracts"
+path = "fuzz_targets/result_index_contracts.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
