@@ -175,7 +175,6 @@ jobs:
           echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
           echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@nextest
       - uses: cargo-bins/cargo-binstall@v1.17.7
       - name: Install cargo-mutants
         run: cargo binstall --no-confirm --force cargo-mutants
