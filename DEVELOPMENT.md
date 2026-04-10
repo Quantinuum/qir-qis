@@ -103,10 +103,7 @@ The repo also supports three complementary robustness checks:
 # Mutation testing (install cargo-mutants first)
 make mutants
 
-# Build-check a single fuzz target (requires nightly + cargo-fuzz)
-make fuzz-check FUZZ_TARGET=validate_qir
-
-# Run a bounded fuzz target locally
+# Run a bounded fuzz target locally (requires nightly + cargo-fuzz)
 make fuzz FUZZ_TARGET=qir_to_qis FUZZ_RUN_ARGS=-max_total_time=30
 
 # Run all current fuzz targets with short local smoke budgets

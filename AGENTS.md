@@ -69,7 +69,7 @@ For most semantic changes:
 
 When touching fuzzing or robustness workflows, also run a focused subset such as:
 
-- `make fuzz-check FUZZ_TARGET=<target>`
+- `make fuzz FUZZ_TARGET=<target> FUZZ_RUN_ARGS=-max_total_time=15`
 - `cargo +nightly fuzz check --target $(rustc -vV | sed -n 's/^host: //p') <target>`
 
 When touching mutation coverage or exclusions:
