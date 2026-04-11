@@ -1,7 +1,8 @@
-PYTHON = uv run --no-sync -- python
+PYTHON = uv run -- python
 RUST_HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 FUZZ_TARGET ?= validate_qir
 FUZZ_RUN_ARGS ?= -max_total_time=30
+FUZZ_ALL_TARGETS := $(basename $(notdir $(wildcard fuzz/fuzz_targets/*.rs)))
 
 .PHONY: compile
 # Usage:
@@ -22,17 +23,13 @@ test:
 mutants:
 	cargo mutants --package qir-qis --all-features --test-tool cargo
 
-.PHONY: fuzz-check
-fuzz-check:
-	cargo +nightly fuzz check --target $(RUST_HOST_TARGET) $(FUZZ_TARGET)
-
 .PHONY: fuzz
 fuzz:
 	cargo +nightly fuzz run --target $(RUST_HOST_TARGET) $(FUZZ_TARGET) -- $(FUZZ_RUN_ARGS)
 
 .PHONY: fuzz-all
 fuzz-all:
-	@for target in qir_ll_to_bc validate_qir parse_wasm_functions qir_to_qis get_entry_attributes validate_fixture_with_wasm mutated_fixture_bitcode mutated_fixture_contracts declared_qis_calls entry_contracts result_index_contracts; do \
+	@for target in $(FUZZ_ALL_TARGETS); do \
 		cargo +nightly fuzz check --target $(RUST_HOST_TARGET) "$$target" || exit 1; \
 		cargo +nightly fuzz run --target $(RUST_HOST_TARGET) "$$target" -- -max_total_time=15 || exit 1; \
 	done
