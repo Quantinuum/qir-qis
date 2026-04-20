@@ -1,0 +1,5 @@
+# Exclude LLVM test fixtures from language stats without hiding their diffs.
+tests/data/** linguist-vendored
+
+# Snapshot outputs are generated artifacts and can be hidden in diffs.
+tests/snaps/** linguist-generated
