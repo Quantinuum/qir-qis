@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 qir-qis = { path = "..", default-features = false, features = ["wasm"] }
-wasm-encoder = "0.244.0"
+wasm-encoder = "0.247.0"
 
 [[bin]]
 name = "qir_ll_to_bc"

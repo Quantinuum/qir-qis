@@ -24,6 +24,8 @@ use llvm_sys::{
     prelude::LLVMAttributeRef,
 };
 
+use crate::decode_llvm_c_string;
+
 pub const INIT_QARRAY_FN: &str = "qir_qis.init_qubit";
 pub const LOAD_QUBIT_FN: &str = "qir_qis.load_qubit";
 pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
@@ -262,7 +264,11 @@ pub fn get_string_attrs(function: FunctionValue) -> Vec<Attribute> {
 pub fn get_required_num_qubits(function: FunctionValue) -> Option<u32> {
     function
         .get_string_attribute(AttributeLoc::Function, "required_num_qubits")
-        .and_then(|attr| attr.get_string_value().to_str().ok()?.parse::<u32>().ok())
+        .and_then(|attr| {
+            decode_llvm_c_string(attr.get_string_value())?
+                .parse::<u32>()
+                .ok()
+        })
 }
 
 /// Extracts and validates the `required_num_qubits` attribute from a function.
@@ -273,10 +279,8 @@ pub fn get_required_num_qubits_strict(function: FunctionValue) -> Result<u32, St
     let attr = function
         .get_string_attribute(AttributeLoc::Function, "required_num_qubits")
         .ok_or("Missing or invalid required_num_qubits attribute")?;
-    let raw = attr
-        .get_string_value()
-        .to_str()
-        .map_err(|_| "Invalid required_num_qubits attribute (not UTF-8)".to_string())?;
+    let raw = decode_llvm_c_string(attr.get_string_value())
+        .ok_or_else(|| "Invalid required_num_qubits attribute (not UTF-8)".to_string())?;
     raw.parse::<u32>()
         .map_err(|_| format!("Invalid required_num_qubits attribute value: {raw}"))
 }
@@ -548,7 +552,11 @@ pub fn get_result_vars(
 ) -> Result<Vec<Option<(BasicValueEnum, Option<BasicValueEnum>)>>, String> {
     let num_results = entry_fn
         .get_string_attribute(AttributeLoc::Function, "required_num_results")
-        .and_then(|attr| attr.get_string_value().to_str().ok()?.parse::<u32>().ok())
+        .and_then(|attr| {
+            decode_llvm_c_string(attr.get_string_value())?
+                .parse::<u32>()
+                .ok()
+        })
         .ok_or("Missing required_num_results")?;
 
     Ok(vec![None; num_results as usize])
@@ -1935,12 +1943,7 @@ entry:
 "#;
 
         let context = Context::create();
-        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
-            ll_text.as_bytes(),
-            "gep",
-        );
-        let module = context
-            .create_module_from_ir(memory_buffer)
+        let module = crate::create_module_from_ir_text(&context, ll_text, "gep")
             .expect("Failed to parse inline IR");
         let func = module
             .get_function("test_func")
@@ -1979,12 +1982,7 @@ entry:
 "#;
 
         let context = Context::create();
-        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
-            ll_text.as_bytes(),
-            "gep_empty_label",
-        );
-        let module = context
-            .create_module_from_ir(memory_buffer)
+        let module = crate::create_module_from_ir_text(&context, ll_text, "gep_empty_label")
             .expect("Failed to parse inline IR");
         let func = module
             .get_function("test_func")
@@ -2023,12 +2021,7 @@ entry:
 "#;
 
         let context = Context::create();
-        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
-            ll_text.as_bytes(),
-            "gep_named",
-        );
-        let module = context
-            .create_module_from_ir(memory_buffer)
+        let module = crate::create_module_from_ir_text(&context, ll_text, "gep_named")
             .expect("Failed to parse inline IR");
         let func = module
             .get_function("test_func")
@@ -2067,12 +2060,7 @@ entry:
 ";
 
         let context = Context::create();
-        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
-            ll_text.as_bytes(),
-            "gep_percent_name",
-        );
-        let module = context
-            .create_module_from_ir(memory_buffer)
+        let module = crate::create_module_from_ir_text(&context, ll_text, "gep_percent_name")
             .expect("Failed to parse inline IR");
         let func = module
             .get_function("test_func")

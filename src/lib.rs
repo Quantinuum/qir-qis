@@ -71,6 +71,7 @@ mod aux {
             handle_tuple_or_array_output, parse_gep, record_classical_output, replace_rxy_call,
             replace_rz_call, replace_rzz_call,
         },
+        decode_llvm_bytes,
         utils::extract_operands,
     };
 
@@ -288,7 +289,9 @@ mod aux {
         let mut malformed = BTreeSet::new();
 
         for entry in module.get_global_metadata("llvm.module.flags") {
-            let node_values = entry.get_node_values();
+            let Some(node_values) = entry.get_node_values() else {
+                continue;
+            };
             let flag_name = extract_module_flag_name(&node_values);
 
             if node_values.len() != 3 {
@@ -318,7 +321,7 @@ mod aux {
             .get(1)?
             .into_metadata_value()
             .get_string_value()
-            .and_then(|value| value.to_str().ok())
+            .and_then(decode_llvm_bytes)
             .map(str::to_owned)
     }
 
@@ -338,7 +341,7 @@ mod aux {
             }
             BasicMetadataValueEnum::MetadataValue(value) => value
                 .get_string_value()
-                .and_then(|string| string.to_str().ok())
+                .and_then(decode_llvm_bytes)
                 .map(|string| format!("!\"{string}\"")),
             BasicMetadataValueEnum::ArrayValue(_)
             | BasicMetadataValueEnum::FloatValue(_)
@@ -1234,6 +1237,44 @@ mod aux {
     }
 }
 
+pub(crate) fn decode_llvm_bytes(value: &[u8]) -> Option<&str> {
+    std::str::from_utf8(value).ok()
+}
+
+pub(crate) fn decode_llvm_c_string(value: &std::ffi::CStr) -> Option<&str> {
+    value.to_str().ok()
+}
+
+pub(crate) fn create_module_from_ir_text<'ctx>(
+    ctx: &'ctx inkwell::context::Context,
+    ll_text: &str,
+    name: &str,
+) -> Result<inkwell::module::Module<'ctx>, String> {
+    let mut bytes = ll_text.as_bytes().to_vec();
+    if !bytes.ends_with(&[0]) {
+        bytes.push(0);
+    }
+    let memory_buffer =
+        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(&bytes, name);
+    ctx.create_module_from_ir(memory_buffer)
+        .map_err(|e| format!("Failed to create module from LLVM IR: {e}"))
+}
+
+pub(crate) fn parse_bitcode_module<'ctx>(
+    ctx: &'ctx inkwell::context::Context,
+    bitcode: &[u8],
+    name: &str,
+) -> Result<inkwell::module::Module<'ctx>, String> {
+    let mut bytes = bitcode.to_vec();
+    if !bytes.ends_with(&[0]) {
+        bytes.push(0);
+    }
+    let memory_buffer =
+        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(&bytes, name);
+    inkwell::module::Module::parse_bitcode_from_buffer(&memory_buffer, ctx)
+        .map_err(|e| format!("Failed to parse bitcode: {e}"))
+}
+
 /// Core QIR to QIS translation logic.
 ///
 /// # Arguments
@@ -1262,15 +1303,11 @@ pub fn qir_to_qis(
         opt::optimize,
         utils::add_generator_metadata,
     };
-    use inkwell::{
-        attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
-    };
+    use inkwell::{attributes::AttributeLoc, context::Context};
     use std::{collections::BTreeMap, env};
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
-    let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
-        .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
+    let module = parse_bitcode_module(&ctx, bc_bytes, "bitcode")?;
     crate::llvm_verify::verify_module(&module, "LLVM module verification failed after parse")?;
 
     add_decompositions(&ctx, &module)
@@ -1365,14 +1402,10 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
         aux::{validate_functions, validate_module_flags, validate_module_layout_and_triple},
         convert::{ENTRY_ATTRIBUTE_KEYS, find_entry_function},
     };
-    use inkwell::{
-        attributes::AttributeLoc, context::Context, memory_buffer::MemoryBuffer, module::Module,
-    };
+    use inkwell::{attributes::AttributeLoc, context::Context};
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
-    let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
-        .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
+    let module = parse_bitcode_module(&ctx, bc_bytes, "bitcode")?;
     let mut errors = Vec::new();
 
     validate_module_layout_and_triple(&module);
@@ -1401,7 +1434,11 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
         ] {
             if entry_fn
                 .get_string_attribute(AttributeLoc::Function, attr)
-                .and_then(|a| a.get_string_value().to_str().ok()?.parse::<u32>().ok())
+                .and_then(|a| {
+                    decode_llvm_c_string(a.get_string_value())?
+                        .parse::<u32>()
+                        .ok()
+                })
                 == Some(0)
             {
                 errors.push(format!("Entry function must have at least one {type_}"));
@@ -1431,13 +1468,10 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
 /// # Errors
 /// Returns an error string if the LLVM IR is invalid.
 pub fn qir_ll_to_bc(ll_text: &str) -> Result<Vec<u8>, String> {
-    use inkwell::{context::Context, memory_buffer::MemoryBuffer};
+    use inkwell::context::Context;
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(ll_text.as_bytes(), "qir");
-    let module = ctx
-        .create_module_from_ir(memory_buffer)
-        .map_err(|e| format!("Failed to create module from LLVM IR: {e}"))?;
+    let module = create_module_from_ir_text(&ctx, ll_text, "qir")?;
 
     Ok(module.write_bitcode_to_memory().as_slice().to_vec())
 }
@@ -1496,13 +1530,11 @@ pub fn get_entry_attributes(
     bc_bytes: &[u8],
 ) -> Result<std::collections::BTreeMap<String, Option<String>>, String> {
     use crate::convert::{find_entry_function, get_string_attrs};
-    use inkwell::{context::Context, memory_buffer::MemoryBuffer, module::Module};
+    use inkwell::context::Context;
     use std::collections::BTreeMap;
 
     let ctx = Context::create();
-    let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bc_bytes, "bitcode");
-    let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
-        .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
+    let module = parse_bitcode_module(&ctx, bc_bytes, "bitcode")?;
 
     let mut metadata = BTreeMap::new();
     if let Ok(entry_fn) = find_entry_function(&module) {
@@ -1651,8 +1683,11 @@ define_stub_info_gatherer!(stub_info);
 mod test {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    use crate::{get_entry_attributes, qir_ll_to_bc, qir_to_qis, validate_qir};
-    use inkwell::{context::Context, memory_buffer::MemoryBuffer, module::Module};
+    use crate::{
+        create_module_from_ir_text, get_entry_attributes, parse_bitcode_module, qir_ll_to_bc,
+        qir_to_qis, validate_qir,
+    };
+    use inkwell::context::Context;
     use proptest::prelude::*;
     use std::{collections::BTreeMap, sync::LazyLock};
     #[cfg(feature = "wasm")]
@@ -1692,9 +1727,7 @@ mod test {
 
     fn verify_bitcode_module(bitcode: &[u8], name: &str) -> Result<(), String> {
         let ctx = Context::create();
-        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(bitcode, name);
-        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
-            .map_err(|e| format!("Failed to parse bitcode: {e}"))?;
+        let module = parse_bitcode_module(&ctx, bitcode, name)?;
         crate::llvm_verify::verify_module(&module, "LLVM verifier rejected translated module")
     }
 
@@ -1922,8 +1955,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let qis_bytes = qir_to_qis(&bc_bytes, opt_level, target, None).unwrap();
 
         let ctx = Context::create();
-        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&qis_bytes, "qis");
-        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx).unwrap();
+        let module = parse_bitcode_module(&ctx, &qis_bytes, "qis").unwrap();
         let entry_fn = module.get_function("___user_qir_Entry_Point_Name").unwrap();
 
         assert!(
@@ -1987,8 +2019,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             qir_to_qis(&input_bc, 0, "native", None).expect("QIR 2.0 base fixture should compile");
 
         let ctx = Context::create();
-        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&output_bc, "qis_module");
-        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+        let module = parse_bitcode_module(&ctx, &output_bc, "qis_module")
             .expect("Compiled QIS bitcode should parse");
         assert!(module.get_function("qmain").is_some());
         assert!(module.get_function("qir_qis.load_qubit").is_some());
@@ -2006,8 +2037,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             .expect("QIR 2.0 adaptive fixture should compile");
 
         let ctx = Context::create();
-        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&output_bc, "qis_module");
-        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+        let module = parse_bitcode_module(&ctx, &output_bc, "qis_module")
             .expect("Compiled QIS bitcode should parse");
         assert!(module.get_function("qmain").is_some());
         assert!(module.get_function("___lazy_measure").is_some());
@@ -2036,7 +2066,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     #[test]
     fn test_module_flag_parser_reads_existing_flags() {
         use crate::aux::collect_module_flags;
-        use inkwell::{context::Context, memory_buffer::MemoryBuffer};
+        use inkwell::context::Context;
 
         let ll_text = r#"
 define i64 @Entry_Point_Name() #0 {
@@ -2054,9 +2084,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 "#;
 
         let ctx = Context::create();
-        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(ll_text.as_bytes(), "qir");
-        let module = ctx
-            .create_module_from_ir(memory_buffer)
+        let module = create_module_from_ir_text(&ctx, ll_text, "qir")
             .expect("Failed to create module from inline IR");
 
         let flags = collect_module_flags(&module);
@@ -2201,8 +2229,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             qir_to_qis(&bc_bytes, 0, "native", None).expect("bool output should compile");
 
         let ctx = Context::create();
-        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&output_bc, "qis_module");
-        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+        let module = parse_bitcode_module(&ctx, &output_bc, "qis_module")
             .expect("Compiled QIS bitcode should parse");
         assert!(module.get_function("print_bool").is_some());
 
@@ -2478,8 +2505,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             qir_to_qis(&bc_bytes, 0, "native", None).expect("u1q synonym should compile");
 
         let ctx = Context::create();
-        let memory_buffer = MemoryBuffer::create_from_memory_range_copy(&output_bc, "qis_module");
-        let module = Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+        let module = parse_bitcode_module(&ctx, &output_bc, "qis_module")
             .expect("Compiled QIS bitcode should parse");
         assert!(module.get_function("___rxy").is_some());
 
