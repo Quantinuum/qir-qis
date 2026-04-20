@@ -247,7 +247,11 @@ mod aux {
         }
     }
 
-    pub fn validate_result_slot_usage(entry_fn: FunctionValue, errors: &mut Vec<String>) {
+    pub fn validate_result_slot_usage(
+        module: &Module,
+        entry_fn: FunctionValue,
+        errors: &mut Vec<String>,
+    ) {
         let required_num_results = match get_required_num_results(entry_fn) {
             Ok(required_num_results) => required_num_results,
             Err(err) => {
@@ -256,59 +260,64 @@ mod aux {
             }
         };
 
-        for bb in entry_fn.get_basic_blocks() {
-            for instr in bb.get_instructions() {
-                let Ok(call) = CallSiteValue::try_from(instr) else {
-                    continue;
-                };
-                let Some(fn_name) = call.get_called_fn_value().and_then(|f| {
-                    f.as_global_value()
-                        .get_name()
-                        .to_str()
-                        .ok()
-                        .map(ToOwned::to_owned)
-                }) else {
-                    continue;
-                };
-
-                let result_operand_index = match fn_name.as_str() {
-                    "__quantum__qis__mz__body"
-                    | "__quantum__qis__m__body"
-                    | "__quantum__qis__mresetz__body" => 1,
-                    "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => 0,
-                    _ => continue,
-                };
-
-                let call_args = match extract_operands(&instr) {
-                    Ok(args) => args,
-                    Err(err) => {
-                        errors.push(format!("Failed to inspect `{fn_name}` call: {err}"));
+        for function in module
+            .get_functions()
+            .filter(|f| f.count_basic_blocks() > 0)
+        {
+            for bb in function.get_basic_blocks() {
+                for instr in bb.get_instructions() {
+                    let Ok(call) = CallSiteValue::try_from(instr) else {
                         continue;
-                    }
-                };
-                let Some(result_arg) = call_args.get(result_operand_index).copied() else {
-                    errors.push(format!("Call to `{fn_name}` is missing a result operand"));
-                    continue;
-                };
+                    };
+                    let Some(fn_name) = call.get_called_fn_value().and_then(|f| {
+                        f.as_global_value()
+                            .get_name()
+                            .to_str()
+                            .ok()
+                            .map(ToOwned::to_owned)
+                    }) else {
+                        continue;
+                    };
 
-                let BasicValueEnum::PointerValue(result_ptr) = result_arg else {
-                    errors.push(format!(
-                        "Call to `{fn_name}` has a non-pointer result operand"
-                    ));
-                    continue;
-                };
+                    let result_operand_index = match fn_name.as_str() {
+                        "__quantum__qis__mz__body"
+                        | "__quantum__qis__m__body"
+                        | "__quantum__qis__mresetz__body" => 1,
+                        "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => 0,
+                        _ => continue,
+                    };
 
-                let result_idx = match get_index(result_ptr) {
-                    Ok(idx) => idx,
-                    Err(err) => {
+                    let call_args = match extract_operands(&instr) {
+                        Ok(args) => args,
+                        Err(err) => {
+                            errors.push(format!("Failed to inspect `{fn_name}` call: {err}"));
+                            continue;
+                        }
+                    };
+                    let Some(result_arg) = call_args.get(result_operand_index).copied() else {
+                        errors.push(format!("Call to `{fn_name}` is missing a result operand"));
+                        continue;
+                    };
+
+                    let BasicValueEnum::PointerValue(result_ptr) = result_arg else {
                         errors.push(format!(
-                            "Failed to inspect result operand for `{fn_name}`: {err}"
+                            "Call to `{fn_name}` has a non-pointer result operand"
                         ));
                         continue;
+                    };
+
+                    let result_idx = match get_index(result_ptr) {
+                        Ok(idx) => idx,
+                        Err(err) => {
+                            errors.push(format!(
+                                "Failed to inspect result operand for `{fn_name}`: {err}"
+                            ));
+                            continue;
+                        }
+                    };
+                    if let Err(err) = checked_result_index(result_idx, required_num_results) {
+                        errors.push(err);
                     }
-                };
-                if let Err(err) = checked_result_index(result_idx, required_num_results) {
-                    errors.push(err);
                 }
             }
         }
@@ -1623,7 +1632,7 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
     let wasm_fns = get_wasm_functions(wasm_bytes)?;
 
     validate_functions(&module, entry_fn, &wasm_fns, &mut errors);
-    validate_result_slot_usage(entry_fn, &mut errors);
+    validate_result_slot_usage(&module, entry_fn, &mut errors);
 
     validate_module_flags(&module, &mut errors);
 
@@ -2725,6 +2734,42 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
         let err = validate_qir(&bc_bytes, None)
             .expect_err("invalid required_num_results should fail validation");
         assert!(err.contains("Invalid required_num_results attribute value: abc"));
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_result_usage_in_ir_defined_helper_with_zero_slots() {
+        let ll_text = r#"
+%Qubit = type opaque
+%Result = type opaque
+
+declare i1 @__quantum__rt__read_result(%Result*)
+
+define internal void @helper() {
+entry:
+  %0 = call i1 @__quantum__rt__read_result(%Result* null)
+  ret void
+}
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  call void @helper()
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="0" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None).expect_err(
+            "result usage in IR-defined helpers should still respect required_num_results",
+        );
+        assert!(err.contains("Result index 0 exceeds required_num_results (0)"));
     }
 
     #[test]

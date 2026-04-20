@@ -551,9 +551,11 @@ pub fn get_required_num_results(entry_fn: FunctionValue) -> Result<usize, String
         )
     })?;
 
-    decoded_value
-        .parse::<usize>()
-        .map_err(|_| format!("Invalid required_num_results attribute value: {decoded_value}"))
+    let required_num_results = decoded_value
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid required_num_results attribute value: {decoded_value}"))?;
+
+    Ok(required_num_results as usize)
 }
 
 /// Retrieves the result SSA variables from the entry function.
@@ -1394,6 +1396,23 @@ mod tests {
         assert_eq!(
             result.unwrap_err(),
             "Invalid required_num_results attribute value: abc"
+        );
+    }
+
+    #[test]
+    fn test_get_required_num_results_errors_on_out_of_range_attr() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let fn_type = context.void_type().fn_type(&[], false);
+        let func = module.add_function("entry", fn_type, None);
+        let attr = context.create_string_attribute("required_num_results", "4294967296");
+        func.add_attribute(AttributeLoc::Function, attr);
+
+        let result = get_required_num_results(func);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid required_num_results attribute value: 4294967296"
         );
     }
 
