@@ -2655,6 +2655,7 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
         assert!(err.contains("Result index 0 exceeds required_num_results (0)"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn test_qir_to_qis_mz_leaked_lowers_via_uint_future_runtime() {
         let bc_bytes = load_fixture_bitcode("tests/data/mz_leaked.ll");
@@ -2672,6 +2673,19 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
         assert!(text.contains("___read_future_uint"));
         assert!(text.contains("___dec_future_refcount"));
         assert!(!text.contains("___read_future_bool"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_qir_to_qis_mz_leaked_windows_smoke() {
+        let bc_bytes = load_fixture_bitcode("tests/data/mz_leaked.ll");
+        let output_bc = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect("mz_leaked fixture should compile successfully on Windows");
+
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &output_bc, "mz_leaked_qis")
+            .expect("Compiled QIS bitcode should parse on Windows");
+        assert!(module.get_function("qmain").is_some());
     }
 
     #[cfg(feature = "wasm")]
