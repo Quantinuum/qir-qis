@@ -534,6 +534,30 @@ fn build_load_qbit<'a>(
         .map_err(|e| format!("Failed to build load instruction: {e}"))
 }
 
+/// Parses and returns the `required_num_results` attribute from the entry function.
+///
+/// # Errors
+/// Returns an error if the `required_num_results` attribute is missing or invalid.
+pub fn get_required_num_results(entry_fn: FunctionValue) -> Result<usize, String> {
+    let attr = entry_fn
+        .get_string_attribute(AttributeLoc::Function, "required_num_results")
+        .ok_or_else(|| "Missing required_num_results".to_string())?;
+
+    let raw_value = attr.get_string_value();
+    let decoded_value = decode_llvm_c_string(raw_value).ok_or_else(|| {
+        format!(
+            "Invalid required_num_results attribute value: {:?}",
+            attr.get_string_value()
+        )
+    })?;
+
+    let required_num_results = decoded_value
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid required_num_results attribute value: {decoded_value}"))?;
+
+    Ok(required_num_results as usize)
+}
+
 /// Retrieves the result SSA variables from the entry function.
 /// The result variable count is equal to the `required_num_results` attribute.
 ///
@@ -550,16 +574,8 @@ fn build_load_qbit<'a>(
 pub fn get_result_vars(
     entry_fn: FunctionValue,
 ) -> Result<Vec<Option<(BasicValueEnum, Option<BasicValueEnum>)>>, String> {
-    let num_results = entry_fn
-        .get_string_attribute(AttributeLoc::Function, "required_num_results")
-        .and_then(|attr| {
-            decode_llvm_c_string(attr.get_string_value())?
-                .parse::<u32>()
-                .ok()
-        })
-        .ok_or("Missing required_num_results")?;
-
-    Ok(vec![None; num_results as usize])
+    let num_results = get_required_num_results(entry_fn)?;
+    Ok(vec![None; num_results])
 }
 
 /// Frees all qubits in the qubit array.
@@ -1364,6 +1380,40 @@ mod tests {
         let result = get_result_vars(func);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Missing required_num_results");
+    }
+
+    #[test]
+    fn test_get_required_num_results_errors_on_invalid_attr() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let fn_type = context.void_type().fn_type(&[], false);
+        let func = module.add_function("entry", fn_type, None);
+        let attr = context.create_string_attribute("required_num_results", "abc");
+        func.add_attribute(AttributeLoc::Function, attr);
+
+        let result = get_required_num_results(func);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid required_num_results attribute value: abc"
+        );
+    }
+
+    #[test]
+    fn test_get_required_num_results_errors_on_out_of_range_attr() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let fn_type = context.void_type().fn_type(&[], false);
+        let func = module.add_function("entry", fn_type, None);
+        let attr = context.create_string_attribute("required_num_results", "4294967296");
+        func.add_attribute(AttributeLoc::Function, attr);
+
+        let result = get_required_num_results(func);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid required_num_results attribute value: 4294967296"
+        );
     }
 
     #[test]
@@ -2228,6 +2278,7 @@ entry:
             #[case("tests/data/base_array.ll")]
             #[case("tests/data/barrier.ll")]
             #[case("tests/data/barrier_multi.ll")]
+            #[case("tests/data/mz_leaked.ll")]
             // Adaptive profile tests
             #[case("tests/data/adaptive.ll")]
             #[case("tests/data/adaptive_ir_fns.ll")]

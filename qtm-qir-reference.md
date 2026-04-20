@@ -135,6 +135,22 @@ rz(-3π/4, %control2);
 rz(π/4, %control1);
 ```
 
+### Leaked Measurement
+
+```llvm
+declare i64 @__quantum__qis__mz_leaked__body(%Qubit*)
+```
+
+`__quantum__qis__mz_leaked__body(%Qubit*)` performs a Z-basis measurement and
+returns an `i64` directly:
+
+- `0` for `|0>`
+- `1` for `|1>`
+- `2` for leaked
+
+Unlike `mz`, it does not consume a `%Result*` slot and can be paired directly
+with `__quantum__rt__int_record_output`.
+
 ### Barrier Instructions
 
 Fixed-arity barrier intrinsics for synchronization:
