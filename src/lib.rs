@@ -1250,12 +1250,15 @@ pub(crate) fn create_module_from_ir_text<'ctx>(
     ll_text: &str,
     name: &str,
 ) -> Result<inkwell::module::Module<'ctx>, String> {
-    let mut bytes = ll_text.as_bytes().to_vec();
-    if !bytes.ends_with(&[0]) {
+    let ll_bytes = ll_text.as_bytes();
+    let memory_buffer = if ll_bytes.ends_with(&[0]) {
+        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(ll_bytes, name)
+    } else {
+        let mut bytes = Vec::with_capacity(ll_bytes.len().saturating_add(1));
+        bytes.extend_from_slice(ll_bytes);
         bytes.push(0);
-    }
-    let memory_buffer =
-        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(&bytes, name);
+        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(&bytes, name)
+    };
     ctx.create_module_from_ir(memory_buffer)
         .map_err(|e| format!("Failed to create module from LLVM IR: {e}"))
 }
@@ -1265,12 +1268,13 @@ pub(crate) fn parse_bitcode_module<'ctx>(
     bitcode: &[u8],
     name: &str,
 ) -> Result<inkwell::module::Module<'ctx>, String> {
-    let mut bytes = bitcode.to_vec();
-    if !bytes.ends_with(&[0]) {
+    let memory_buffer = if bitcode.ends_with(&[0]) {
+        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(bitcode, name)
+    } else {
+        let mut bytes = bitcode.to_vec();
         bytes.push(0);
-    }
-    let memory_buffer =
-        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(&bytes, name);
+        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(&bytes, name)
+    };
     inkwell::module::Module::parse_bitcode_from_buffer(&memory_buffer, ctx)
         .map_err(|e| format!("Failed to parse bitcode: {e}"))
 }
