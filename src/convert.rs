@@ -537,6 +537,22 @@ fn build_load_qbit<'a>(
 /// Retrieves the result SSA variables from the entry function.
 /// The result variable count is equal to the `required_num_results` attribute.
 ///
+/// # Errors
+/// Returns an error if the `required_num_results` attribute is missing or invalid.
+pub fn get_required_num_results(entry_fn: FunctionValue) -> Result<usize, String> {
+    entry_fn
+        .get_string_attribute(AttributeLoc::Function, "required_num_results")
+        .and_then(|attr| {
+            decode_llvm_c_string(attr.get_string_value())?
+                .parse::<usize>()
+                .ok()
+        })
+        .ok_or_else(|| "Missing required_num_results".to_string())
+}
+
+/// Retrieves the result SSA variables from the entry function.
+/// The result variable count is equal to the `required_num_results` attribute.
+///
 /// # Returns
 /// a vector of `Option<(BasicValueEnum, Option<BasicValueEnum>)>`.
 /// Each element in the vector corresponds to a result variable, where:
@@ -550,16 +566,8 @@ fn build_load_qbit<'a>(
 pub fn get_result_vars(
     entry_fn: FunctionValue,
 ) -> Result<Vec<Option<(BasicValueEnum, Option<BasicValueEnum>)>>, String> {
-    let num_results = entry_fn
-        .get_string_attribute(AttributeLoc::Function, "required_num_results")
-        .and_then(|attr| {
-            decode_llvm_c_string(attr.get_string_value())?
-                .parse::<u32>()
-                .ok()
-        })
-        .ok_or("Missing required_num_results")?;
-
-    Ok(vec![None; num_results as usize])
+    let num_results = get_required_num_results(entry_fn)?;
+    Ok(vec![None; num_results])
 }
 
 /// Frees all qubits in the qubit array.

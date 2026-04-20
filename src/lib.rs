@@ -67,9 +67,9 @@ mod aux {
         convert::{
             INIT_QARRAY_FN, LOAD_QUBIT_FN, add_print_call, build_result_global, convert_globals,
             create_reset_call, get_index, get_or_create_function, get_required_num_qubits,
-            get_required_num_qubits_strict, get_result_vars, get_string_label,
-            handle_tuple_or_array_output, parse_gep, record_classical_output, replace_rxy_call,
-            replace_rz_call, replace_rzz_call,
+            get_required_num_qubits_strict, get_required_num_results, get_result_vars,
+            get_string_label, handle_tuple_or_array_output, parse_gep, record_classical_output,
+            replace_rxy_call, replace_rz_call, replace_rzz_call,
         },
         decode_llvm_bytes,
         utils::extract_operands,
@@ -244,6 +244,70 @@ mod aux {
             log::debug!(
                 "External function `{fn_name}` found, leaving as-is for downstream processing"
             );
+        }
+    }
+
+    pub fn validate_result_slot_usage(entry_fn: FunctionValue, errors: &mut Vec<String>) {
+        let Ok(required_num_results) = get_required_num_results(entry_fn) else {
+            errors.push("Missing required_num_results".to_string());
+            return;
+        };
+
+        for bb in entry_fn.get_basic_blocks() {
+            for instr in bb.get_instructions() {
+                let Ok(call) = CallSiteValue::try_from(instr) else {
+                    continue;
+                };
+                let Some(fn_name) = call.get_called_fn_value().and_then(|f| {
+                    f.as_global_value()
+                        .get_name()
+                        .to_str()
+                        .ok()
+                        .map(ToOwned::to_owned)
+                }) else {
+                    continue;
+                };
+
+                let result_operand_index = match fn_name.as_str() {
+                    "__quantum__qis__mz__body"
+                    | "__quantum__qis__m__body"
+                    | "__quantum__qis__mresetz__body" => 1,
+                    "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => 0,
+                    _ => continue,
+                };
+
+                let call_args = match extract_operands(&instr) {
+                    Ok(args) => args,
+                    Err(err) => {
+                        errors.push(format!("Failed to inspect `{fn_name}` call: {err}"));
+                        continue;
+                    }
+                };
+                let Some(result_arg) = call_args.get(result_operand_index).copied() else {
+                    errors.push(format!("Call to `{fn_name}` is missing a result operand"));
+                    continue;
+                };
+
+                let BasicValueEnum::PointerValue(result_ptr) = result_arg else {
+                    errors.push(format!(
+                        "Call to `{fn_name}` has a non-pointer result operand"
+                    ));
+                    continue;
+                };
+
+                let result_idx = match get_index(result_ptr) {
+                    Ok(idx) => idx,
+                    Err(err) => {
+                        errors.push(format!(
+                            "Failed to inspect result operand for `{fn_name}`: {err}"
+                        ));
+                        continue;
+                    }
+                };
+                if let Err(err) = checked_result_index(result_idx, required_num_results) {
+                    errors.push(err);
+                }
+            }
         }
     }
 
@@ -1493,7 +1557,10 @@ fn get_wasm_functions(
 /// Returns an error string if validation fails.
 pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), String> {
     use crate::{
-        aux::{validate_functions, validate_module_flags, validate_module_layout_and_triple},
+        aux::{
+            validate_functions, validate_module_flags, validate_module_layout_and_triple,
+            validate_result_slot_usage,
+        },
         convert::{ENTRY_ATTRIBUTE_KEYS, find_entry_function},
     };
     use inkwell::{attributes::AttributeLoc, context::Context};
@@ -1546,6 +1613,7 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
     let wasm_fns = get_wasm_functions(wasm_bytes)?;
 
     validate_functions(&module, entry_fn, &wasm_fns, &mut errors);
+    validate_result_slot_usage(entry_fn, &mut errors);
 
     validate_module_flags(&module, &mut errors);
 
@@ -2640,7 +2708,7 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
     }
 
     #[test]
-    fn test_qir_to_qis_rejects_zero_required_num_results_for_result_measurement() {
+    fn test_validate_qir_rejects_zero_required_num_results_for_result_measurement() {
         let ll_text = minimal_qir_with_body(
             "1",
             "0",
@@ -2650,9 +2718,61 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
         );
 
         let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
-        let err = qir_to_qis(&bc_bytes, 0, "native", None)
-            .expect_err("result-backed measurements should still require declared result slots");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("result-backed measurements should fail validation without result slots");
         assert!(err.contains("Result index 0 exceeds required_num_results (0)"));
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_zero_required_num_results_for_read_result() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "0",
+            "1",
+            "declare i1 @__quantum__rt__read_result(%Result*)",
+            r"  %0 = call i1 @__quantum__rt__read_result(%Result* null)",
+        );
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("result reads should fail validation without result slots");
+        assert!(err.contains("Result index 0 exceeds required_num_results (0)"));
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_zero_required_num_results_for_result_record_output() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "0",
+            "1",
+            r#"
+declare void @__quantum__rt__result_record_output(%Result*, i8*)
+
+@0 = private constant [4 x i8] c"res\00"
+"#,
+            r"  call void @__quantum__rt__result_record_output(%Result* null, i8* getelementptr inbounds ([4 x i8], [4 x i8]* @0, i64 0, i64 0))",
+        );
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("result output should fail validation without result slots");
+        assert!(err.contains("Result index 0 exceeds required_num_results (0)"));
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_out_of_bounds_result_measurement_index() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "1",
+            "1",
+            "declare void @__quantum__qis__mz__body(%Qubit*, %Result* writeonly)",
+            r"  call void @__quantum__qis__mz__body(%Qubit* null, %Result* writeonly inttoptr (i64 5 to %Result*))",
+        );
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("out-of-bounds result indices should fail during validation");
+        assert!(err.contains("Result index 5 exceeds required_num_results (1)"));
     }
 
     #[cfg(not(windows))]
