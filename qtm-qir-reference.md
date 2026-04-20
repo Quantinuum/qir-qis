@@ -41,6 +41,7 @@ declare void @__quantum__qis__rz__body(double, %Qubit*)
 declare void @__quantum__qis__rzz__body(double, %Qubit*, %Qubit*)
 
 declare void @__quantum__qis__mz__body(%Qubit*, %Result* writeonly)
+declare i64 @__quantum__qis__mz_leaked__body(%Qubit*)
 declare void @__quantum__qis__reset__body(%Qubit*)
 ```
 
@@ -69,6 +70,16 @@ declare void @__quantum__qis__m__body(%Qubit*, %Result* writeonly)
 ; Synonym for __quantum__qis__cx__body
 declare void @__quantum__qis__cnot__body(%Qubit*, %Qubit*)
 ```
+
+`__quantum__qis__mz_leaked__body(%Qubit*)` performs a Z-basis measurement and
+returns an `i64` directly:
+
+- `0` for `|0>`
+- `1` for `|1>`
+- `2` for leaked
+
+Unlike `mz`, it does not consume a `%Result*` slot and can be paired directly
+with `__quantum__rt__int_record_output`.
 
 #### Decompositions
 

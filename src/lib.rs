@@ -87,12 +87,13 @@ mod aux {
         },
     };
 
-    static ALLOWED_QIS_FNS: [&str; 22] = [
+    static ALLOWED_QIS_FNS: [&str; 23] = [
         // Native gates
         "__quantum__qis__rxy__body",
         "__quantum__qis__rz__body",
         "__quantum__qis__rzz__body",
         "__quantum__qis__mz__body",
+        "__quantum__qis__mz_leaked__body",
         "__quantum__qis__reset__body",
         // mz + reset
         "__quantum__qis__mresetz__body",
@@ -523,6 +524,9 @@ mod aux {
             | "__quantum__qis__mresetz__body" => {
                 handle_mz_call(args)?;
             }
+            "__quantum__qis__mz_leaked__body" => {
+                handle_mz_leaked_call(args)?;
+            }
             "__quantum__qis__reset__body" => {
                 handle_reset_call(args)?;
             }
@@ -679,6 +683,92 @@ mod aux {
         }
 
         // Remove original call
+        instr.erase_from_basic_block();
+        Ok(())
+    }
+
+    fn handle_mz_leaked_call(args: &ProcessCallArgs) -> Result<(), String> {
+        let ProcessCallArgs {
+            ctx,
+            module,
+            instr,
+            qubit_array,
+            qubit_array_type,
+            ..
+        } = args;
+        let builder = ctx.create_builder();
+        builder.position_before(instr);
+
+        let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let qubit_ptr = call_args[0].into_pointer_value();
+
+        let q_handle = {
+            let i64_type = ctx.i64_type();
+            let index = get_index(qubit_ptr)?;
+            let index_val = i64_type.const_int(index, false);
+            let elem_ptr = unsafe {
+                builder.build_gep(
+                    *qubit_array_type,
+                    *qubit_array,
+                    &[i64_type.const_zero(), index_val],
+                    "",
+                )
+            }
+            .map_err(|e| format!("Failed to build GEP for qubit handle: {e}"))?;
+            builder
+                .build_load(i64_type, elem_ptr, "qbit")
+                .map_err(|e| format!("Failed to build load for qubit handle: {e}"))?
+        };
+
+        let meas_handle = {
+            let meas_func = get_or_create_function(
+                module,
+                "___lazy_measure_leaked",
+                ctx.i64_type().fn_type(&[ctx.i64_type().into()], false),
+            );
+
+            let call = builder.build_call(meas_func, &[q_handle.into()], "meas_leaked");
+            let call_result = call.map_err(|e| {
+                format!("Failed to build call for lazy leaked measure function: {e}")
+            })?;
+            match call_result.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(bv) => bv,
+                inkwell::values::ValueKind::Instruction(_) => {
+                    return Err("Failed to get basic value from lazy leaked measure call".into());
+                }
+            }
+        };
+
+        let meas_value = {
+            let read_func = get_or_create_function(
+                module,
+                "___read_future_uint",
+                ctx.i64_type().fn_type(&[ctx.i64_type().into()], false),
+            );
+            let call = builder.build_call(read_func, &[meas_handle.into()], "meas_leaked_value");
+            let call_result =
+                call.map_err(|e| format!("Failed to build call for read_future_uint: {e}"))?;
+            match call_result.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(bv) => bv,
+                inkwell::values::ValueKind::Instruction(_) => {
+                    return Err("Failed to get basic value from read_future_uint call".into());
+                }
+            }
+        };
+
+        let dec_func = get_or_create_function(
+            module,
+            "___dec_future_refcount",
+            ctx.void_type().fn_type(&[ctx.i64_type().into()], false),
+        );
+        let _ = builder
+            .build_call(dec_func, &[meas_handle.into()], "")
+            .map_err(|e| format!("Failed to build call for dec_future_refcount: {e}"))?;
+
+        let instruction_val = meas_value
+            .as_instruction_value()
+            .ok_or("Failed to convert leaked measurement value to instruction value")?;
+        instr.replace_all_uses_with(&instruction_val);
         instr.erase_from_basic_block();
         Ok(())
     }
@@ -1431,11 +1521,10 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
             }
         }
 
-        // Check values for non-zero qubits/results
-        for (attr, type_) in [
-            ("required_num_qubits", "qubit"),
-            ("required_num_results", "result"),
-        ] {
+        // `required_num_qubits` must stay positive. `required_num_results`
+        // may be zero for programs that only use classical-returning operations
+        // such as `mz_leaked`.
+        for (attr, type_) in [("required_num_qubits", "qubit")] {
             if entry_fn
                 .get_string_attribute(AttributeLoc::Function, attr)
                 .and_then(|a| {
@@ -1703,6 +1792,7 @@ mod test {
         "tests/data/adaptive.ll",
         "tests/data/qir2_base.ll",
         "tests/data/qir2_adaptive.ll",
+        "tests/data/mz_leaked.ll",
     ];
     static PROPERTY_FIXTURE_BITCODE: LazyLock<BTreeMap<&'static str, Vec<u8>>> =
         LazyLock::new(|| {
@@ -2527,6 +2617,63 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         assert_eq!(err, "Result index 5 exceeds required_num_results (1)");
     }
 
+    #[test]
+    fn test_validate_qir_allows_zero_required_num_results_for_mz_leaked() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "0",
+            "1",
+            r#"
+declare i64 @__quantum__qis__mz_leaked__body(%Qubit*)
+declare void @__quantum__rt__int_record_output(i64, i8*)
+
+@0 = private constant [7 x i8] c"leaked\00"
+"#,
+            r"  %q0 = inttoptr i64 0 to %Qubit*
+  %0 = call i64 @__quantum__qis__mz_leaked__body(%Qubit* %q0)
+  call void @__quantum__rt__int_record_output(i64 %0, i8* getelementptr inbounds ([7 x i8], [7 x i8]* @0, i64 0, i64 0))",
+        );
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        validate_qir(&bc_bytes, None)
+            .expect("mz_leaked-only programs should validate with zero result slots");
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_zero_required_num_results_for_result_measurement() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "0",
+            "1",
+            "declare void @__quantum__qis__mz__body(%Qubit*, %Result* writeonly)",
+            r"  call void @__quantum__qis__mz__body(%Qubit* null, %Result* writeonly null)",
+        );
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("result-backed measurements should still require declared result slots");
+        assert!(err.contains("Result index 0 exceeds required_num_results (0)"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_mz_leaked_lowers_via_uint_future_runtime() {
+        let bc_bytes = load_fixture_bitcode("tests/data/mz_leaked.ll");
+        let output_bc = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect("mz_leaked fixture should compile successfully");
+
+        verify_bitcode_module(&output_bc, "mz_leaked_qis")
+            .expect("translated leaked-measure module should remain LLVM-verifiable");
+
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &output_bc, "mz_leaked_qis")
+            .expect("Compiled QIS bitcode should parse");
+        let text = module.to_string();
+        assert!(text.contains("___lazy_measure_leaked"));
+        assert!(text.contains("___read_future_uint"));
+        assert!(text.contains("___dec_future_refcount"));
+        assert!(!text.contains("___read_future_bool"));
+    }
+
     #[cfg(feature = "wasm")]
     proptest! {
         #[test]
@@ -2613,19 +2760,6 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
                 .expect_err("validation should reject missing required attributes");
             let expected = format!("Missing required attribute: `{missing_attr}`");
             prop_assert!(err.contains(&expected));
-        }
-
-        #[test]
-        fn prop_zero_qubits_or_results_fail_validation(
-            zero_qubits in any::<bool>()
-        ) {
-            let (qubits, results) = if zero_qubits { ("0", "1") } else { ("1", "0") };
-            let ll_text = minimal_qir_with_body(qubits, results, "1", "", "");
-            let bc = qir_ll_to_bc(&ll_text)
-                .map_err(|err| TestCaseError::fail(format!("inline IR should parse: {err}")))?;
-            let err = validate_qir(&bc, None)
-                .expect_err("validation should reject zero resources");
-            prop_assert!(err.contains("Entry function must have at least one"));
         }
 
         #[test]
@@ -2731,5 +2865,13 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             bytes.extend(tail);
             prop_assert!(get_entry_attributes(&bytes).is_err());
         }
+    }
+
+    #[test]
+    fn test_zero_qubits_fail_validation() {
+        let ll_text = minimal_qir_with_body("0", "1", "1", "", "");
+        let bc = qir_ll_to_bc(&ll_text).expect("inline IR should parse");
+        let err = validate_qir(&bc, None).expect_err("validation should reject zero qubits");
+        assert!(err.contains("Entry function must have at least one qubit"));
     }
 }
