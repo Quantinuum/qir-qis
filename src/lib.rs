@@ -753,12 +753,7 @@ mod aux {
 
     fn handle_mz_leaked_call(args: &ProcessCallArgs) -> Result<(), String> {
         let ProcessCallArgs {
-            ctx,
-            module,
-            instr,
-            qubit_array,
-            qubit_array_type,
-            ..
+            ctx, module, instr, ..
         } = args;
         let builder = ctx.create_builder();
         builder.position_before(instr);
@@ -767,21 +762,20 @@ mod aux {
         let qubit_ptr = call_args[0].into_pointer_value();
 
         let q_handle = {
-            let i64_type = ctx.i64_type();
-            let index = get_index(qubit_ptr)?;
-            let index_val = i64_type.const_int(index, false);
-            let elem_ptr = unsafe {
-                builder.build_gep(
-                    *qubit_array_type,
-                    *qubit_array,
-                    &[i64_type.const_zero(), index_val],
-                    "",
-                )
+            let idx_fn = module
+                .get_function(LOAD_QUBIT_FN)
+                .ok_or_else(|| format!("{LOAD_QUBIT_FN} not found"))?;
+            let idx_call = builder
+                .build_call(idx_fn, &[qubit_ptr.into()], "qbit")
+                .map_err(|e| format!("Failed to build call to {LOAD_QUBIT_FN}: {e}"))?;
+            match idx_call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(bv) => bv,
+                inkwell::values::ValueKind::Instruction(_) => {
+                    return Err(format!(
+                        "Failed to get basic value from {LOAD_QUBIT_FN} call"
+                    ));
+                }
             }
-            .map_err(|e| format!("Failed to build GEP for qubit handle: {e}"))?;
-            builder
-                .build_load(i64_type, elem_ptr, "qbit")
-                .map_err(|e| format!("Failed to build load for qubit handle: {e}"))?
         };
 
         let meas_handle = {

@@ -534,20 +534,26 @@ fn build_load_qbit<'a>(
         .map_err(|e| format!("Failed to build load instruction: {e}"))
 }
 
-/// Retrieves the result SSA variables from the entry function.
-/// The result variable count is equal to the `required_num_results` attribute.
+/// Parses and returns the `required_num_results` attribute from the entry function.
 ///
 /// # Errors
 /// Returns an error if the `required_num_results` attribute is missing or invalid.
 pub fn get_required_num_results(entry_fn: FunctionValue) -> Result<usize, String> {
-    entry_fn
+    let attr = entry_fn
         .get_string_attribute(AttributeLoc::Function, "required_num_results")
-        .and_then(|attr| {
-            decode_llvm_c_string(attr.get_string_value())?
-                .parse::<usize>()
-                .ok()
-        })
-        .ok_or_else(|| "Missing required_num_results".to_string())
+        .ok_or_else(|| "Missing required_num_results".to_string())?;
+
+    let raw_value = attr.get_string_value();
+    let decoded_value = decode_llvm_c_string(raw_value).ok_or_else(|| {
+        format!(
+            "Invalid required_num_results attribute value: {:?}",
+            attr.get_string_value()
+        )
+    })?;
+
+    decoded_value
+        .parse::<usize>()
+        .map_err(|_| format!("Invalid required_num_results attribute value: {decoded_value}"))
 }
 
 /// Retrieves the result SSA variables from the entry function.
@@ -1372,6 +1378,23 @@ mod tests {
         let result = get_result_vars(func);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Missing required_num_results");
+    }
+
+    #[test]
+    fn test_get_required_num_results_errors_on_invalid_attr() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let fn_type = context.void_type().fn_type(&[], false);
+        let func = module.add_function("entry", fn_type, None);
+        let attr = context.create_string_attribute("required_num_results", "abc");
+        func.add_attribute(AttributeLoc::Function, attr);
+
+        let result = get_required_num_results(func);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid required_num_results attribute value: abc"
+        );
     }
 
     #[test]
