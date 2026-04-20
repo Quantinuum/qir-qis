@@ -252,6 +252,13 @@ mod aux {
         entry_fn: FunctionValue,
         errors: &mut Vec<String>,
     ) {
+        if entry_fn
+            .get_string_attribute(AttributeLoc::Function, "required_num_results")
+            .is_none()
+        {
+            return;
+        }
+
         let required_num_results = match get_required_num_results(entry_fn) {
             Ok(required_num_results) => required_num_results,
             Err(err) => {
@@ -2749,6 +2756,31 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
         let err = validate_qir(&bc_bytes, None)
             .expect_err("invalid required_num_results should fail validation");
         assert!(err.contains("Invalid required_num_results attribute value: abc"));
+    }
+
+    #[test]
+    fn test_validate_qir_reports_missing_required_num_results_once() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err =
+            validate_qir(&bc_bytes, None).expect_err("missing required_num_results should fail");
+        assert_eq!(err, "Missing required attribute: `required_num_results`");
     }
 
     #[test]
