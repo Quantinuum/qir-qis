@@ -248,9 +248,12 @@ mod aux {
     }
 
     pub fn validate_result_slot_usage(entry_fn: FunctionValue, errors: &mut Vec<String>) {
-        let Ok(required_num_results) = get_required_num_results(entry_fn) else {
-            errors.push("Missing required_num_results".to_string());
-            return;
+        let required_num_results = match get_required_num_results(entry_fn) {
+            Ok(required_num_results) => required_num_results,
+            Err(err) => {
+                errors.push(err);
+                return;
+            }
         };
 
         for bb in entry_fn.get_basic_blocks() {
@@ -759,7 +762,20 @@ mod aux {
         builder.position_before(instr);
 
         let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
-        let qubit_ptr = call_args[0].into_pointer_value();
+        let qubit_ptr = match call_args.as_slice() {
+            [BasicValueEnum::PointerValue(ptr), _] => *ptr,
+            [_, _] => {
+                return Err(
+                    "Malformed mz_leaked call: expected first argument to be a pointer".into(),
+                );
+            }
+            _ => {
+                return Err(format!(
+                    "Malformed mz_leaked call: expected 1 argument plus callee, got {} operands",
+                    call_args.len()
+                ));
+            }
+        };
 
         let q_handle = {
             let idx_fn = module
@@ -2702,6 +2718,16 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
     }
 
     #[test]
+    fn test_validate_qir_reports_invalid_required_num_results_value() {
+        let ll_text = minimal_qir_with_body("1", "abc", "1", "", "");
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("invalid required_num_results should fail validation");
+        assert!(err.contains("Invalid required_num_results attribute value: abc"));
+    }
+
+    #[test]
     fn test_validate_qir_rejects_zero_required_num_results_for_result_measurement() {
         let ll_text = minimal_qir_with_body(
             "1",
@@ -2767,6 +2793,22 @@ declare void @__quantum__rt__result_record_output(%Result*, i8*)
         let err = validate_qir(&bc_bytes, None)
             .expect_err("out-of-bounds result indices should fail during validation");
         assert!(err.contains("Result index 5 exceeds required_num_results (1)"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_malformed_mz_leaked_call() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "0",
+            "1",
+            "declare i64 @__quantum__qis__mz_leaked__body()",
+            r"  %0 = call i64 @__quantum__qis__mz_leaked__body()",
+        );
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("malformed mz_leaked calls should fail cleanly");
+        assert!(err.contains("Malformed mz_leaked call"));
     }
 
     #[cfg(not(windows))]
