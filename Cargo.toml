@@ -28,7 +28,7 @@ include = [
 [dependencies]
 bpaf = { version = "0.9", features = ["derive"] }
 env_logger = "0.11"
-inkwell = { version = "0.8", default-features = false, features = [
+inkwell = { version = "0.9", default-features = false, features = [
     "llvm21-1",
     "target-x86",
     "target-aarch64",
@@ -43,7 +43,7 @@ pyo3-stub-gen = { version = "0.22", optional = true, features = [
     "infer_signature",
 ], default-features = false }
 rstest = "0.26"
-wasmparser = { version = "0.246", optional = true }
+wasmparser = { version = "0.247", optional = true }
 
 [features]
 default = ["python"]
@@ -56,4 +56,4 @@ crate-type = ["cdylib", "rlib"]
 [dev-dependencies]
 insta = { version = "1", features = ["filters"] }
 proptest = "1"
-wasm-encoder = "0.246.2"
+wasm-encoder = "0.247"
