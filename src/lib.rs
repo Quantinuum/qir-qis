@@ -769,6 +769,21 @@ mod aux {
         } = args;
         let builder = ctx.create_builder();
         builder.position_before(instr);
+        let call = CallSiteValue::try_from(*args.instr)
+            .map_err(|()| "Malformed mz_leaked call: instruction is not a call site".to_string())?;
+        let called_fn = call
+            .get_called_fn_value()
+            .ok_or_else(|| "Malformed mz_leaked call: missing callee".to_string())?;
+        let fn_type = called_fn.get_type();
+        let param_types = fn_type.get_param_types();
+        let has_expected_signature = fn_type
+            .get_return_type()
+            .is_some_and(|ty| ty.is_int_type() && ty.into_int_type().get_bit_width() == 64)
+            && param_types.len() == 1
+            && param_types[0].is_pointer_type();
+        if !has_expected_signature {
+            return Err("Malformed mz_leaked call: expected signature i64 (ptr)".to_string());
+        }
 
         let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
         let qubit_ptr = match call_args.as_slice() {
@@ -2854,6 +2869,22 @@ declare void @__quantum__rt__result_record_output(%Result*, i8*)
         let err = qir_to_qis(&bc_bytes, 0, "native", None)
             .expect_err("malformed mz_leaked calls should fail cleanly");
         assert!(err.contains("Malformed mz_leaked call"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_mz_leaked_with_wrong_return_type() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "0",
+            "1",
+            "declare void @__quantum__qis__mz_leaked__body(%Qubit*)",
+            r"  call void @__quantum__qis__mz_leaked__body(%Qubit* null)",
+        );
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("mz_leaked with the wrong signature should fail cleanly");
+        assert!(err.contains("Malformed mz_leaked call: expected signature i64 (ptr)"));
     }
 
     #[cfg(not(windows))]
