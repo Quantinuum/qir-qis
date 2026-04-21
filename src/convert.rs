@@ -2308,11 +2308,7 @@ entry:
         let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).unwrap();
 
         let context = Context::create();
-        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
-            &qis_bytes,
-            "qis_module",
-        );
-        let qis_text = Module::parse_bitcode_from_buffer(&memory_buffer, &context)
+        let qis_text = crate::parse_bitcode_module(&context, &qis_bytes, "qis_module")
             .expect("Compiled QIS bitcode should parse");
 
         let mut settings = Settings::clone_current();
@@ -2345,11 +2341,7 @@ entry:
         let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 0, "native", None).unwrap();
 
         let context = Context::create();
-        let memory_buffer = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
-            &qis_bytes,
-            "qis_module",
-        );
-        let parsed = Module::parse_bitcode_from_buffer(&memory_buffer, &context)
+        let parsed = crate::parse_bitcode_module(&context, &qis_bytes, "qis_module")
             .expect("Compiled QIS bitcode should parse on Windows");
         assert!(parsed.get_function("qmain").is_some());
     }}
