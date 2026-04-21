@@ -908,6 +908,7 @@ dependencies = [
  "pyo3",
  "pyo3-stub-gen",
  "rstest",
+ "tempfile",
  "wasm-encoder 0.247.0",
  "wasmparser 0.247.0",
 ]

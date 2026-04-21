@@ -1451,6 +1451,12 @@ fn create_memory_buffer_from_bytes(
     let memory_buffer = unsafe {
         LLVMCreateMemoryBufferWithMemoryRangeCopy(bytes.as_ptr().cast(), bytes.len(), name.as_ptr())
     };
+    if memory_buffer.is_null() {
+        return Err(
+            "LLVM failed to create memory buffer from bytes: received null memory buffer pointer"
+                .to_string(),
+        );
+    }
 
     unsafe { Ok(inkwell::memory_buffer::MemoryBuffer::new(memory_buffer)) }
 }
@@ -1467,8 +1473,11 @@ pub(crate) fn create_module_from_ir_text<'ctx>(
 
 fn memory_buffer_to_owned_bytes(memory_buffer: &inkwell::memory_buffer::MemoryBuffer) -> Vec<u8> {
     let bytes = memory_buffer.as_slice();
-    debug_assert_eq!(bytes.last(), Some(&0));
-    bytes[..bytes.len().saturating_sub(1)].to_vec()
+    if bytes.last() == Some(&0) {
+        bytes[..bytes.len().saturating_sub(1)].to_vec()
+    } else {
+        bytes.to_vec()
+    }
 }
 
 pub(crate) fn parse_bitcode_module<'ctx>(
@@ -1946,20 +1955,20 @@ mod test {
     }
 
     fn parse_bitcode_as_file(bitcode: &[u8], name: &str) -> Result<(), String> {
-        let path = std::env::temp_dir().join(format!("{name}.bc"));
-        std::fs::write(&path, bitcode).map_err(|e| format!("Failed to write temp bitcode: {e}"))?;
+        let mut temp_file = tempfile::Builder::new()
+            .prefix(name)
+            .suffix(".bc")
+            .tempfile()
+            .map_err(|e| format!("Failed to create temp bitcode file: {e}"))?;
+        std::io::Write::write_all(&mut temp_file, bitcode)
+            .map_err(|e| format!("Failed to write temp bitcode: {e}"))?;
 
-        let result = (|| {
-            let ctx = Context::create();
-            let memory_buffer = MemoryBuffer::create_from_file(&path)
-                .map_err(|e| format!("Failed to read temp bitcode: {e}"))?;
-            Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
-                .map(|_| ())
-                .map_err(|e| format!("Failed to parse bitcode: {e}"))
-        })();
-
-        let _ = std::fs::remove_file(path);
-        result
+        let ctx = Context::create();
+        let memory_buffer = MemoryBuffer::create_from_file(temp_file.path())
+            .map_err(|e| format!("Failed to read temp bitcode: {e}"))?;
+        Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+            .map(|_| ())
+            .map_err(|e| format!("Failed to parse bitcode: {e}"))
     }
 
     fn assert_public_bitcode_round_trips_from_file(bitcode: &[u8], name: &str) {
