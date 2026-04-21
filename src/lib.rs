@@ -1471,7 +1471,9 @@ pub(crate) fn create_module_from_ir_text<'ctx>(
         .map_err(|e| format!("Failed to create module from LLVM IR: {e}"))
 }
 
-fn memory_buffer_to_owned_bytes(memory_buffer: &inkwell::memory_buffer::MemoryBuffer) -> Vec<u8> {
+fn memory_buffer_to_owned_bytes(
+    memory_buffer: &inkwell::memory_buffer::MemoryBuffer<'_>,
+) -> Vec<u8> {
     let bytes = memory_buffer.as_slice();
     if bytes.last() == Some(&0) {
         bytes[..bytes.len().saturating_sub(1)].to_vec()
