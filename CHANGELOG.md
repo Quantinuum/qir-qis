@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5](https://github.com/Quantinuum/qir-qis/compare/v0.1.4...v0.1.5) (2026-04-21)
+
+
+### Features
+
+* add mz leaked support ([#70](https://github.com/Quantinuum/qir-qis/issues/70)) ([c9116a1](https://github.com/Quantinuum/qir-qis/commit/c9116a1fe07a6a9558a7abcb31b3a8edafe9d24e))
+
+
+### Bug Fixes
+
+* add robustness coverage and cross-platform guardrails ([#59](https://github.com/Quantinuum/qir-qis/issues/59)) ([72ccb62](https://github.com/Quantinuum/qir-qis/commit/72ccb62f430f4a6ea49db195a2f76130947f7f16))
+* add Windows guardrails for optimized conversion ([#51](https://github.com/Quantinuum/qir-qis/issues/51)) ([0ac66a1](https://github.com/Quantinuum/qir-qis/commit/0ac66a189ea3e905713a0789ea2058e0e6021e63))
+* read module flags from named metadata ([#47](https://github.com/Quantinuum/qir-qis/issues/47)) ([4db37b5](https://github.com/Quantinuum/qir-qis/commit/4db37b5777147432bc591b0f7b9586a361c1c898))
+* restore selene-compatible public bitcode bytes ([#72](https://github.com/Quantinuum/qir-qis/issues/72)) ([ad27b4e](https://github.com/Quantinuum/qir-qis/commit/ad27b4e3fe4de0958f59e68302cae28e466d7df8))
+* support inkwell 0.9 upgrade ([#69](https://github.com/Quantinuum/qir-qis/issues/69)) ([3d13edd](https://github.com/Quantinuum/qir-qis/commit/3d13edd89ffd4c4c6a6c65f883a05d6ae3cc4ac2))
+
 ## [0.1.4](https://github.com/Quantinuum/qir-qis/compare/v0.1.3...v0.1.4) (2026-03-17)
 
 
