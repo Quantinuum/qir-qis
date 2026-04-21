@@ -61,6 +61,11 @@ When touching `Makefile`, `.cargo/mutants.toml`, `fuzz/`, or `.github/workflows/
 - reserve longer fuzzing and mutation campaigns for scheduled/manual runs unless there is a strong reason otherwise
 - avoid adding unused tooling installs to CI jobs
 
+Before pushing changes:
+
+- run `make lint`
+- run `make test`
+
 ## Suggested validation
 
 For most semantic changes:
