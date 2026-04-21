@@ -1440,22 +1440,35 @@ pub(crate) fn decode_llvm_c_string(value: &std::ffi::CStr) -> Option<&str> {
     value.to_str().ok()
 }
 
+fn create_memory_buffer_from_bytes(
+    bytes: &[u8],
+    name: &str,
+) -> Result<inkwell::memory_buffer::MemoryBuffer<'static>, String> {
+    use llvm_sys::core::LLVMCreateMemoryBufferWithMemoryRangeCopy;
+
+    let name = std::ffi::CString::new(name)
+        .map_err(|_| "Memory buffer name contains interior NUL byte".to_string())?;
+    let memory_buffer = unsafe {
+        LLVMCreateMemoryBufferWithMemoryRangeCopy(bytes.as_ptr().cast(), bytes.len(), name.as_ptr())
+    };
+
+    unsafe { Ok(inkwell::memory_buffer::MemoryBuffer::new(memory_buffer)) }
+}
+
 pub(crate) fn create_module_from_ir_text<'ctx>(
     ctx: &'ctx inkwell::context::Context,
     ll_text: &str,
     name: &str,
 ) -> Result<inkwell::module::Module<'ctx>, String> {
-    let ll_bytes = ll_text.as_bytes();
-    let memory_buffer = if ll_bytes.ends_with(&[0]) {
-        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(ll_bytes, name)
-    } else {
-        let mut bytes = Vec::with_capacity(ll_bytes.len().saturating_add(1));
-        bytes.extend_from_slice(ll_bytes);
-        bytes.push(0);
-        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(&bytes, name)
-    };
+    let memory_buffer = create_memory_buffer_from_bytes(ll_text.as_bytes(), name)?;
     ctx.create_module_from_ir(memory_buffer)
         .map_err(|e| format!("Failed to create module from LLVM IR: {e}"))
+}
+
+fn memory_buffer_to_owned_bytes(memory_buffer: &inkwell::memory_buffer::MemoryBuffer) -> Vec<u8> {
+    let bytes = memory_buffer.as_slice();
+    debug_assert_eq!(bytes.last(), Some(&0));
+    bytes[..bytes.len().saturating_sub(1)].to_vec()
 }
 
 pub(crate) fn parse_bitcode_module<'ctx>(
@@ -1463,13 +1476,7 @@ pub(crate) fn parse_bitcode_module<'ctx>(
     bitcode: &[u8],
     name: &str,
 ) -> Result<inkwell::module::Module<'ctx>, String> {
-    let memory_buffer = if bitcode.ends_with(&[0]) {
-        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(bitcode, name)
-    } else {
-        let mut bytes = bitcode.to_vec();
-        bytes.push(0);
-        inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(&bytes, name)
-    };
+    let memory_buffer = create_memory_buffer_from_bytes(bitcode, name)?;
     inkwell::module::Module::parse_bitcode_from_buffer(&memory_buffer, ctx)
         .map_err(|e| format!("Failed to parse bitcode: {e}"))
 }
@@ -1559,7 +1566,9 @@ pub fn qir_to_qis(
     optimize(&module, opt_level, target)?;
     prune_unused_ir_qis_helpers(&module);
 
-    Ok(module.write_bitcode_to_memory().as_slice().to_vec())
+    Ok(memory_buffer_to_owned_bytes(
+        &module.write_bitcode_to_memory(),
+    ))
 }
 
 /// Extract WASM function mapping from the given WASM bytes.
@@ -1675,7 +1684,9 @@ pub fn qir_ll_to_bc(ll_text: &str) -> Result<Vec<u8>, String> {
     let ctx = Context::create();
     let module = create_module_from_ir_text(&ctx, ll_text, "qir")?;
 
-    Ok(module.write_bitcode_to_memory().as_slice().to_vec())
+    Ok(memory_buffer_to_owned_bytes(
+        &module.write_bitcode_to_memory(),
+    ))
 }
 
 fn decode_string_attribute_kind(attr: inkwell::attributes::Attribute) -> Result<String, String> {
@@ -1889,7 +1900,7 @@ mod test {
         create_module_from_ir_text, get_entry_attributes, parse_bitcode_module, qir_ll_to_bc,
         qir_to_qis, validate_qir,
     };
-    use inkwell::context::Context;
+    use inkwell::{context::Context, memory_buffer::MemoryBuffer, module::Module};
     use proptest::prelude::*;
     use std::{collections::BTreeMap, sync::LazyLock};
     #[cfg(feature = "wasm")]
@@ -1932,6 +1943,42 @@ mod test {
         let ctx = Context::create();
         let module = parse_bitcode_module(&ctx, bitcode, name)?;
         crate::llvm_verify::verify_module(&module, "LLVM verifier rejected translated module")
+    }
+
+    fn parse_bitcode_as_file(bitcode: &[u8], name: &str) -> Result<(), String> {
+        let path = std::env::temp_dir().join(format!("{name}.bc"));
+        std::fs::write(&path, bitcode).map_err(|e| format!("Failed to write temp bitcode: {e}"))?;
+
+        let result = (|| {
+            let ctx = Context::create();
+            let memory_buffer = MemoryBuffer::create_from_file(&path)
+                .map_err(|e| format!("Failed to read temp bitcode: {e}"))?;
+            Module::parse_bitcode_from_buffer(&memory_buffer, &ctx)
+                .map(|_| ())
+                .map_err(|e| format!("Failed to parse bitcode: {e}"))
+        })();
+
+        let _ = std::fs::remove_file(path);
+        result
+    }
+
+    fn assert_public_bitcode_round_trips_from_file(bitcode: &[u8], name: &str) {
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, bitcode, name)
+            .expect("Bitcode should reparse through qir-qis helpers");
+        let raw_buffer = module.write_bitcode_to_memory();
+        let expected_len = bitcode
+            .len()
+            .checked_add(1)
+            .expect("bitcode length should not overflow");
+        assert_eq!(
+            raw_buffer.as_slice().len(),
+            expected_len,
+            "Public bitcode bytes should exclude LLVM's implicit trailing NUL"
+        );
+        assert_eq!(raw_buffer.as_slice().last(), Some(&0));
+        parse_bitcode_as_file(bitcode, name)
+            .expect("Public bitcode should parse when consumed from a file");
     }
 
     #[cfg(feature = "wasm")]
@@ -2212,6 +2259,15 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_qir_ll_to_bc_output_parses_when_read_from_file() {
+        let ll_text =
+            std::fs::read_to_string("tests/data/base.ll").expect("Failed to read base.ll");
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert base.ll to bitcode");
+
+        assert_public_bitcode_round_trips_from_file(&bc_bytes, "public_qir_output");
+    }
+
+    #[test]
     fn test_qir2_base_fixture_validate_and_compile() {
         let ll_text = std::fs::read_to_string("tests/data/qir2_base.ll")
             .expect("Failed to read qir2_base.ll");
@@ -2244,6 +2300,17 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             .expect("Compiled QIS bitcode should parse");
         assert!(module.get_function("qmain").is_some());
         assert!(module.get_function("___lazy_measure").is_some());
+    }
+
+    #[test]
+    fn test_qir_to_qis_output_parses_with_raw_llvm_buffer() {
+        let ll_text =
+            std::fs::read_to_string("tests/data/base.ll").expect("Failed to read base.ll");
+        let input_bc = qir_ll_to_bc(&ll_text).expect("Failed to convert base.ll to bitcode");
+        let output_bc =
+            qir_to_qis(&input_bc, 0, "native", None).expect("base fixture should compile");
+
+        assert_public_bitcode_round_trips_from_file(&output_bc, "selene_qis_output");
     }
 
     #[test]
