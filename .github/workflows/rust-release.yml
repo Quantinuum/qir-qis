@@ -20,14 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup LLVM
-        uses: ./.github/actions/setup-llvm
+      - uses: quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
-          llvm-version: ${{ env.LLVM_VERSION }}
-          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
-          enable-macos: "false"
-          enable-windows: "false"
-          linux-cache-key-suffix: rust-release-v1
+          packages: "llvm"
 
       - uses: dtolnay/rust-toolchain@stable
 
