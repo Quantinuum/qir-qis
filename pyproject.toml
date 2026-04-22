@@ -68,6 +68,7 @@ lint.ignore = [
     "PYI021", # Docstrings should not be included in stubs
 ]
 
+
 [tool.cibuildwheel]
 build = "cp310-*"
 build-frontend = "build[uv]"
@@ -96,27 +97,22 @@ LLVM_SYS_211_PREFIX = '/host${HUGRENV_PATH}'
 LLVM_CONFIG_PATH = '/host${HUGRENV_PATH}/bin/llvm-config'
 LD_LIBRARY_PATH = '/host${HUGRENV_PATH}/lib:/host${HUGRENV_PATH}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}'
 LLVM_SYS_211_NO_CLEAN_CFLAGS = '1'
-AR = '/usr/bin/ar'
-RANLIB = '/usr/bin/ranlib'
 
-[tool.cibuildwheel.macos.environment]
-PATH = '$HUGRENV_PATH/bin:$PATH'
-LLVM_SYS_211_PREFIX = '$HUGRENV_PATH'
-LLVM_CONFIG_PATH = '$HUGRENV_PATH/bin/llvm-config'
-MACOSX_DEPLOYMENT_TARGET = "11.0"
+
 [tool.cibuildwheel.macos]
-before-all = [
-    '$HUGRENV_PATH/bin/llvm-config --version',
-]
 repair-wheel-command = [
     'cp {wheel} {dest_dir}',
     'uvx abi3audit --strict --report {wheel}',
 ]
 
+[tool.cibuildwheel.macos.environment]
+LLVM_SYS_211_PREFIX = '$HUGRENV_PATH'
+LLVM_CONFIG_PATH = '$HUGRENV_PATH/bin/llvm-config'
+MACOSX_DEPLOYMENT_TARGET = "11.0"
+
+
 [tool.cibuildwheel.windows]
-before-all = [
-    'rustup update --no-self-update',
-]
+before-all = ['rustup update --no-self-update']
 repair-wheel-command = [
     'copy /Y {wheel} {dest_dir}',
     'uvx abi3audit --strict --report {wheel}',
@@ -126,6 +122,5 @@ test-command = [
 ]
 
 [tool.cibuildwheel.windows.environment]
-PATH = '$HUGRENV_PATH/bin:$PATH'
 LLVM_SYS_211_PREFIX = '$HUGRENV_PATH'
 LLVM_CONFIG_PATH = '$HUGRENV_PATH/bin/llvm-config.exe'
