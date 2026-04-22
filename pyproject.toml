@@ -115,7 +115,7 @@ MACOSX_DEPLOYMENT_TARGET = "11.0"
 [tool.cibuildwheel.windows]
 before-all = ['rustup update --no-self-update']
 repair-wheel-command = [
-    'uvx --from delvewheel delvewheel repair --add-path "%HUGRENV_PATH%\\bin" -w {dest_dir} {wheel}',
+    'uvx --from delvewheel delvewheel repair --add-path "%HUGRENV_PATH%\bin" -w {dest_dir} {wheel}',
     'for %I in ("{dest_dir}\\*.whl") do uvx abi3audit --strict --report "%~fI"',
 ]
 test-command = [
