@@ -89,7 +89,7 @@ before-all = [
 ]
 repair-wheel-command = [
     'cp {wheel} {dest_dir}',
-    'uvx abi3audit --strict --report {wheel}',
+    'uvx abi3audit --strict --report {dest_dir}/*.whl',
 ]
 
 [tool.cibuildwheel.linux.environment]
@@ -103,7 +103,7 @@ LLVM_SYS_211_NO_CLEAN_CFLAGS = '1'
 [tool.cibuildwheel.macos]
 repair-wheel-command = [
     'cp {wheel} {dest_dir}',
-    'uvx abi3audit --strict --report {wheel}',
+    'uvx abi3audit --strict --report {dest_dir}/*.whl',
 ]
 
 [tool.cibuildwheel.macos.environment]
