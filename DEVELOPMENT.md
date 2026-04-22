@@ -141,7 +141,7 @@ At minimum, review:
 1. `Cargo.toml` for the `inkwell` feature and `llvm-sys` version.
 2. `hugrenv.lock` for the pinned `hugrverse-env` release.
 3. `.github/workflows/CI.yml`, `.github/workflows/robustness.yml`, and `.github/workflows/rust-release.yml` for the shared CI install flow.
-4. `pyproject.toml` and `.github/scripts/install_hugrenv.py` for wheel-build installation and environment wiring.
+4. `pyproject.toml` and `.github/workflows/wheels-release.yml` for wheel-build installation and environment wiring.
 5. user-facing docs such as `README.md` and this file for LLVM version examples.
 
 After changing the LLVM pin, run:

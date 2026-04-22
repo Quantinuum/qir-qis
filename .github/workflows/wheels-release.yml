@@ -86,6 +86,15 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Install hugrenv LLVM
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
+        with:
+          packages: "llvm"
+
+      - name: Export hugrenv path for cibuildwheel
+        shell: bash
+        run: echo "HUGRENV_PATH=${LLVM_SYS_211_PREFIX}" >>"$GITHUB_ENV"
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.3
 
