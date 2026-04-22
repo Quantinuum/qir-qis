@@ -82,6 +82,7 @@ test-command = [
 environment-pass = ["HUGRENV_PATH"]
 environment = { PATH = '$HOME/.cargo/bin:/host${HUGRENV_PATH}/bin:$PATH', LLVM_SYS_211_PREFIX = '/host${HUGRENV_PATH}', LLVM_CONFIG_PATH = '/host${HUGRENV_PATH}/bin/llvm-config', LD_LIBRARY_PATH = '/host${HUGRENV_PATH}/lib:/host${HUGRENV_PATH}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}', LLVM_SYS_211_NO_CLEAN_CFLAGS = '1', AR = '/usr/bin/ar', RANLIB = '/usr/bin/ranlib' }
 before-all = [
+    'dnf install -y libffi-devel',
     'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.91.0',
     '/host${HUGRENV_PATH}/bin/llvm-config --version',
 ]
