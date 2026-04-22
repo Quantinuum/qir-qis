@@ -45,11 +45,8 @@ If you are using an agentic coding tool, see [`AGENTS.md`](AGENTS.md). It captur
 # Build Rust binary
 cargo build --release
 
-# Build a wheel; maturin repairs and vendors external shared libraries
-make wheel
-
-# Equivalent direct backend invocation
-uv build --wheel
+# Build Python package
+uv run maturin build --release
 ```
 
 ## Testing

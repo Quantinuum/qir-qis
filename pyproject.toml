@@ -21,13 +21,12 @@ dynamic = ["version"]
 repository = "https://github.com/quantinuum/qir-qis/"
 
 [build-system]
-requires = ["maturin==1.13.1"]
+requires = ["maturin~=1.13.1"]
 build-backend = "maturin"
 
 [tool.maturin]
 profile = "release"
 features = ["pyo3/extension-module"]
-compatibility = "pypi"
 auditwheel = "repair"
 
 [dependency-groups]

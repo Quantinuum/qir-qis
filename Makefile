@@ -10,10 +10,6 @@ FUZZ_ALL_TARGETS := $(basename $(notdir $(wildcard fuzz/fuzz_targets/*.rs)))
 compile:
 	cargo run -- $(FILE)
 
-.PHONY: wheel
-wheel:
-	uv build --wheel
-
 .PHONY: lint
 lint:
 	uvx prek run --all-files
