@@ -87,7 +87,7 @@ before-all = [
     '/host${HUGRENV_PATH}/bin/llvm-config --version',
 ]
 repair-wheel-command = [
-    'python -c "from pathlib import Path; import shutil; wheel = Path(r\"{wheel}\"); dest = Path(r\"{dest_dir}\") / wheel.name; shutil.copy2(wheel, dest); print(dest)"',
+    'cp {wheel} {dest_dir}',
     'uvx abi3audit --strict --report {wheel}',
 ]
 
@@ -101,7 +101,7 @@ before-all = [
     '$HUGRENV_PATH/bin/llvm-config --version',
 ]
 repair-wheel-command = [
-    'python -c "from pathlib import Path; import shutil; wheel = Path(r\"{wheel}\"); dest = Path(r\"{dest_dir}\") / wheel.name; shutil.copy2(wheel, dest); print(dest)"',
+    'cp {wheel} {dest_dir}',
     'uvx abi3audit --strict --report {wheel}',
 ]
 
@@ -117,7 +117,7 @@ before-build = [
     '"%LLVM_CONFIG_PATH%" --version',
 ]
 repair-wheel-command = [
-    'python -c "from pathlib import Path; import shutil; wheel = Path(r\"{wheel}\"); dest = Path(r\"{dest_dir}\") / wheel.name; shutil.copy2(wheel, dest); print(dest)"',
+    'copy /Y {wheel} {dest_dir}',
     'uvx abi3audit --strict --report {wheel}',
 ]
 test-command = [
