@@ -115,8 +115,8 @@ MACOSX_DEPLOYMENT_TARGET = "11.0"
 [tool.cibuildwheel.windows]
 before-all = ['rustup update --no-self-update']
 repair-wheel-command = [
-    'copy /Y {wheel} {dest_dir}',
-    'uvx abi3audit --strict --report {wheel}',
+    'uvx --from delvewheel delvewheel repair --add-path "%HUGRENV_PATH%\\bin" -w {dest_dir} {wheel}',
+    'for %I in ("{dest_dir}\\*.whl") do uvx abi3audit --strict --report "%~fI"',
 ]
 test-command = [
     '''python -c "from pathlib import Path; import qir_qis; ll = Path(r'{project}\tests\data\base_native_only.ll').read_text(); qir = qir_qis.qir_ll_to_bc(ll); qir_qis.validate_qir(qir); out = qir_qis.qir_to_qis(qir, opt_level=0, target='x86-64'); assert isinstance(out, (bytes, bytearray)) and len(out) > 0"''',

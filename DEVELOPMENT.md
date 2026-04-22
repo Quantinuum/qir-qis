@@ -139,7 +139,7 @@ installation contract."
 At minimum, review:
 
 1. `Cargo.toml` for the `inkwell` feature and `llvm-sys` version.
-2. `hugrenv.lock` for the pinned `hugrverse-env` release.
+2. `.github/workflows/*.yml` for the pinned `Quantinuum/hugrverse-env/install-hugrenv-action@...` version, and `hugrenv.lock` for the per-platform artifact hashes that go with it.
 3. `.github/workflows/CI.yml`, `.github/workflows/robustness.yml`, and `.github/workflows/rust-release.yml` for the shared CI install flow.
 4. `pyproject.toml` and `.github/workflows/wheels-release.yml` for wheel-build installation and environment wiring.
 5. user-facing docs such as `README.md` and this file for LLVM version examples.
