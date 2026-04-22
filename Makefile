@@ -18,6 +18,7 @@ lint:
 .PHONY: test
 test:
 	cargo nextest run --all-targets --all-features
+	$(PYTHON) tests/test_main.py
 
 .PHONY: mutants
 mutants:

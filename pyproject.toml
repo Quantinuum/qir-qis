@@ -32,7 +32,7 @@ auditwheel = "repair"
 [dependency-groups]
 dev = [
     "maturin~=1.13.1",
-    "qir-formatter~=0.1",
+    "qir-formatter~=0.2",
     "rich~=14.0",
     "selene-sim~=0.2.11",
 ]
