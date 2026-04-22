@@ -92,6 +92,10 @@ jobs:
         with:
           packages: "llvm"
 
+      - name: Export hugrenv path for cibuildwheel
+        shell: bash
+        run: echo "HUGRENV_PATH=${LLVM_SYS_211_PREFIX}" >>"$GITHUB_ENV"
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.3
 

@@ -79,12 +79,12 @@ test-command = [
 ]
 
 [tool.cibuildwheel.linux]
-environment-pass = ["LLVM_SYS_211_PREFIX"]
-environment = { PATH = '$HOME/.cargo/bin:/host${LLVM_SYS_211_PREFIX}/bin:$PATH', LLVM_SYS_211_PREFIX = '/host${LLVM_SYS_211_PREFIX}', LLVM_CONFIG_PATH = '/host${LLVM_SYS_211_PREFIX}/bin/llvm-config', LD_LIBRARY_PATH = '/host${LLVM_SYS_211_PREFIX}/lib:/host${LLVM_SYS_211_PREFIX}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}', LLVM_SYS_211_NO_CLEAN_CFLAGS = '1', AR = '/usr/bin/ar', RANLIB = '/usr/bin/ranlib' }
+environment-pass = ["HUGRENV_PATH"]
+environment = { PATH = '$HOME/.cargo/bin:/host${HUGRENV_PATH}/bin:$PATH', LLVM_SYS_211_PREFIX = '/host${HUGRENV_PATH}', LLVM_CONFIG_PATH = '/host${HUGRENV_PATH}/bin/llvm-config', LD_LIBRARY_PATH = '/host${HUGRENV_PATH}/lib:/host${HUGRENV_PATH}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}', LLVM_SYS_211_NO_CLEAN_CFLAGS = '1', AR = '/usr/bin/ar', RANLIB = '/usr/bin/ranlib' }
 before-all = [
     'dnf install -y libffi-devel',
     'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.91.0',
-    '/host${LLVM_SYS_211_PREFIX}/bin/llvm-config --version',
+    '/host${HUGRENV_PATH}/bin/llvm-config --version',
 ]
 repair-wheel-command = [
     'cp {wheel} {dest_dir}',
@@ -92,12 +92,13 @@ repair-wheel-command = [
 ]
 
 [tool.cibuildwheel.macos.environment]
-PATH = '$LLVM_SYS_211_PREFIX/bin:$PATH'
-LLVM_CONFIG_PATH = '$LLVM_SYS_211_PREFIX/bin/llvm-config'
+PATH = '$HUGRENV_PATH/bin:$PATH'
+LLVM_SYS_211_PREFIX = '$HUGRENV_PATH'
+LLVM_CONFIG_PATH = '$HUGRENV_PATH/bin/llvm-config'
 MACOSX_DEPLOYMENT_TARGET = "11.0"
 [tool.cibuildwheel.macos]
 before-all = [
-    '$LLVM_SYS_211_PREFIX/bin/llvm-config --version',
+    '$HUGRENV_PATH/bin/llvm-config --version',
 ]
 repair-wheel-command = [
     'cp {wheel} {dest_dir}',
@@ -108,7 +109,7 @@ repair-wheel-command = [
 before-all = [
     'rustup update --no-self-update',
 ]
-environment = { PATH = '$LLVM_SYS_211_PREFIX/bin:$PATH', LLVM_CONFIG_PATH = '$LLVM_SYS_211_PREFIX/bin/llvm-config.exe' }
+environment = { PATH = '$HUGRENV_PATH/bin:$PATH', LLVM_SYS_211_PREFIX = '$HUGRENV_PATH', LLVM_CONFIG_PATH = '$HUGRENV_PATH/bin/llvm-config.exe' }
 repair-wheel-command = [
     'copy /Y {wheel} {dest_dir}',
     'uvx abi3audit --strict --report {wheel}',
