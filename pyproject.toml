@@ -77,16 +77,12 @@ test-command = [
     "python -c 'import qir_qis; from pathlib import Path; ll = Path(\"{project}/tests/data/base_native_only.ll\").read_text(); qir = qir_qis.qir_ll_to_bc(ll); qir_qis.validate_qir(qir); out = qir_qis.qir_to_qis(qir); assert isinstance(out, (bytes, bytearray)) and len(out) > 0'",
 ]
 
-[tool.cibuildwheel.linux.environment]
-# note: HUGRENV is installed on the host machine, but is manylinux-compliant:
-# we only need to point to its location in /host to access it.
-PATH = '$HOME/.cargo/bin:/host${HUGRENV_PATH}/bin:$PATH'
-LLVM_SYS_211_PREFIX = '/host${LLVM_SYS_211_PREFIX}'
 [tool.cibuildwheel.linux]
-environment-pass = ["HUGRENV_PATH", "LLVM_SYS_211_PREFIX"]
+environment = { PATH = '/tmp/hugrenv/bin:$HOME/.cargo/bin:$PATH', LLVM_SYS_211_PREFIX = '/tmp/hugrenv', LLVM_CONFIG_PATH = '/tmp/hugrenv/bin/llvm-config', LD_LIBRARY_PATH = '/tmp/hugrenv/lib:/tmp/hugrenv/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}', LLVM_SYS_211_NO_CLEAN_CFLAGS = '1', AR = '/usr/bin/ar', RANLIB = '/usr/bin/ranlib' }
 before-all = [
+    'python "{project}/.github/scripts/install_hugrenv.py" --root "{project}" --dest /tmp/hugrenv --package llvm',
     'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.91.0',
-    '${LLVM_SYS_211_PREFIX}/bin/llvm-config --version',
+    '/tmp/hugrenv/bin/llvm-config --version',
 ]
 repair-wheel-command = [
     'auditwheel repair -w {dest_dir} {wheel}',
@@ -94,18 +90,32 @@ repair-wheel-command = [
 ]
 
 [tool.cibuildwheel.macos.environment]
-PATH = '${HUGENV_PATH}/bin:$PATH'
-MACOSX_DEPLOYMENT_TARGET = "15.0"
+PATH = '/tmp/hugrenv/bin:$PATH'
+LLVM_SYS_211_PREFIX = '/tmp/hugrenv'
+LLVM_CONFIG_PATH = '/tmp/hugrenv/bin/llvm-config'
+MACOSX_DEPLOYMENT_TARGET = "11.0"
 [tool.cibuildwheel.macos]
+before-all = [
+    'python "{project}/.github/scripts/install_hugrenv.py" --root "{project}" --dest /tmp/hugrenv --package llvm',
+    '/tmp/hugrenv/bin/llvm-config --version',
+]
 repair-wheel-command = [
-    'DYLD_FALLBACK_LIBRARY_PATH=${LLVM_SYS_211_PREFIX}/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}',
+    'DYLD_FALLBACK_LIBRARY_PATH=/tmp/hugrenv/lib:/tmp/hugrenv/lib64 delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}',
     'uvx abi3audit --strict --report {wheel}',
 ]
 
-[tool.cibuildwheel.windows.environment]
-PATH = '${HUGENV_PATH}\\bin;$PATH'
 [tool.cibuildwheel.windows]
-before-all = ['rustup update --no-self-update']
+before-all = [
+    'rustup update --no-self-update',
+    'python "{project}\\.github\\scripts\\install_hugrenv.py" --root "{project}" --dest C:\\hugrenv --package llvm',
+]
+environment = { PATH = 'C:\\hugrenv\\bin;$PATH', LLVM_SYS_211_PREFIX = 'C:\\hugrenv', LLVM_CONFIG_PATH = 'C:\\hugrenv\\bin\\llvm-config.exe' }
+before-build = [
+    'if "%LLVM_SYS_211_PREFIX%"=="" (echo LLVM_SYS_211_PREFIX is empty & set LLVM & where llvm-config & exit /b 1)',
+    'if "%LLVM_CONFIG_PATH%"=="" (echo LLVM_CONFIG_PATH is empty & set LLVM & where llvm-config & exit /b 1)',
+    'if not exist "%LLVM_CONFIG_PATH%" (echo llvm-config missing: %LLVM_CONFIG_PATH% & exit /b 1)',
+    '"%LLVM_CONFIG_PATH%" --version',
+]
 repair-wheel-command = [
     'uvx --from delvewheel delvewheel repair -w {dest_dir} {wheel}',
     'uvx abi3audit --strict --report {wheel}',

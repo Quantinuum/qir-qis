@@ -132,17 +132,19 @@ This updates `qir_qis.pyi` with the latest type signatures.
 
 ## Updating LLVM
 
-For an LLVM bump, update:
+LLVM upgrades are now coordinated with `hugrverse-env`, so there is not a stable
+repo-local checklist beyond "update every place that pins the current ABI and
+installation contract."
 
-1. `Cargo.toml`:
-   - `inkwell` feature, for example `llvm21-1` to the matching new feature
-   - `llvm-sys` crate version, for example `211.0.0` to the matching new version
-2. `.github/actions/setup-llvm/action.yml` for the default LLVM version and versioned `llvm-sys` prefix environment variable.
-3. `.github/workflows/CI.yml` and `.github/workflows/rust-release.yml` for `LLVM_VERSION`, `LLVM_SYS_PREFIX_ENV_VAR`, and related cache-key names.
-4. `pyproject.toml` for the cibuildwheel environment variables and macOS wheel setup commands.
-5. `README.md`, `DEVELOPMENT.md`, and any other docs or comments that mention `llvm@21`, `LLVM_SYS_211_PREFIX`, or LLVM 21 examples.
+At minimum, review:
 
-After the bump, run:
+1. `Cargo.toml` for the `inkwell` feature and `llvm-sys` version.
+2. `hugrenv.lock` for the pinned `hugrverse-env` release.
+3. `.github/workflows/CI.yml`, `.github/workflows/robustness.yml`, and `.github/workflows/rust-release.yml` for the shared CI install flow.
+4. `pyproject.toml` and `.github/scripts/install_hugrenv.py` for wheel-build installation and environment wiring.
+5. user-facing docs such as `README.md` and this file for LLVM version examples.
+
+After changing the LLVM pin, run:
 
 1. `make test`
 2. `cargo run --example rust_api`

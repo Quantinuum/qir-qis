@@ -34,8 +34,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: -D warnings
-  LLVM_VERSION: "21.1.8"
-  LLVM_SYS_PREFIX_ENV_VAR: "LLVM_SYS_211_PREFIX"
   LLVM_RUST_CACHE_FAMILY: "llvm21"
 
 jobs:
@@ -53,21 +51,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-
-      - uses: quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
+      - name: Install hugrenv LLVM
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
           packages: "llvm"
-
-      # not sure if this is needed with hugrenv
-      #
-      #- name: Configure linker flags for test
-      #  if: runner.os == 'Linux'
-      #  run: |
-      #    llvm_root="${LLVM_PATH}"
-      #    echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
-      #    echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
-      #    echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
-      #    echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
+      - name: Configure linker flags for test
+        if: runner.os == 'Linux'
+        run: |
+          llvm_root="${LLVM_SYS_211_PREFIX}"
+          echo "LLVM_CONFIG_PATH=${llvm_root}/bin/llvm-config" >>"$GITHUB_ENV"
+          echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@nextest
         if: runner.os != 'Windows'
@@ -116,20 +112,18 @@ jobs:
           filters: |
             lib_rs:
               - 'src/lib.rs'
-      - uses: quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
+      - name: Install hugrenv LLVM
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
           packages: "llvm"
-
-      # not sure if this is needed with hugrenv
-      #
-      # - name: Configure linker flags for lint
-      #   run: |
-      #     llvm_root="${LLVM_PATH}"
-      #     echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
-      #     echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
-      #     echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
-      #     echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
-      
+      - name: Configure linker flags for lint
+        run: |
+          llvm_root="${LLVM_SYS_211_PREFIX}"
+          echo "LLVM_CONFIG_PATH=${llvm_root}/bin/llvm-config" >>"$GITHUB_ENV"
+          echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
+          echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: astral-sh/setup-uv@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: cargo-bins/cargo-binstall@v1.17.7
