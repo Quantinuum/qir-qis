@@ -97,11 +97,7 @@ jobs:
         if: runner.os != 'Linux'
         run: uv run examples/python_api.py
       - name: Python main.py regression smoke
-        if: runner.os != 'Windows'
         run: uv run -- python tests/test_main.py
-      - name: Python main.py regression smoke
-        if: runner.os == 'Windows'
-        run: uv run --no-sync -- python tests/test_main.py
 
   lint:
     runs-on: ubuntu-latest

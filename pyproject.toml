@@ -34,16 +34,13 @@ dev = [
     "maturin~=1.13.1",
     "qir-formatter~=0.2",
     "rich~=14.0",
-    "selene-sim~=0.2.11",
+    "selene-sim~=0.2.15",
 ]
 
 [tool.uv]
 prerelease = "allow"
 # Rebuild package when any rust files change
 cache-keys = [{ file = "src/**/*.rs" }]
-
-[tool.uv.sources]
-# selene-sim = { path = "../selene" }
 
 [tool.deptry]
 known_first_party = ["qir_qis"]
