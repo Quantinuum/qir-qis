@@ -81,6 +81,7 @@ test-command = [
 
 [tool.cibuildwheel.linux]
 environment-pass = ["HUGRENV_PATH"]
+config-settings = { "build-args" = ["--compatibility", "manylinux_2_28"] }
 before-all = [
     'dnf install -y libffi-devel',
     'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.91.0',
