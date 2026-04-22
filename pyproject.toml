@@ -80,7 +80,6 @@ test-command = [
 
 [tool.cibuildwheel.linux]
 environment-pass = ["HUGRENV_PATH"]
-environment = { PATH = '$HOME/.cargo/bin:/host${HUGRENV_PATH}/bin:$PATH', LLVM_SYS_211_PREFIX = '/host${HUGRENV_PATH}', LLVM_CONFIG_PATH = '/host${HUGRENV_PATH}/bin/llvm-config', LD_LIBRARY_PATH = '/host${HUGRENV_PATH}/lib:/host${HUGRENV_PATH}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}', LLVM_SYS_211_NO_CLEAN_CFLAGS = '1', AR = '/usr/bin/ar', RANLIB = '/usr/bin/ranlib' }
 before-all = [
     'dnf install -y libffi-devel',
     'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.91.0',
@@ -90,6 +89,15 @@ repair-wheel-command = [
     'cp {wheel} {dest_dir}',
     'uvx abi3audit --strict --report {wheel}',
 ]
+
+[tool.cibuildwheel.linux.environment]
+PATH = '$HOME/.cargo/bin:/host${HUGRENV_PATH}/bin:$PATH'
+LLVM_SYS_211_PREFIX = '/host${HUGRENV_PATH}'
+LLVM_CONFIG_PATH = '/host${HUGRENV_PATH}/bin/llvm-config'
+LD_LIBRARY_PATH = '/host${HUGRENV_PATH}/lib:/host${HUGRENV_PATH}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}'
+LLVM_SYS_211_NO_CLEAN_CFLAGS = '1'
+AR = '/usr/bin/ar'
+RANLIB = '/usr/bin/ranlib'
 
 [tool.cibuildwheel.macos.environment]
 PATH = '$HUGRENV_PATH/bin:$PATH'
@@ -109,7 +117,6 @@ repair-wheel-command = [
 before-all = [
     'rustup update --no-self-update',
 ]
-environment = { PATH = '$HUGRENV_PATH/bin:$PATH', LLVM_SYS_211_PREFIX = '$HUGRENV_PATH', LLVM_CONFIG_PATH = '$HUGRENV_PATH/bin/llvm-config.exe' }
 repair-wheel-command = [
     'copy /Y {wheel} {dest_dir}',
     'uvx abi3audit --strict --report {wheel}',
@@ -117,3 +124,8 @@ repair-wheel-command = [
 test-command = [
     '''python -c "from pathlib import Path; import qir_qis; ll = Path(r'{project}\tests\data\base_native_only.ll').read_text(); qir = qir_qis.qir_ll_to_bc(ll); qir_qis.validate_qir(qir); out = qir_qis.qir_to_qis(qir, opt_level=0, target='x86-64'); assert isinstance(out, (bytes, bytearray)) and len(out) > 0"''',
 ]
+
+[tool.cibuildwheel.windows.environment]
+PATH = '$HUGRENV_PATH/bin:$PATH'
+LLVM_SYS_211_PREFIX = '$HUGRENV_PATH'
+LLVM_CONFIG_PATH = '$HUGRENV_PATH/bin/llvm-config.exe'
