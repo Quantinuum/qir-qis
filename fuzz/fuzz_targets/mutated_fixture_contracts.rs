@@ -9,10 +9,18 @@ const FIXTURES: &[&str] = &[
     include_str!("../../tests/data/adaptive.ll"),
     include_str!("../../tests/data/qir2_base.ll"),
     include_str!("../../tests/data/qir2_adaptive.ll"),
+    include_str!("../../tests/data/dynamic_qubit_alloc.ll"),
+    include_str!("../../tests/data/dynamic_qubit_alloc_checked.ll"),
+    include_str!("../../tests/data/dynamic_qubit_array_checked.ll"),
+    include_str!("../../tests/data/dynamic_qubit_array_ssa.ll"),
+    include_str!("../../tests/data/dynamic_result_alloc.ll"),
+    include_str!("../../tests/data/dynamic_result_array.ll"),
+    include_str!("../../tests/data/dynamic_result_mixed_array_output.ll"),
 ];
 const PROFILE_ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz_";
 const SCHEMA_ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz_";
 const NUMERIC_ALPHABET: &[u8] = b"0123456789";
+const BOOL_ALPHABET: &[u8] = b"falserut";
 
 #[derive(Clone)]
 struct SpanSpec {
@@ -37,6 +45,33 @@ fn find_module_flag_value_span(text: &str, flag_name: &str) -> Option<Range<usiz
     let start = text.find(&needle)? + needle.len();
     let end = text[start..]
         .find(|ch: char| !ch.is_ascii_digit())
+        .map_or(text.len(), |idx| start + idx);
+    Some(start..end)
+}
+
+fn find_boolean_attr_value_span(text: &str, attr_name: &str) -> Option<Range<usize>> {
+    let needle = format!("\"{attr_name}\"=\"");
+    let start = text.find(&needle)? + needle.len();
+    let end = text[start..]
+        .find(|ch: char| ch != 't' && ch != 'r' && ch != 'u' && ch != 'e' && ch != 'f' && ch != 'a' && ch != 'l' && ch != 's')
+        .map_or(text.len(), |idx| start + idx);
+    Some(start..end)
+}
+
+fn find_boolean_module_flag_value_span(text: &str, flag_name: &str) -> Option<Range<usize>> {
+    let needle = format!("!\"{flag_name}\", i1 ");
+    let start = text.find(&needle)? + needle.len();
+    let end = text[start..]
+        .find(|ch: char| {
+            ch != 't'
+                && ch != 'r'
+                && ch != 'u'
+                && ch != 'e'
+                && ch != 'f'
+                && ch != 'a'
+                && ch != 'l'
+                && ch != 's'
+        })
         .map_or(text.len(), |idx| start + idx);
     Some(start..end)
 }
@@ -69,6 +104,21 @@ fn collect_spans(text: &str) -> Vec<SpanSpec> {
             range,
             alphabet: NUMERIC_ALPHABET,
         });
+    }
+
+    for flag_name in [
+        "dynamic_qubit_management",
+        "dynamic_result_management",
+        "arrays",
+    ] {
+        if let Some(range) = find_boolean_module_flag_value_span(text, flag_name)
+            .or_else(|| find_boolean_attr_value_span(text, flag_name))
+        {
+            spans.push(SpanSpec {
+                range,
+                alphabet: BOOL_ALPHABET,
+            });
+        }
     }
 
     spans

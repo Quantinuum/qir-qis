@@ -185,6 +185,37 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
 declare void @__quantum__rt__double_record_output(double, i8*)
 ```
 
+### Dynamic Allocation and Arrays
+
+`qir-qis` accepts the optional Adaptive Profile capability flags:
+
+- `"dynamic_qubit_management"`
+- `"dynamic_result_management"`
+- `"arrays"`
+
+When enabled, the following QIR runtime APIs are accepted and lowered by the compiler:
+
+```llvm
+declare ptr @__quantum__rt__qubit_allocate(ptr %out_err)
+declare void @__quantum__rt__qubit_release(ptr %qubit)
+declare ptr @__quantum__rt__result_allocate(ptr %out_err)
+declare void @__quantum__rt__result_release(ptr %result)
+
+declare void @__quantum__rt__qubit_array_allocate(i64 %N, ptr %array, ptr %out_err)
+declare void @__quantum__rt__qubit_array_release(i64 %N, ptr %array)
+declare void @__quantum__rt__result_array_allocate(i64 %N, ptr %array, ptr %out_err)
+declare void @__quantum__rt__result_array_release(i64 %N, ptr %array)
+declare void @__quantum__rt__result_array_record_output(i64 %N, ptr %result_array, ptr %tag)
+```
+
+Support boundary:
+
+- Fixed-size LLVM pointer arrays are supported via `alloca`, `getelementptr`, `load`, `store`, `extractvalue`, and `insertvalue`.
+- `required_num_qubits` is optional when `dynamic_qubit_management=true`.
+- `required_num_results` is optional when `dynamic_result_management=true`.
+- `__quantum__rt__result_array_record_output` currently requires an array length that fits in `i32` for the downstream `print_bool_arr(...)` ABI.
+- Runtime-sized classical buffers remain out of scope.
+
 ## Platform Utilities
 
 These QIR functions provide additional runtime capabilities.

@@ -1,6 +1,6 @@
 ---
 source: src/convert.rs
-expression: qis_text.unwrap().to_string()
+expression: qis_text.to_string()
 ---
 ; ModuleID = 'qis_module'
 source_filename = "qir"
@@ -170,12 +170,12 @@ qir_qis.init_qubit.exit87:                        ; preds = %qir_qis.init_qubit.
   %1 = getelementptr inbounds nuw i8, ptr %barrier_qubits, i64 16
   %2 = load <2 x i64>, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
   store <2 x i64> %2, ptr %1, align 16
-  %qbit.i95 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  %qbit4 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
   %3 = getelementptr inbounds nuw i8, ptr %barrier_qubits, i64 32
-  store i64 %qbit.i95, ptr %3, align 16
+  store i64 %qbit4, ptr %3, align 16
   call void @___barrier(ptr nonnull %barrier_qubits, i64 5)
-  %qbit.i.i96 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  call void @___rxy(i64 %qbit.i.i96, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
+  %qbit.i.i92 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  call void @___rxy(i64 %qbit.i.i92, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
   %qbit.i8.i = load i64, ptr @qis_qs, align 16
   %qbit.i11.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   call void @___rzz(i64 %qbit.i8.i, i64 %qbit.i11.i, double 0x3FF921FB54442D18)
