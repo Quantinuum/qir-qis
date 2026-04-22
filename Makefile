@@ -12,7 +12,7 @@ compile:
 
 .PHONY: wheel
 wheel:
-	$(PYTHON) .github/scripts/build_repaired_wheel.py
+	uv build --wheel
 
 .PHONY: lint
 lint:

@@ -45,10 +45,10 @@ If you are using an agentic coding tool, see [`AGENTS.md`](AGENTS.md). It captur
 # Build Rust binary
 cargo build --release
 
-# Build a repaired wheel that vendors external shared libraries
+# Build a wheel; maturin repairs and vendors external shared libraries
 make wheel
 
-# Or build directly through the backend
+# Equivalent direct backend invocation
 uv build --wheel
 ```
 
