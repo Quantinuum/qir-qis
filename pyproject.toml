@@ -27,6 +27,8 @@ build-backend = "maturin"
 [tool.maturin]
 profile = "release"
 features = ["pyo3/extension-module"]
+compatibility = "pypi"
+auditwheel = "repair"
 
 [dependency-groups]
 dev = [
