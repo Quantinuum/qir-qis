@@ -21,11 +21,6 @@ permissions:
   actions: write
   contents: read
 
-env:
-  LLVM_VERSION: "21.1.8"
-  LLVM_SYS_PREFIX_ENV_VAR: "LLVM_SYS_211_PREFIX"
-  LLVM_WINDOWS_CACHE_KEY_SUFFIX: "windows-shared-v1"
-
 jobs:
   prepare_release_context:
     name: Prepare release context
@@ -86,51 +81,19 @@ jobs:
         with:
           ref: ${{ needs.prepare_release_context.outputs.checkout_ref }}
 
-      - name: Setup LLVM (Windows)
-        if: matrix.os == 'windows-latest'
-        uses: ./.github/actions/setup-llvm
-        with:
-          llvm-version: ${{ env.LLVM_VERSION }}
-          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
-          enable-linux: "false"
-          enable-macos: "false"
-          windows-cache-key-suffix: ${{ env.LLVM_WINDOWS_CACHE_KEY_SUFFIX }}
-          windows-save-cache: "false"
-
-      - name: Set up Docker Buildx
-        if: startsWith(matrix.os, 'ubuntu')
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build custom manylinux image (x86_64)
-        if: matrix.os == 'ubuntu-latest'
-        uses: docker/build-push-action@v7
-        with:
-          context: .github/manylinux
-          file: .github/manylinux/Dockerfile.manylinux-2_34-x86_64
-          build-args: |
-            LLVM_VERSION=${{ env.LLVM_VERSION }}
-          tags: qir-qis-manylinux_2_34_x86_64
-          load: true
-          cache-from: type=gha,scope=manylinux-x86
-          cache-to: type=gha,scope=manylinux-x86,mode=max
-
-      - name: Build custom manylinux image (aarch64)
-        if: matrix.os == 'ubuntu-24.04-arm'
-        uses: docker/build-push-action@v7
-        with:
-          context: .github/manylinux
-          file: .github/manylinux/Dockerfile.manylinux-2_34-aarch64
-          build-args: |
-            LLVM_VERSION=${{ env.LLVM_VERSION }}
-          tags: qir-qis-manylinux_2_34_aarch64
-          load: true
-          cache-from: type=gha,scope=manylinux-arm64
-          cache-to: type=gha,scope=manylinux-arm64,mode=max
-
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+
+      - name: Install hugrenv LLVM
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
+        with:
+          packages: "llvm"
+
+      - name: Export hugrenv path for cibuildwheel
+        shell: bash
+        run: echo "HUGRENV_PATH=${LLVM_SYS_211_PREFIX}" >>"$GITHUB_ENV"
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.3

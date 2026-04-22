@@ -21,16 +21,17 @@ dynamic = ["version"]
 repository = "https://github.com/quantinuum/qir-qis/"
 
 [build-system]
-requires = ["maturin~=1.0"]
+requires = ["maturin~=1.13.1"]
 build-backend = "maturin"
 
 [tool.maturin]
 profile = "release"
 features = ["pyo3/extension-module"]
+auditwheel = "repair"
 
 [dependency-groups]
 dev = [
-    "maturin~=1.0",
+    "maturin~=1.13.1",
     "qir-formatter~=0.1",
     "rich~=14.0",
     "selene-sim~=0.2.11",
@@ -67,56 +68,60 @@ lint.ignore = [
     "PYI021", # Docstrings should not be included in stubs
 ]
 
+
 [tool.cibuildwheel]
 build = "cp310-*"
 build-frontend = "build[uv]"
 skip = "*-win32 *-manylinux_i686 *-musllinux*"
-manylinux-x86_64-image = "qir-qis-manylinux_2_34_x86_64"
-manylinux-aarch64-image = "qir-qis-manylinux_2_34_aarch64"
+manylinux-x86_64-image = "quay.io/pypa/manylinux_2_28_x86_64"
+manylinux-aarch64-image = "quay.io/pypa/manylinux_2_28_aarch64"
 test-command = [
     "python -c 'import qir_qis; from pathlib import Path; ll = Path(\"{project}/tests/data/base_native_only.ll\").read_text(); qir = qir_qis.qir_ll_to_bc(ll); qir_qis.validate_qir(qir); out = qir_qis.qir_to_qis(qir); assert isinstance(out, (bytes, bytearray)) and len(out) > 0'",
 ]
 
 [tool.cibuildwheel.linux]
-environment = { PATH = '$HOME/.cargo/bin:$PATH', LLVM_SYS_211_PREFIX = '/opt/llvm', LLVM_CONFIG_PATH = '/opt/llvm/bin/llvm-config', LD_LIBRARY_PATH = '/opt/llvm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}', LLVM_SYS_211_NO_CLEAN_CFLAGS = '1', AR = '/usr/bin/ar', RANLIB = '/usr/bin/ranlib' }
+environment-pass = ["HUGRENV_PATH"]
+config-settings = { "build-args" = ["--compatibility", "manylinux_2_28"] }
 before-all = [
+    'dnf install -y libffi-devel',
     'curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.91.0',
-    '/opt/llvm/bin/llvm-config --version',
+    '/host${HUGRENV_PATH}/bin/llvm-config --version',
 ]
 repair-wheel-command = [
-    'auditwheel repair -w {dest_dir} {wheel}',
-    'uvx abi3audit --strict --report {wheel}',
+    'cp {wheel} {dest_dir}',
+    'uvx abi3audit --strict --report {dest_dir}/*.whl',
+]
+
+[tool.cibuildwheel.linux.environment]
+PATH = '$HOME/.cargo/bin:/host${HUGRENV_PATH}/bin:$PATH'
+LLVM_SYS_211_PREFIX = '/host${HUGRENV_PATH}'
+LLVM_CONFIG_PATH = '/host${HUGRENV_PATH}/bin/llvm-config'
+LD_LIBRARY_PATH = '/host${HUGRENV_PATH}/lib:/host${HUGRENV_PATH}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}'
+LLVM_SYS_211_NO_CLEAN_CFLAGS = '1'
+
+
+[tool.cibuildwheel.macos]
+repair-wheel-command = [
+    'cp {wheel} {dest_dir}',
+    'uvx abi3audit --strict --report {dest_dir}/*.whl',
 ]
 
 [tool.cibuildwheel.macos.environment]
-PATH = '/tmp/llvm/bin:$PATH'
-LLVM_SYS_211_PREFIX = '/tmp/llvm'
-MACOSX_DEPLOYMENT_TARGET = "15.0"
-[tool.cibuildwheel.macos]
-before-all = [
-    'brew install llvm@21',
-    'if [ "$(uname -m)" = "arm64" ]; then LLVM_PREFIX=/opt/homebrew/opt/llvm@21; else LLVM_PREFIX=/usr/local/opt/llvm@21; fi',
-    'mkdir -p /tmp/llvm',
-    'rsync -a "${LLVM_PREFIX}/" /tmp/llvm/',
-]
-repair-wheel-command = [
-    'DYLD_FALLBACK_LIBRARY_PATH=/tmp/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}',
-    'uvx abi3audit --strict --report {wheel}',
-]
+LLVM_SYS_211_PREFIX = '$HUGRENV_PATH'
+LLVM_CONFIG_PATH = '$HUGRENV_PATH/bin/llvm-config'
+MACOSX_DEPLOYMENT_TARGET = "11.0"
+
 
 [tool.cibuildwheel.windows]
 before-all = ['rustup update --no-self-update']
-environment = { PATH = "$LLVM_PATH/bin;$PATH", LLVM_SYS_211_PREFIX = "$LLVM_PATH", LLVM_PATH = "$LLVM_PATH", LLVM_CONFIG_PATH = "$LLVM_CONFIG_PATH" }
-before-build = [
-    'if "%LLVM_SYS_211_PREFIX%"=="" (echo LLVM_SYS_211_PREFIX is empty & set LLVM & where llvm-config & exit /b 1)',
-    'if "%LLVM_CONFIG_PATH%"=="" (echo LLVM_CONFIG_PATH is empty & set LLVM & where llvm-config & exit /b 1)',
-    'if not exist "%LLVM_CONFIG_PATH%" (echo llvm-config missing: %LLVM_CONFIG_PATH% & exit /b 1)',
-    '"%LLVM_CONFIG_PATH%" --version',
-]
 repair-wheel-command = [
-    'uvx --from delvewheel delvewheel repair -w {dest_dir} {wheel}',
-    'uvx abi3audit --strict --report {wheel}',
+    'uvx --from delvewheel delvewheel repair --add-path "%HUGRENV_PATH%\bin" -w {dest_dir} {wheel}',
+    'for %I in ("{dest_dir}\\*.whl") do uvx abi3audit --strict --report "%~fI"',
 ]
 test-command = [
     '''python -c "from pathlib import Path; import qir_qis; ll = Path(r'{project}\tests\data\base_native_only.ll').read_text(); qir = qir_qis.qir_ll_to_bc(ll); qir_qis.validate_qir(qir); out = qir_qis.qir_to_qis(qir, opt_level=0, target='x86-64'); assert isinstance(out, (bytes, bytearray)) and len(out) > 0"''',
 ]
+
+[tool.cibuildwheel.windows.environment]
+LLVM_SYS_211_PREFIX = '$HUGRENV_PATH'
+LLVM_CONFIG_PATH = '$HUGRENV_PATH/bin/llvm-config.exe'

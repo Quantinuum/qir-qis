@@ -40,9 +40,6 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  LLVM_VERSION: "21.1.8"
-  LLVM_SYS_PREFIX_ENV_VAR: "LLVM_SYS_211_PREFIX"
-  LLVM_LINUX_CACHE_KEY_SUFFIX: "robustness-linux-shared-v1"
 
 jobs:
   fuzz-targets:
@@ -73,17 +70,14 @@ jobs:
         target: ${{ fromJson(needs.fuzz-targets.outputs.targets) }}
     steps:
       - uses: actions/checkout@v6
-      - name: Setup LLVM
-        uses: ./.github/actions/setup-llvm
+      - name: Install hugrenv LLVM
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
-          llvm-version: ${{ env.LLVM_VERSION }}
-          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
-          enable-macos: "false"
-          enable-windows: "false"
-          linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
+          packages: "llvm"
       - name: Configure linker flags
         run: |
-          llvm_root="${LLVM_PATH}"
+          llvm_root="${LLVM_SYS_211_PREFIX}"
+          echo "LLVM_CONFIG_PATH=${llvm_root}/bin/llvm-config" >>"$GITHUB_ENV"
           echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
           echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
           echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
@@ -116,17 +110,14 @@ jobs:
         target: ${{ fromJson(needs.fuzz-targets.outputs.targets) }}
     steps:
       - uses: actions/checkout@v6
-      - name: Setup LLVM
-        uses: ./.github/actions/setup-llvm
+      - name: Install hugrenv LLVM
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
-          llvm-version: ${{ env.LLVM_VERSION }}
-          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
-          enable-macos: "false"
-          enable-windows: "false"
-          linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
+          packages: "llvm"
       - name: Configure linker flags
         run: |
-          llvm_root="${LLVM_PATH}"
+          llvm_root="${LLVM_SYS_211_PREFIX}"
+          echo "LLVM_CONFIG_PATH=${llvm_root}/bin/llvm-config" >>"$GITHUB_ENV"
           echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
           echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
           echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
@@ -168,17 +159,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Setup LLVM
-        uses: ./.github/actions/setup-llvm
+      - name: Install hugrenv LLVM
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
-          llvm-version: ${{ env.LLVM_VERSION }}
-          llvm-sys-prefix-env-var: ${{ env.LLVM_SYS_PREFIX_ENV_VAR }}
-          enable-macos: "false"
-          enable-windows: "false"
-          linux-cache-key-suffix: ${{ env.LLVM_LINUX_CACHE_KEY_SUFFIX }}
+          packages: "llvm"
       - name: Configure linker flags
         run: |
-          llvm_root="${LLVM_PATH}"
+          llvm_root="${LLVM_SYS_211_PREFIX}"
+          echo "LLVM_CONFIG_PATH=${llvm_root}/bin/llvm-config" >>"$GITHUB_ENV"
           echo "CC=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
           echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
           echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
