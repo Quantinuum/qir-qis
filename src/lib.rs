@@ -83,7 +83,7 @@ mod aux {
         basic_block::BasicBlock,
         context::Context,
         module::{Linkage, Module},
-        types::{ArrayType, BasicTypeEnum},
+        types::{ArrayType, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
         values::{
             AnyValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
             FunctionValue, InstructionOpcode, PointerValue,
@@ -152,6 +152,61 @@ mod aux {
                 | "__quantum__rt__result_array_release"
                 | "__quantum__rt__result_array_record_output"
         )
+    }
+
+    fn is_i64_type(type_: BasicMetadataTypeEnum<'_>) -> bool {
+        type_.is_int_type() && type_.into_int_type().get_bit_width() == 64
+    }
+
+    fn is_ptr_type(type_: BasicMetadataTypeEnum<'_>) -> bool {
+        type_.is_pointer_type()
+    }
+
+    fn is_void_return(fn_type: FunctionType<'_>) -> bool {
+        fn_type.get_return_type().is_none()
+    }
+
+    fn is_ptr_return(fn_type: FunctionType<'_>) -> bool {
+        fn_type
+            .get_return_type()
+            .is_some_and(BasicTypeEnum::is_pointer_type)
+    }
+
+    fn validate_dynamic_rt_signature(
+        fn_name: &str,
+        fn_type: FunctionType<'_>,
+    ) -> Result<(), String> {
+        let params = fn_type.get_param_types();
+        let valid = match fn_name {
+            "__quantum__rt__qubit_allocate" | "__quantum__rt__result_allocate" => {
+                is_ptr_return(fn_type) && params.len() == 1 && is_ptr_type(params[0])
+            }
+            "__quantum__rt__qubit_release" | "__quantum__rt__result_release" => {
+                is_void_return(fn_type) && params.len() == 1 && is_ptr_type(params[0])
+            }
+            "__quantum__rt__qubit_array_allocate"
+            | "__quantum__rt__result_array_allocate"
+            | "__quantum__rt__result_array_record_output" => {
+                is_void_return(fn_type)
+                    && params.len() == 3
+                    && is_i64_type(params[0])
+                    && is_ptr_type(params[1])
+                    && is_ptr_type(params[2])
+            }
+            "__quantum__rt__qubit_array_release" | "__quantum__rt__result_array_release" => {
+                is_void_return(fn_type)
+                    && params.len() == 2
+                    && is_i64_type(params[0])
+                    && is_ptr_type(params[1])
+            }
+            _ => true,
+        };
+
+        if valid {
+            Ok(())
+        } else {
+            Err(format!("Malformed QIR RT function declaration: {fn_name}"))
+        }
     }
 
     pub fn get_capability_flags(module: &Module) -> CapabilityFlags {
@@ -263,6 +318,10 @@ mod aux {
                     && !is_capability_gated_rt_function(fn_name)
                 {
                     errors.push(format!("Unsupported QIR RT function: {fn_name}"));
+                } else if is_capability_gated_rt_function(fn_name)
+                    && let Err(err) = validate_dynamic_rt_signature(fn_name, fun.get_type())
+                {
+                    errors.push(err);
                 }
                 continue;
             } else if fn_name.starts_with("___") {
@@ -768,6 +827,7 @@ mod aux {
             }
         }
     }
+
     // SAFETY: `ProcessCallArgs` is created and consumed synchronously within a single
     // `process_call_instruction` invocation. The raw pointers below point at
     // stack-owned state from `process_entry_function` that outlives the handler
@@ -5178,6 +5238,37 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
             .expect_err("called dynamic qubit functions should fail validation");
         assert!(
             err.contains("__quantum__rt__qubit_allocate requires `dynamic_qubit_management=true`")
+        );
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_malformed_dynamic_qubit_allocate_signature() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q = call ptr @__quantum__rt__qubit_allocate()
+  call void @__quantum__rt__qubit_release(ptr %q)
+  ret i64 0
+}
+
+declare ptr @__quantum__rt__qubit_allocate()
+declare void @__quantum__rt__qubit_release(ptr)
+
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 true}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 1, !"arrays", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("malformed dynamic runtime declaration should fail validation");
+        assert!(
+            err.contains("Malformed QIR RT function declaration: __quantum__rt__qubit_allocate")
         );
     }
 
