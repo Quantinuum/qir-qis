@@ -683,7 +683,9 @@ mod aux {
                     if !matches!(
                         fn_name,
                         "__quantum__rt__qubit_array_allocate"
+                            | "__quantum__rt__qubit_array_release"
                             | "__quantum__rt__result_array_allocate"
+                            | "__quantum__rt__result_array_release"
                             | "__quantum__rt__result_array_record_output"
                     ) {
                         continue;
@@ -5634,6 +5636,64 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
             err.contains(
                 "__quantum__rt__result_array_allocate requires a fixed-size backing array"
             )
+        );
+        assert!(err.contains("requested length 2 does not match backing array length 1"));
+    }
+
+    #[test]
+    fn test_validate_dynamic_qubit_array_release_length_mismatch_fails() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %qubits = alloca [1 x ptr], align 8
+  call void @__quantum__rt__qubit_array_release(i64 2, ptr %qubits)
+  ret i64 0
+}
+
+declare void @__quantum__rt__qubit_array_release(i64, ptr)
+
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 true}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 1, !"arrays", i1 true}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let err = validate_qir(&bc_bytes, None).expect_err("fixture should fail validation");
+        assert!(
+            err.contains("__quantum__rt__qubit_array_release requires a fixed-size backing array")
+        );
+        assert!(err.contains("requested length 2 does not match backing array length 1"));
+    }
+
+    #[test]
+    fn test_validate_dynamic_result_array_release_length_mismatch_fails() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %results = alloca [1 x ptr], align 8
+  call void @__quantum__rt__result_array_release(i64 2, ptr %results)
+  ret i64 0
+}
+
+declare void @__quantum__rt__result_array_release(i64, ptr)
+
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 true}
+!4 = !{i32 1, !"arrays", i1 true}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let err = validate_qir(&bc_bytes, None).expect_err("fixture should fail validation");
+        assert!(
+            err.contains("__quantum__rt__result_array_release requires a fixed-size backing array")
         );
         assert!(err.contains("requested length 2 does not match backing array length 1"));
     }

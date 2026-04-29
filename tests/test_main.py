@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "main.py"
+MAIN_TIMEOUT_SECONDS = 120
 ZIG_CACHE_ROOT = Path(tempfile.mkdtemp(prefix="qir-qis-main-test-"))
 
 
@@ -26,17 +27,25 @@ def run_main(*args: str) -> str:
     env = os.environ.copy()
     env["ZIG_GLOBAL_CACHE_DIR"] = str(ZIG_CACHE_ROOT / "zig-global-cache")
     env["ZIG_LOCAL_CACHE_DIR"] = str(ZIG_CACHE_ROOT / "zig-local-cache")
-    proc = subprocess.run(  # noqa: S603
-        [sys.executable, str(MAIN), *args],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert proc.returncode == 0, (  # noqa: S101
-        f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}"
-    )
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [sys.executable, str(MAIN), *args],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=MAIN_TIMEOUT_SECONDS,
+        )
+    except subprocess.CalledProcessError as exc:
+        message = f"stdout:\n{exc.stdout}\n\nstderr:\n{exc.stderr}"
+        raise AssertionError(message) from exc
+    except subprocess.TimeoutExpired as exc:
+        message = (
+            f"timed out after {MAIN_TIMEOUT_SECONDS}s\n\n"
+            f"stdout:\n{exc.stdout}\n\nstderr:\n{exc.stderr}"
+        )
+        raise AssertionError(message) from exc
     return proc.stdout
 
 
