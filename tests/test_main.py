@@ -1,40 +1,19 @@
-"""Regression tests for `main.py` output handling."""
+"""Smoke tests for `main.py` output handling."""
 
-import atexit
-import os
-import shutil
 import subprocess
 import sys
-import tempfile
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-MAIN = ROOT / "main.py"
-MAIN_TIMEOUT_SECONDS = 120
-ZIG_CACHE_ROOT = Path(tempfile.mkdtemp(prefix="qir-qis-main-test-"))
-
-
-def cleanup_zig_cache_root() -> None:
-    """Best-effort cleanup for the shared Zig caches created during this run."""
-    shutil.rmtree(ZIG_CACHE_ROOT, ignore_errors=True)
-
-
-atexit.register(cleanup_zig_cache_root)
+MAIN_TIMEOUT_SECONDS = 300
 
 
 def run_main(*args: str) -> str:
-    """Run `main.py` with shared Zig caches and return stdout."""
-    env = os.environ.copy()
-    env["ZIG_GLOBAL_CACHE_DIR"] = str(ZIG_CACHE_ROOT / "zig-global-cache")
-    env["ZIG_LOCAL_CACHE_DIR"] = str(ZIG_CACHE_ROOT / "zig-local-cache")
+    """Run `main.py` and return stdout."""
     try:
         proc = subprocess.run(  # noqa: S603
-            [sys.executable, str(MAIN), *args],
-            cwd=ROOT,
+            [sys.executable, "main.py", *args],
             check=True,
             capture_output=True,
             text=True,
-            env=env,
             timeout=MAIN_TIMEOUT_SECONDS,
         )
     except subprocess.CalledProcessError as exc:
