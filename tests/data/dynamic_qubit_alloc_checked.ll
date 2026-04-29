@@ -1,0 +1,39 @@
+@0 = internal constant [8 x i8] c"qcheck0\00"
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %err = alloca i1, align 1
+  store i1 false, ptr %err, align 1
+  %q = call ptr @__quantum__rt__qubit_allocate(ptr %err)
+  %failed = load i1, ptr %err, align 1
+  br i1 %failed, label %alloc_failed, label %alloc_ok
+
+alloc_ok:
+  call void @__quantum__qis__x__body(ptr %q)
+  call void @__quantum__qis__mz__body(ptr %q, ptr null)
+  call void @__quantum__rt__result_record_output(ptr null, ptr @0)
+  call void @__quantum__rt__qubit_release(ptr %q)
+  br label %done
+
+alloc_failed:
+  br label %done
+
+done:
+  ret i64 0
+}
+
+declare ptr @__quantum__rt__qubit_allocate(ptr)
+declare void @__quantum__rt__qubit_release(ptr)
+declare void @__quantum__qis__x__body(ptr)
+declare void @__quantum__qis__mz__body(ptr, ptr writeonly) #1
+declare void @__quantum__rt__result_record_output(ptr, ptr)
+
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_results"="1" }
+attributes #1 = { "irreversible" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 true}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 1, !"arrays", i1 false}

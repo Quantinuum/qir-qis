@@ -90,13 +90,14 @@ jobs:
         # empty bin/example harnesses, which is especially expensive with LLVM 21.
         run: cargo nextest run --lib --all-features ${{ matrix.nextest_extra_args }}
       - uses: astral-sh/setup-uv@v7
-        if: runner.os != 'Linux'
       - name: Rust API example smoke
         if: runner.os != 'Linux'
         run: cargo run --example rust_api --all-features --profile test
       - name: Python API example smoke
         if: runner.os != 'Linux'
         run: uv run examples/python_api.py
+      - name: Python main.py regression smoke
+        run: uv run -- python tests/test_main.py
 
   lint:
     runs-on: ubuntu-latest
@@ -146,10 +147,8 @@ jobs:
           cache-on-failure: true
           cache-workspace-crates: true
           cache-targets: true
-      - name: Run cargo fmt (check if all code is rustfmt-ed)
-        run: cargo fmt --all --check
-      - name: Run cargo clippy (deny warnings)
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Run pre-commit lint
+        run: uvx prek run --all-files
       - name: Verify Python stubs are up to date
         if: github.event_name == 'pull_request' && steps.stub_changes.outputs.lib_rs == 'true'
         run: |

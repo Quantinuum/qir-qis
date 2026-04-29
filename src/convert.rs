@@ -749,12 +749,9 @@ pub fn replace_rxy_call<'a>(
     ctx: &'a Context,
     module: &Module<'a>,
     old_call: InstructionValue<'a>,
+    dynamic_qubit_management: bool,
 ) -> Result<(), String> {
-    let get_idx_fn = module
-        .get_function(LOAD_QUBIT_FN)
-        .ok_or_else(|| format!("{LOAD_QUBIT_FN} not found"))?;
-
-    let _ = replace_native_call(
+    replace_native_call(
         ctx,
         module,
         old_call,
@@ -766,19 +763,18 @@ pub fn replace_rxy_call<'a>(
         ],
         |args, builder| {
             let qubit_ptr = args[2].into_pointer_value();
-            let idx_call = builder
-                .build_call(get_idx_fn, &[qubit_ptr.into()], "qbit")
-                .map_err(|e| format!("Failed to build call to {LOAD_QUBIT_FN}: {e}"))?;
-            let handle = match idx_call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(bv) => bv,
-                inkwell::values::ValueKind::Instruction(_) => {
-                    return Err(format!("{LOAD_QUBIT_FN} did not return a basic value"));
-                }
-            };
+            let handle = get_native_qubit_handle(
+                ctx,
+                module,
+                builder,
+                qubit_ptr,
+                dynamic_qubit_management,
+                "qbit",
+            )?;
             Ok(vec![handle, args[0], args[1]])
         },
-    );
-    Ok(())
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Replaces a call to `__quantum__qis__rz__body` with a call to `___rz`.
@@ -789,11 +785,9 @@ pub fn replace_rz_call<'a>(
     ctx: &'a Context,
     module: &Module<'a>,
     old_call: InstructionValue<'a>,
+    dynamic_qubit_management: bool,
 ) -> Result<(), String> {
-    let get_idx_fn = module
-        .get_function(LOAD_QUBIT_FN)
-        .ok_or_else(|| format!("{LOAD_QUBIT_FN} not found"))?;
-    let _ = replace_native_call(
+    replace_native_call(
         ctx,
         module,
         old_call,
@@ -801,19 +795,18 @@ pub fn replace_rz_call<'a>(
         &[ctx.i64_type().into(), ctx.f64_type().into()],
         |args, builder| {
             let qubit_ptr = args[1].into_pointer_value();
-            let idx_call = builder
-                .build_call(get_idx_fn, &[qubit_ptr.into()], "qbit")
-                .map_err(|e| format!("Failed to build call to {LOAD_QUBIT_FN}: {e}"))?;
-            let handle = match idx_call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(bv) => bv,
-                inkwell::values::ValueKind::Instruction(_) => {
-                    return Err(format!("{LOAD_QUBIT_FN} did not return a basic value"));
-                }
-            };
+            let handle = get_native_qubit_handle(
+                ctx,
+                module,
+                builder,
+                qubit_ptr,
+                dynamic_qubit_management,
+                "qbit",
+            )?;
             Ok(vec![handle, args[0]])
         },
-    );
-    Ok(())
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Replaces a call to `__quantum__qis__rzz__body` with a call to `___rzz`.
@@ -824,11 +817,9 @@ pub fn replace_rzz_call<'a>(
     ctx: &'a Context,
     module: &Module<'a>,
     old_call: InstructionValue<'a>,
+    dynamic_qubit_management: bool,
 ) -> Result<(), String> {
-    let get_idx_fn = module
-        .get_function(LOAD_QUBIT_FN)
-        .ok_or_else(|| format!("{LOAD_QUBIT_FN} not found"))?;
-    let _ = replace_native_call(
+    replace_native_call(
         ctx,
         module,
         old_call,
@@ -839,30 +830,55 @@ pub fn replace_rzz_call<'a>(
             ctx.f64_type().into(), // angle
         ],
         |args, builder| {
-            let qubit_ptr = args[1].into_pointer_value();
-            let idx_call = builder
-                .build_call(get_idx_fn, &[qubit_ptr.into()], "qbit")
-                .map_err(|e| format!("Failed to build call to {LOAD_QUBIT_FN}: {e}"))?;
-            let q1 = match idx_call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(bv) => bv,
-                inkwell::values::ValueKind::Instruction(_) => {
-                    return Err(format!("{LOAD_QUBIT_FN} did not return a basic value"));
-                }
-            };
-            let qubit_ptr = args[2].into_pointer_value();
-            let idx_call = builder
-                .build_call(get_idx_fn, &[qubit_ptr.into()], "qbit")
-                .map_err(|e| format!("Failed to build call to {LOAD_QUBIT_FN}: {e}"))?;
-            let q2 = match idx_call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(bv) => bv,
-                inkwell::values::ValueKind::Instruction(_) => {
-                    return Err(format!("{LOAD_QUBIT_FN} did not return a basic value"));
-                }
-            };
+            let q1 = get_native_qubit_handle(
+                ctx,
+                module,
+                builder,
+                args[1].into_pointer_value(),
+                dynamic_qubit_management,
+                "qbit1",
+            )?;
+            let q2 = get_native_qubit_handle(
+                ctx,
+                module,
+                builder,
+                args[2].into_pointer_value(),
+                dynamic_qubit_management,
+                "qbit2",
+            )?;
             Ok(vec![q1, q2, args[0]])
         },
-    );
-    Ok(())
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn get_native_qubit_handle<'ctx>(
+    ctx: &'ctx Context,
+    module: &Module<'ctx>,
+    builder: &inkwell::builder::Builder<'ctx>,
+    qubit_ptr: inkwell::values::PointerValue<'ctx>,
+    dynamic_qubit_management: bool,
+    name: &str,
+) -> Result<BasicValueEnum<'ctx>, String> {
+    if dynamic_qubit_management {
+        return builder
+            .build_ptr_to_int(qubit_ptr, ctx.i64_type(), name)
+            .map(BasicValueEnum::from)
+            .map_err(|e| format!("Failed to convert qubit pointer to handle: {e}"));
+    }
+
+    let get_idx_fn = module
+        .get_function(LOAD_QUBIT_FN)
+        .ok_or_else(|| format!("{LOAD_QUBIT_FN} not found"))?;
+    let idx_call = builder
+        .build_call(get_idx_fn, &[qubit_ptr.into()], name)
+        .map_err(|e| format!("Failed to build call to {LOAD_QUBIT_FN}: {e}"))?;
+    match idx_call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(bv) => Ok(bv),
+        inkwell::values::ValueKind::Instruction(_) => {
+            Err(format!("{LOAD_QUBIT_FN} did not return a basic value"))
+        }
+    }
 }
 
 /// Extracts the qubit index from an `IntToPtr` conversion string.
@@ -1094,6 +1110,7 @@ pub fn process_ir_defined_q_fns<'a>(
     ctx: &'a Context,
     module: &Module<'a>,
     entry_fn: FunctionValue,
+    dynamic_qubit_management: bool,
 ) -> Result<(), String> {
     for defined_fn in module
         .get_functions()
@@ -1107,7 +1124,14 @@ pub fn process_ir_defined_q_fns<'a>(
                         .and_then(|f| f.get_name().to_str().ok().map(ToOwned::to_owned))
                         .ok_or_else(|| "Function call must have a name".to_string())?;
 
-                    native_qir_to_qis_call(ctx, module, instr, &fn_name, defined_fn)?;
+                    native_qir_to_qis_call(
+                        ctx,
+                        module,
+                        instr,
+                        &fn_name,
+                        defined_fn,
+                        dynamic_qubit_management,
+                    )?;
                 }
             }
         }
@@ -1158,13 +1182,31 @@ fn native_qir_to_qis_call<'a>(
     instr: InstructionValue<'a>,
     fn_name: &str,
     defined_fn: FunctionValue,
+    dynamic_qubit_management: bool,
 ) -> Result<(), String> {
     match fn_name {
-        "__quantum__qis__rxy__body" => replace_rxy_call(ctx, module, instr)?,
-        "__quantum__qis__rzz__body" => replace_rzz_call(ctx, module, instr)?,
-        "__quantum__qis__rz__body" => replace_rz_call(ctx, module, instr)?,
-        "___qalloc" | "___reset" | "panic" => {
-            if defined_fn.get_name().to_str().ok() != Some(INIT_QARRAY_FN) {
+        "__quantum__qis__rxy__body" => {
+            replace_rxy_call(ctx, module, instr, dynamic_qubit_management)?;
+        }
+        "__quantum__qis__rzz__body" => {
+            replace_rzz_call(ctx, module, instr, dynamic_qubit_management)?;
+        }
+        "__quantum__qis__rz__body" => {
+            replace_rz_call(ctx, module, instr, dynamic_qubit_management)?;
+        }
+        "___qalloc"
+        | "___qfree"
+        | "___reset"
+        | "panic"
+        | "___read_future_bool"
+        | "___dec_future_refcount"
+        | "print_int"
+        | "print_bool"
+        | "print_bool_arr" => {
+            let defined_name = defined_fn.get_name().to_str().ok();
+            if defined_name != Some(INIT_QARRAY_FN)
+                && !defined_name.is_some_and(|name| name.starts_with("qir_qis."))
+            {
                 log::error!(
                     "Unexpected call to internal function: {fn_name} in function {}",
                     defined_fn.get_name().to_str().unwrap_or("unknown")
@@ -1559,7 +1601,7 @@ mod tests {
         create_qubit_array(&context, &module, func).unwrap();
 
         let instr = call.try_as_basic_value().unwrap_instruction();
-        replace_rz_call(&context, &module, instr).unwrap();
+        replace_rz_call(&context, &module, instr, false).unwrap();
 
         let rz = module.get_function("___rz");
         assert!(rz.is_some());
@@ -2180,9 +2222,37 @@ entry:
             call.try_as_basic_value().unwrap_instruction(),
             "__quantum__qis__mystery__body",
             defined_fn,
+            false,
         )
         .expect_err("unknown external declaration should fail");
         assert!(err.contains("Unsupported function call"));
+    }
+
+    #[test]
+    fn test_native_qir_to_qis_call_rejects_internal_helper_in_non_internal_function() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+        let fn_type = context.void_type().fn_type(&[], false);
+        let defined_fn = module.add_function("defined_fn", fn_type, None);
+        let entry = context.append_basic_block(defined_fn, "entry");
+        builder.position_at_end(entry);
+
+        let internal_decl = module.add_function("___qalloc", fn_type, None);
+        let call = builder
+            .build_call(internal_decl, &[], "internal_call")
+            .expect("call should build");
+
+        let err = native_qir_to_qis_call(
+            &context,
+            &module,
+            call.try_as_basic_value().unwrap_instruction(),
+            "___qalloc",
+            defined_fn,
+            false,
+        )
+        .expect_err("non-internal helper should not call compiler-internal functions");
+        assert!(err.contains("Unexpected call to internal function"));
     }
 
     #[test]
@@ -2201,7 +2271,7 @@ entry:
             .expect("call should build");
         let _ = builder.build_return(None);
 
-        process_ir_defined_q_fns(&context, &module, entry_fn)
+        process_ir_defined_q_fns(&context, &module, entry_fn, false)
             .expect("entry function should be excluded from IR-defined helper processing");
     }
 
@@ -2269,7 +2339,7 @@ entry:
         assert_eq!(label, "");
     }
 
-    macro_rules! snapshot_cases {
+    macro_rules! conversion_cases {
         ($item:item) => {
             #[rstest]
             // Base profile tests
@@ -2286,6 +2356,13 @@ entry:
             #[case("tests/data/adaptive_iter_fn.ll")]
             #[case("tests/data/adaptive_cond_loop.ll")]
             #[case("tests/data/adaptive_multi_ret.ll")]
+            #[case("tests/data/dynamic_qubit_alloc.ll")]
+            #[case("tests/data/dynamic_qubit_alloc_checked.ll")]
+            #[case("tests/data/dynamic_qubit_array_checked.ll")]
+            #[case("tests/data/dynamic_qubit_array_ssa.ll")]
+            #[case("tests/data/dynamic_result_alloc.ll")]
+            #[case("tests/data/dynamic_result_array.ll")]
+            #[case("tests/data/dynamic_result_mixed_array_output.ll")]
             // QIR 2.0 (opaque pointers) tests
             #[case("tests/data/qir2_base.ll")]
             #[case("tests/data/qir2_adaptive.ll")]
@@ -2299,7 +2376,7 @@ entry:
     }
 
     #[cfg(not(windows))]
-    snapshot_cases! {
+    conversion_cases! {
     fn test_snapshot_conversion(#[case] llpath: &str) {
         use insta::Settings;
 
@@ -2328,10 +2405,14 @@ entry:
     }}
 
     #[cfg(windows)]
-    snapshot_cases! {
+    conversion_cases! {
     // Windows runs this as a smoke test instead of snapshot matching because
     // cross-target (`aarch64`) optimized codegen in CI has shown backend
-    // instability and non-deterministic output differences.
+    // instability and non-deterministic output differences. Re-checked on
+    // Windows Arm64 on March 23, 2026: the new dynamic-allocation fixtures are
+    // stable under this `-O0`/`native` conversion+parse path, and the remaining
+    // instability is in the broader optimized Windows codegen path rather than
+    // in dynamic qubit/result lowering specifically.
     fn test_snapshot_conversion_windows_smoke(#[case] llpath: &str) {
         let ll_path = Path::new(llpath);
         let qir_bytes = get_qir_bytes(ll_path);

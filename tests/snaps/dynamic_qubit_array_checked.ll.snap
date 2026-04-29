@@ -1,0 +1,124 @@
+---
+source: src/convert.rs
+assertion_line: 1977
+expression: qis_text.to_string()
+---
+; ModuleID = 'qis_module'
+source_filename = "qir"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
+target triple = "aarch64-unknown-linux-gnu"
+
+@res_acheck0 = private constant [20 x i8] c"\13USER:RESULT:acheck0"
+@res_acheck1 = private constant [20 x i8] c"\13USER:RESULT:acheck1"
+@gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
+@gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
+
+define noundef i64 @___user_qir_Entry_Point_Name() local_unnamed_addr {
+entry:
+  %qalloc.i.i = tail call i64 @___qalloc()
+  %is_fail.i.i = icmp eq i64 %qalloc.i.i, -1
+  %qubit_ptr.i.i = inttoptr i64 %qalloc.i.i to ptr
+  %spec.select.i.i = select i1 %is_fail.i.i, ptr null, ptr %qubit_ptr.i.i
+  br i1 %is_fail.i.i, label %loop_body.i.i, label %continue_alloc.i
+
+continue_alloc.i:                                 ; preds = %entry
+  %qalloc.i.1.i = tail call i64 @___qalloc()
+  %is_fail.i.1.i = icmp eq i64 %qalloc.i.1.i, -1
+  %qubit_ptr.i.1.i = inttoptr i64 %qalloc.i.1.i to ptr
+  %spec.select.i.1.i = select i1 %is_fail.i.1.i, ptr null, ptr %qubit_ptr.i.1.i
+  br i1 %is_fail.i.1.i, label %loop_body.i.i, label %alloc_ok
+
+loop_body.i.i:                                    ; preds = %continue_alloc.i, %entry
+  %qubits.sroa.2.0 = phi ptr [ undef, %entry ], [ %spec.select.i.1.i, %continue_alloc.i ]
+  %is_null.i.i.i = icmp eq ptr %spec.select.i.i, null
+  br i1 %is_null.i.i.i, label %qir_qis.qubit_release.exit.i.i, label %body.i.i.i
+
+body.i.i.i:                                       ; preds = %loop_body.i.i
+  %qubit_int.i.i.i = ptrtoint ptr %spec.select.i.i to i64
+  tail call void @___qfree(i64 %qubit_int.i.i.i)
+  br label %qir_qis.qubit_release.exit.i.i
+
+qir_qis.qubit_release.exit.i.i:                   ; preds = %body.i.i.i, %loop_body.i.i
+  %is_null.i.i.i.1 = icmp eq ptr %qubits.sroa.2.0, null
+  %or.cond = or i1 %is_fail.i.i, %is_null.i.i.i.1
+  br i1 %or.cond, label %done, label %body.i.i.i.1
+
+body.i.i.i.1:                                     ; preds = %qir_qis.qubit_release.exit.i.i
+  %qubit_int.i.i.i.1 = ptrtoint ptr %qubits.sroa.2.0 to i64
+  tail call void @___qfree(i64 %qubit_int.i.i.i.1)
+  br label %done
+
+alloc_ok:                                         ; preds = %continue_alloc.i
+  tail call void @___rxy(i64 %qalloc.i.i, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
+  tail call void @___rz(i64 %qalloc.i.i, double 0x400921FB54442D18)
+  tail call void @___rxy(i64 %qalloc.i.1.i, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
+  tail call void @___rzz(i64 %qalloc.i.i, i64 %qalloc.i.1.i, double 0x3FF921FB54442D18)
+  tail call void @___rz(i64 %qalloc.i.i, double 0xBFF921FB54442D18)
+  tail call void @___rxy(i64 %qalloc.i.1.i, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  tail call void @___rz(i64 %qalloc.i.1.i, double 0xBFF921FB54442D18)
+  %meas = tail call i64 @___lazy_measure(i64 %qalloc.i.i)
+  %meas2 = tail call i64 @___lazy_measure(i64 %qalloc.i.1.i)
+  %bool = tail call i1 @___read_future_bool(i64 %meas)
+  tail call void @___dec_future_refcount(i64 %meas)
+  tail call void @print_bool(ptr nonnull @res_acheck0, i64 19, i1 %bool)
+  %bool3 = tail call i1 @___read_future_bool(i64 %meas2)
+  tail call void @___dec_future_refcount(i64 %meas2)
+  tail call void @print_bool(ptr nonnull @res_acheck1, i64 19, i1 %bool3)
+  %is_null.i.i = icmp eq i64 %qalloc.i.i, 0
+  br i1 %is_null.i.i, label %qir_qis.qubit_release.exit.i, label %body.i.i
+
+body.i.i:                                         ; preds = %alloc_ok
+  tail call void @___qfree(i64 %qalloc.i.i)
+  br label %qir_qis.qubit_release.exit.i
+
+qir_qis.qubit_release.exit.i:                     ; preds = %body.i.i, %alloc_ok
+  %is_null.i.i.1 = icmp eq i64 %qalloc.i.1.i, 0
+  br i1 %is_null.i.i.1, label %done, label %body.i.i.1
+
+body.i.i.1:                                       ; preds = %qir_qis.qubit_release.exit.i
+  tail call void @___qfree(i64 %qalloc.i.1.i)
+  br label %done
+
+done:                                             ; preds = %body.i.i.1, %qir_qis.qubit_release.exit.i, %body.i.i.i.1, %qir_qis.qubit_release.exit.i.i
+  ret i64 0
+}
+
+declare i64 @___qalloc() local_unnamed_addr
+
+declare void @___qfree(i64) local_unnamed_addr
+
+declare i64 @___lazy_measure(i64) local_unnamed_addr
+
+declare i1 @___read_future_bool(i64) local_unnamed_addr
+
+declare void @___dec_future_refcount(i64) local_unnamed_addr
+
+declare void @print_bool(ptr, i64, i1) local_unnamed_addr
+
+declare void @___rxy(i64, double, double) local_unnamed_addr
+
+declare void @___rz(i64, double) local_unnamed_addr
+
+declare void @___rzz(i64, i64, double) local_unnamed_addr
+
+define i64 @qmain(i64 %0) local_unnamed_addr {
+entry:
+  tail call void @setup(i64 %0)
+  %1 = tail call i64 @___user_qir_Entry_Point_Name()
+  %retval = tail call i64 @teardown()
+  ret i64 %retval
+}
+
+declare void @setup(i64) local_unnamed_addr
+
+declare i64 @teardown() local_unnamed_addr
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!name = !{!5}
+
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 true}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 1, !"arrays", i1 true}
+!5 = !{!"mainlib"}

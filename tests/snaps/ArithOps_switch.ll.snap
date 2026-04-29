@@ -1,6 +1,6 @@
 ---
 source: src/convert.rs
-expression: qis_text.unwrap().to_string()
+expression: qis_text.to_string()
 ---
 ; ModuleID = 'qis_module'
 source_filename = "qir"
@@ -176,16 +176,16 @@ block_10:                                         ; preds = %block_9, %block_8
   %var_54 = phi i64 [ %var_50, %block_8 ], [ %var_32, %block_9 ]
   %var_53 = phi i64 [ %var_49, %block_8 ], [ %var_31, %block_9 ]
   %var_52 = phi i64 [ %var_48, %block_8 ], [ %var_30, %block_9 ]
-  %qbit.i = load i64, ptr @qis_qs, align 16
-  tail call void @___reset(i64 %qbit.i)
-  %qbit.i45 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___reset(i64 %qbit.i45)
-  %qbit.i46 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___reset(i64 %qbit.i46)
-  %qbit.i47 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___reset(i64 %qbit.i47)
-  %qbit.i48 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___reset(i64 %qbit.i48)
+  %qbit13 = load i64, ptr @qis_qs, align 16
+  tail call void @___reset(i64 %qbit13)
+  %qbit14 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___reset(i64 %qbit14)
+  %qbit15 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___reset(i64 %qbit15)
+  %qbit16 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___reset(i64 %qbit16)
+  %qbit17 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___reset(i64 %qbit17)
   %current_shot = tail call i64 @get_current_shot()
   tail call void @print_int(ptr nonnull @res_s0.1, i64 11, i64 %current_shot)
   tail call void @random_seed(i64 42)
