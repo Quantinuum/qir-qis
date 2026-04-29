@@ -148,6 +148,8 @@ jobs:
           cache-workspace-crates: true
           cache-targets: true
       - name: Run pre-commit lint
+        env:
+          SKIP: no-commit-to-branch
         run: uvx prek run --all-files
       - name: Verify Python stubs are up to date
         if: github.event_name == 'pull_request' && steps.stub_changes.outputs.lib_rs == 'true'
