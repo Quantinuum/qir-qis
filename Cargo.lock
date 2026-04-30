@@ -898,7 +898,7 @@ dependencies = [
 
 [[package]]
 name = "qir-qis"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bpaf",
  "env_logger",
