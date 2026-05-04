@@ -119,7 +119,7 @@ attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memor
 !name = !{!4}
 
 !0 = !{i32 1, !"qir_major_version", i32 2}
-!1 = !{i32 7, !"qir_minor_version", i32 0}
+!1 = !{i32 7, !"qir_minor_version", i32 1}
 !2 = !{i32 1, !"dynamic_qubit_management", i1 false}
 !3 = !{i32 1, !"dynamic_result_management", i1 false}
 !4 = !{!"mainlib"}
