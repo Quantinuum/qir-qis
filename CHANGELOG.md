@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8](https://github.com/Quantinuum/qir-qis/compare/v0.1.7...v0.1.8) (2026-05-04)
+
+
+### Bug Fixes
+
+* expose bitcode helpers and update QIR 2 fixtures ([#81](https://github.com/Quantinuum/qir-qis/issues/81)) ([ef3f7c2](https://github.com/Quantinuum/qir-qis/commit/ef3f7c2dd4e5625aa08dccf3678c6c5f17ce3c05))
+
 ## [0.1.7](https://github.com/Quantinuum/qir-qis/compare/v0.1.6...v0.1.7) (2026-04-29)
 
 
