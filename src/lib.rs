@@ -3846,6 +3846,39 @@ attributes #0 = {{ {rendered_attrs} }}
         )
     }
 
+    fn minimal_dynamic_rt_declaration_qir(declaration: &str) -> String {
+        format!(
+            r#"
+define i64 @Entry_Point_Name() #0 {{
+entry:
+  ret i64 0
+}}
+
+{declaration}
+
+attributes #0 = {{ "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }}
+
+!llvm.module.flags = !{{!0, !1, !2, !3, !4}}
+!0 = !{{i32 1, !"qir_major_version", i32 2}}
+!1 = !{{i32 7, !"qir_minor_version", i32 0}}
+!2 = !{{i32 1, !"dynamic_qubit_management", i1 true}}
+!3 = !{{i32 1, !"dynamic_result_management", i1 true}}
+!4 = !{{i32 1, !"arrays", i1 true}}
+"#
+        )
+    }
+
+    fn assert_malformed_dynamic_rt_declaration(case_name: &str, declaration: &str, fn_name: &str) {
+        let ll_text = minimal_dynamic_rt_declaration_qir(declaration);
+        let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err(&format!("{case_name} should fail validation"));
+        assert!(
+            err.contains(&format!("Malformed QIR RT function declaration: {fn_name}")),
+            "{case_name} reported unexpected error: {err}"
+        );
+    }
+
     fn minimal_qir_with_duplicate_major_flags(first_major: &str, second_major: &str) -> String {
         format!(
             r#"
@@ -5288,32 +5321,7 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
         ];
 
         for (declaration, fn_name) in cases {
-            let ll_text = format!(
-                r#"
-define i64 @Entry_Point_Name() #0 {{
-entry:
-  ret i64 0
-}}
-
-{declaration}
-
-attributes #0 = {{ "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }}
-
-!llvm.module.flags = !{{!0, !1, !2, !3, !4}}
-!0 = !{{i32 1, !"qir_major_version", i32 2}}
-!1 = !{{i32 7, !"qir_minor_version", i32 0}}
-!2 = !{{i32 1, !"dynamic_qubit_management", i1 true}}
-!3 = !{{i32 1, !"dynamic_result_management", i1 true}}
-!4 = !{{i32 1, !"arrays", i1 true}}
-"#
-            );
-            let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
-            let err = validate_qir(&bc_bytes, None)
-                .expect_err(&format!("{fn_name} should fail validation"));
-            assert!(
-                err.contains(&format!("Malformed QIR RT function declaration: {fn_name}")),
-                "reported unexpected error: {err}"
-            );
+            assert_malformed_dynamic_rt_declaration(fn_name, declaration, fn_name);
         }
     }
 
@@ -5338,32 +5346,7 @@ attributes #0 = {{ "entry_point" "qir_profiles"="adaptive_profile" "output_label
         ];
 
         for (case_name, declaration, fn_name) in cases {
-            let ll_text = format!(
-                r#"
-define i64 @Entry_Point_Name() #0 {{
-entry:
-  ret i64 0
-}}
-
-{declaration}
-
-attributes #0 = {{ "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }}
-
-!llvm.module.flags = !{{!0, !1, !2, !3, !4}}
-!0 = !{{i32 1, !"qir_major_version", i32 2}}
-!1 = !{{i32 7, !"qir_minor_version", i32 0}}
-!2 = !{{i32 1, !"dynamic_qubit_management", i1 true}}
-!3 = !{{i32 1, !"dynamic_result_management", i1 true}}
-!4 = !{{i32 1, !"arrays", i1 true}}
-"#
-            );
-            let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
-            let err = validate_qir(&bc_bytes, None)
-                .expect_err(&format!("{case_name} should fail validation"));
-            assert!(
-                err.contains(&format!("Malformed QIR RT function declaration: {fn_name}")),
-                "{case_name} reported unexpected error: {err}"
-            );
+            assert_malformed_dynamic_rt_declaration(case_name, declaration, fn_name);
         }
     }
 
@@ -5398,32 +5381,7 @@ attributes #0 = {{ "entry_point" "qir_profiles"="adaptive_profile" "output_label
         ];
 
         for (case_name, declaration, fn_name) in cases {
-            let ll_text = format!(
-                r#"
-define i64 @Entry_Point_Name() #0 {{
-entry:
-  ret i64 0
-}}
-
-{declaration}
-
-attributes #0 = {{ "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }}
-
-!llvm.module.flags = !{{!0, !1, !2, !3, !4}}
-!0 = !{{i32 1, !"qir_major_version", i32 2}}
-!1 = !{{i32 7, !"qir_minor_version", i32 0}}
-!2 = !{{i32 1, !"dynamic_qubit_management", i1 true}}
-!3 = !{{i32 1, !"dynamic_result_management", i1 true}}
-!4 = !{{i32 1, !"arrays", i1 true}}
-"#
-            );
-            let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
-            let err = validate_qir(&bc_bytes, None)
-                .expect_err(&format!("{case_name} should fail validation"));
-            assert!(
-                err.contains(&format!("Malformed QIR RT function declaration: {fn_name}")),
-                "{case_name} reported unexpected error: {err}"
-            );
+            assert_malformed_dynamic_rt_declaration(case_name, declaration, fn_name);
         }
     }
 
@@ -5453,32 +5411,7 @@ attributes #0 = {{ "entry_point" "qir_profiles"="adaptive_profile" "output_label
         ];
 
         for (case_name, declaration, fn_name) in cases {
-            let ll_text = format!(
-                r#"
-define i64 @Entry_Point_Name() #0 {{
-entry:
-  ret i64 0
-}}
-
-{declaration}
-
-attributes #0 = {{ "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }}
-
-!llvm.module.flags = !{{!0, !1, !2, !3, !4}}
-!0 = !{{i32 1, !"qir_major_version", i32 2}}
-!1 = !{{i32 7, !"qir_minor_version", i32 0}}
-!2 = !{{i32 1, !"dynamic_qubit_management", i1 true}}
-!3 = !{{i32 1, !"dynamic_result_management", i1 true}}
-!4 = !{{i32 1, !"arrays", i1 true}}
-"#
-            );
-            let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
-            let err = validate_qir(&bc_bytes, None)
-                .expect_err(&format!("{case_name} should fail validation"));
-            assert!(
-                err.contains(&format!("Malformed QIR RT function declaration: {fn_name}")),
-                "{case_name} reported unexpected error: {err}"
-            );
+            assert_malformed_dynamic_rt_declaration(case_name, declaration, fn_name);
         }
     }
 
