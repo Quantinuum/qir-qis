@@ -42,6 +42,8 @@ Rule of thumb:
 - Prefer structure-aware fuzzing over arbitrary raw byte mutation when the goal is to exercise `qir-qis` logic rather than LLVM parser failure paths.
 - If expensive fixture compilation is repeated across many tests, cache it with `LazyLock` or similar.
 - Keep `make mutants` useful: kill meaningful mutants with tests, and keep `.cargo/mutants.toml` exclusions resilient to line movement.
+- For external/runtime signature validation, prefer table-driven negative tests that cover return type, arity, and parameter kind/width; for numeric limits, cover both the largest accepted value and first rejected value.
+- During validation-helper work, run a scoped mutation check such as `cargo mutants --package qir-qis --all-features --test-tool cargo --file src/lib.rs --re '<helper_name>'`.
 
 ## LLVM and platform guidance
 

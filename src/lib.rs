@@ -3846,6 +3846,39 @@ attributes #0 = {{ {rendered_attrs} }}
         )
     }
 
+    fn minimal_dynamic_rt_declaration_qir(declaration: &str) -> String {
+        format!(
+            r#"
+define i64 @Entry_Point_Name() #0 {{
+entry:
+  ret i64 0
+}}
+
+{declaration}
+
+attributes #0 = {{ "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }}
+
+!llvm.module.flags = !{{!0, !1, !2, !3, !4}}
+!0 = !{{i32 1, !"qir_major_version", i32 2}}
+!1 = !{{i32 7, !"qir_minor_version", i32 0}}
+!2 = !{{i32 1, !"dynamic_qubit_management", i1 true}}
+!3 = !{{i32 1, !"dynamic_result_management", i1 true}}
+!4 = !{{i32 1, !"arrays", i1 true}}
+"#
+        )
+    }
+
+    fn assert_malformed_dynamic_rt_declaration(case_name: &str, declaration: &str, fn_name: &str) {
+        let ll_text = minimal_dynamic_rt_declaration_qir(declaration);
+        let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err(&format!("{case_name} should fail validation"));
+        assert!(
+            err.contains(&format!("Malformed QIR RT function declaration: {fn_name}")),
+            "{case_name} reported unexpected error: {err}"
+        );
+    }
+
     fn minimal_qir_with_duplicate_major_flags(first_major: &str, second_major: &str) -> String {
         format!(
             r#"
@@ -5275,6 +5308,114 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
     }
 
     #[test]
+    fn test_validate_qir_rejects_malformed_dynamic_allocate_return_signature() {
+        let cases = [
+            (
+                "declare void @__quantum__rt__qubit_allocate(ptr)",
+                "__quantum__rt__qubit_allocate",
+            ),
+            (
+                "declare void @__quantum__rt__result_allocate(ptr)",
+                "__quantum__rt__result_allocate",
+            ),
+        ];
+
+        for (declaration, fn_name) in cases {
+            assert_malformed_dynamic_rt_declaration(fn_name, declaration, fn_name);
+        }
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_malformed_dynamic_release_signatures() {
+        let cases = [
+            (
+                "wrong return",
+                "declare ptr @__quantum__rt__qubit_release(ptr)",
+                "__quantum__rt__qubit_release",
+            ),
+            (
+                "wrong arity",
+                "declare void @__quantum__rt__qubit_release()",
+                "__quantum__rt__qubit_release",
+            ),
+            (
+                "wrong param type",
+                "declare void @__quantum__rt__result_release(i64)",
+                "__quantum__rt__result_release",
+            ),
+        ];
+
+        for (case_name, declaration, fn_name) in cases {
+            assert_malformed_dynamic_rt_declaration(case_name, declaration, fn_name);
+        }
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_malformed_dynamic_array_three_arg_signatures() {
+        let cases = [
+            (
+                "wrong return",
+                "declare ptr @__quantum__rt__qubit_array_allocate(i64, ptr, ptr)",
+                "__quantum__rt__qubit_array_allocate",
+            ),
+            (
+                "wrong arity",
+                "declare void @__quantum__rt__qubit_array_allocate(i64, ptr)",
+                "__quantum__rt__qubit_array_allocate",
+            ),
+            (
+                "wrong length type",
+                "declare void @__quantum__rt__result_array_allocate(i32, ptr, ptr)",
+                "__quantum__rt__result_array_allocate",
+            ),
+            (
+                "wrong backing param type",
+                "declare void @__quantum__rt__result_array_allocate(i64, i64, ptr)",
+                "__quantum__rt__result_array_allocate",
+            ),
+            (
+                "wrong output param type",
+                "declare void @__quantum__rt__result_array_record_output(i64, ptr, i64)",
+                "__quantum__rt__result_array_record_output",
+            ),
+        ];
+
+        for (case_name, declaration, fn_name) in cases {
+            assert_malformed_dynamic_rt_declaration(case_name, declaration, fn_name);
+        }
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_malformed_dynamic_array_release_signatures() {
+        let cases = [
+            (
+                "wrong return",
+                "declare ptr @__quantum__rt__qubit_array_release(i64, ptr)",
+                "__quantum__rt__qubit_array_release",
+            ),
+            (
+                "wrong arity",
+                "declare void @__quantum__rt__qubit_array_release(i64)",
+                "__quantum__rt__qubit_array_release",
+            ),
+            (
+                "wrong length type",
+                "declare void @__quantum__rt__result_array_release(i32, ptr)",
+                "__quantum__rt__result_array_release",
+            ),
+            (
+                "wrong backing param type",
+                "declare void @__quantum__rt__result_array_release(i64, i64)",
+                "__quantum__rt__result_array_release",
+            ),
+        ];
+
+        for (case_name, declaration, fn_name) in cases {
+            assert_malformed_dynamic_rt_declaration(case_name, declaration, fn_name);
+        }
+    }
+
+    #[test]
     fn test_validate_qir_rejects_unsupported_rt_function_declaration() {
         let ll_text = r#"
 declare void @__quantum__rt__mystery()
@@ -5483,6 +5624,33 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
         assert!(err.contains(
             "__quantum__rt__result_array_record_output requires an array length that fits in i32 for RESULT_ARRAY output"
         ));
+    }
+
+    #[test]
+    fn test_validate_dynamic_result_array_record_output_i32_max_length_succeeds() {
+        let ll_text = r#"
+@0 = internal constant [3 x i8] c"a0\00"
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %results = alloca [2147483647 x ptr], align 8
+  call void @__quantum__rt__result_array_record_output(i64 2147483647, ptr %results, ptr @0)
+  ret i64 0
+}
+
+declare void @__quantum__rt__result_array_record_output(i64, ptr, ptr)
+
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 true}
+!4 = !{i32 1, !"arrays", i1 true}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        validate_qir(&bc_bytes, None).expect("i32::MAX result array output should validate");
     }
 
     #[test]
