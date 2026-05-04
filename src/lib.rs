@@ -436,13 +436,7 @@ mod aux {
 
     pub fn validate_module_flags(module: &Module, errors: &mut Vec<String>) {
         let module_flags = collect_module_flags(module);
-        validate_exact_module_flag(
-            &module_flags,
-            "qir_major_version",
-            &["i32 1", "i32 2"],
-            errors,
-        );
-        validate_exact_module_flag(&module_flags, "qir_minor_version", &["i32 0"], errors);
+        validate_qir_version_flags(&module_flags, errors);
         validate_exact_module_flag(
             &module_flags,
             "dynamic_qubit_management",
@@ -456,6 +450,56 @@ mod aux {
             errors,
         );
         validate_optional_module_flag(&module_flags, "arrays", &["i1 false", "i1 true"], errors);
+    }
+
+    fn validate_qir_version_flags(module_flags: &ModuleFlags, errors: &mut Vec<String>) {
+        let major_values = required_module_flag_values(module_flags, "qir_major_version", errors);
+        let minor_values = required_module_flag_values(module_flags, "qir_minor_version", errors);
+        let (Some(major_values), Some(minor_values)) = (major_values, minor_values) else {
+            return;
+        };
+
+        if major_values.iter().any(|major| {
+            minor_values.iter().any(|minor| {
+                matches!(
+                    (major.as_str(), minor.as_str()),
+                    ("i32 1", "i32 0") | ("i32 2", "i32 0" | "i32 1")
+                )
+            })
+        }) {
+            return;
+        }
+
+        if !major_values
+            .iter()
+            .any(|major| matches!(major.as_str(), "i32 1" | "i32 2"))
+        {
+            errors.push("Unsupported qir_major_version: expected one of i32 1, i32 2".to_string());
+            return;
+        }
+
+        errors.push(
+            "Unsupported qir_minor_version: expected i32 0 for QIR 1 or one of i32 0, i32 1 for QIR 2"
+                .to_string(),
+        );
+    }
+
+    fn required_module_flag_values<'a>(
+        module_flags: &'a ModuleFlags,
+        flag_name: &str,
+        errors: &mut Vec<String>,
+    ) -> Option<&'a [String]> {
+        match module_flags.get(flag_name) {
+            Some(values) => Some(values),
+            None if module_flags.is_malformed(flag_name) => {
+                errors.push(format!("Missing or unsupported module flag: {flag_name}"));
+                None
+            }
+            None => {
+                errors.push(format!("Missing required module flag: {flag_name}"));
+                None
+            }
+        }
     }
 
     pub struct ModuleFlags {
@@ -3175,7 +3219,18 @@ pub(crate) fn decode_llvm_c_string(value: &std::ffi::CStr) -> Option<&str> {
     value.to_str().ok()
 }
 
-fn create_memory_buffer_from_bytes(
+/// Create an LLVM memory buffer by copying the provided bytes.
+///
+/// This is the supported low-level construction path for public bitcode bytes
+/// that need to be handed to `inkwell`/LLVM parser APIs.
+/// It deliberately does not classify raw versus wrapped LLVM bitcode
+/// containers; callers that need precise malformed-input diagnostics should
+/// run those checks before constructing the buffer.
+///
+/// # Errors
+/// Returns an error if the buffer name contains an interior NUL byte or LLVM
+/// fails to allocate the memory buffer.
+pub fn create_memory_buffer_from_bytes(
     bytes: &[u8],
     name: &str,
 ) -> Result<inkwell::memory_buffer::MemoryBuffer<'static>, String> {
@@ -3206,7 +3261,13 @@ pub(crate) fn create_module_from_ir_text<'ctx>(
         .map_err(|e| format!("Failed to create module from LLVM IR: {e}"))
 }
 
-fn memory_buffer_to_owned_bytes(
+/// Copy an LLVM memory buffer into public bitcode bytes.
+///
+/// LLVM's in-memory bitcode writer includes an implicit trailing NUL byte. This
+/// helper removes that terminator so the returned bytes can be written to files
+/// or passed to file-oriented bitcode consumers.
+#[must_use]
+pub fn memory_buffer_to_owned_bytes(
     memory_buffer: &inkwell::memory_buffer::MemoryBuffer<'_>,
 ) -> Vec<u8> {
     let bytes = memory_buffer.as_slice();
@@ -3217,7 +3278,19 @@ fn memory_buffer_to_owned_bytes(
     }
 }
 
-pub(crate) fn parse_bitcode_module<'ctx>(
+/// Parse public bitcode bytes into an `inkwell` module.
+///
+/// This helper uses [`create_memory_buffer_from_bytes`] so downstream Rust
+/// callers do not need to duplicate the LLVM memory-buffer compatibility path.
+/// It is a copied-buffer parser path, not a bitcode container classifier or
+/// malformed-input validator. Callers that need stable diagnostics for
+/// truncated headers, wrapped-bitcode payload ranges, or other pre-parse
+/// conditions should keep those checks before calling this helper.
+///
+/// # Errors
+/// Returns an error if the memory buffer cannot be created or LLVM rejects the
+/// bitcode payload.
+pub fn parse_bitcode_module<'ctx>(
     ctx: &'ctx inkwell::context::Context,
     bitcode: &[u8],
     name: &str,
@@ -3670,8 +3743,9 @@ mod test {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
     use crate::{
-        convert::get_string_label, create_module_from_ir_text, get_entry_attributes,
-        parse_bitcode_module, qir_ll_to_bc, qir_to_qis, validate_qir,
+        convert::get_string_label, create_memory_buffer_from_bytes, create_module_from_ir_text,
+        get_entry_attributes, memory_buffer_to_owned_bytes, parse_bitcode_module, qir_ll_to_bc,
+        qir_to_qis, validate_qir,
     };
     use inkwell::{
         context::Context,
@@ -4106,14 +4180,49 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_public_bitcode_helpers_parse_and_extract_public_bytes() {
+        let ll_text =
+            std::fs::read_to_string("tests/data/base.ll").expect("Failed to read base.ll");
+        let public_bc = qir_ll_to_bc(&ll_text).expect("Failed to convert base.ll to bitcode");
+
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &public_bc, "public_bitcode")
+            .expect("public parser helper should parse generated bitcode");
+        let raw_buffer = module.write_bitcode_to_memory();
+        assert_eq!(raw_buffer.as_slice().last(), Some(&0));
+
+        let extracted = memory_buffer_to_owned_bytes(&raw_buffer);
+        let expected_len = raw_buffer
+            .as_slice()
+            .len()
+            .checked_sub(1)
+            .expect("raw bitcode buffer should include LLVM's trailing NUL");
+        assert_eq!(extracted.len(), expected_len);
+
+        let copied_buffer = create_memory_buffer_from_bytes(&extracted, "copied_public_bitcode")
+            .expect("public memory-buffer helper should copy public bitcode");
+        Module::parse_bitcode_from_buffer(&copied_buffer, &ctx)
+            .expect("copied public bitcode should parse through inkwell");
+    }
+
+    #[test]
+    fn test_parse_bitcode_module_reports_llvm_parse_errors_for_malformed_bytes() {
+        let ctx = Context::create();
+        let err = parse_bitcode_module(&ctx, b"not llvm bitcode", "malformed")
+            .expect_err("malformed bitcode should fail in LLVM parsing");
+
+        assert!(err.starts_with("Failed to parse bitcode:"));
+    }
+
+    #[test]
     fn test_qir2_base_fixture_validate_and_compile() {
         let ll_text = std::fs::read_to_string("tests/data/qir2_base.ll")
             .expect("Failed to read qir2_base.ll");
         let input_bc = qir_ll_to_bc(&ll_text).expect("Failed to convert qir2_base.ll to bitcode");
 
-        validate_qir(&input_bc, None).expect("QIR 2.0 base fixture should validate");
+        validate_qir(&input_bc, None).expect("QIR 2.1 base fixture should validate");
         let output_bc =
-            qir_to_qis(&input_bc, 0, "native", None).expect("QIR 2.0 base fixture should compile");
+            qir_to_qis(&input_bc, 0, "native", None).expect("QIR 2.1 base fixture should compile");
 
         let ctx = Context::create();
         let module = parse_bitcode_module(&ctx, &output_bc, "qis_module")
@@ -4129,9 +4238,9 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let input_bc =
             qir_ll_to_bc(&ll_text).expect("Failed to convert qir2_adaptive.ll to bitcode");
 
-        validate_qir(&input_bc, None).expect("QIR 2.0 adaptive fixture should validate");
+        validate_qir(&input_bc, None).expect("QIR 2.1 adaptive fixture should validate");
         let output_bc = qir_to_qis(&input_bc, 0, "native", None)
-            .expect("QIR 2.0 adaptive fixture should compile");
+            .expect("QIR 2.1 adaptive fixture should compile");
 
         let ctx = Context::create();
         let module = parse_bitcode_module(&ctx, &output_bc, "qis_module")
@@ -4284,7 +4393,50 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
         let err = validate_qir(&bc_bytes, None)
             .expect_err("unsupported single-valued module flag should fail");
-        assert!(err.contains("Unsupported qir_minor_version: expected i32 0"));
+        assert!(err.contains("Unsupported qir_minor_version"));
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_qir_1_1_version_pair() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 1}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None).expect_err("QIR 1.1 should not validate");
+        assert!(err.contains("Unsupported qir_minor_version"));
+    }
+
+    #[test]
+    fn test_validate_qir_accepts_qir_2_1_version_pair() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 1}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        validate_qir(&bc_bytes, None).expect("QIR 2.1 should validate");
     }
 
     #[test]
