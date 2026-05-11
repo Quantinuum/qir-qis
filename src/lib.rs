@@ -640,11 +640,7 @@ mod aux {
             return;
         }
 
-        let expected = if expected_values.len() == 1 {
-            expected_values[0].to_string()
-        } else {
-            format!("one of {}", expected_values.join(", "))
-        };
+        let expected = format!("one of {}", expected_values.join(", "));
         errors.push(format!("Unsupported {flag_name}: expected {expected}"));
     }
 
@@ -4461,6 +4457,30 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
         let err = validate_qir(&bc_bytes, None)
             .expect_err("unsupported optional arrays flag should fail validation");
         assert!(err.contains("Unsupported arrays: expected one of i1 false, i1 true"));
+    }
+
+    #[test]
+    fn test_validate_qir_reports_exact_expected_dynamic_module_flag_value() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i32 7}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None).expect_err("unsupported dynamic flag should fail");
+        assert!(
+            err.contains("Unsupported dynamic_qubit_management: expected one of i1 false, i1 true")
+        );
     }
 
     #[test]
