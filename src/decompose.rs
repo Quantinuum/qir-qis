@@ -637,7 +637,10 @@ fn define_cx_gate<'ctx>(
 }
 
 /// Define decomposition of CCX gate using native gates
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the CCX decomposition is easiest to audit as one contiguous sequence"
+)]
 fn define_ccx_gate<'ctx>(
     context: &'ctx Context,
     module: &Module<'ctx>,
@@ -771,7 +774,14 @@ fn define_ccx_gate<'ctx>(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
+    #![allow(
+        clippy::expect_used,
+        reason = "tests use expect for direct decomposition setup failures"
+    )]
+    #![allow(
+        clippy::indexing_slicing,
+        reason = "tests inspect fixed positions in known gate sequences"
+    )]
 
     use super::add_decompositions;
     #[cfg(not(windows))]

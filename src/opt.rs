@@ -143,7 +143,10 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
+    #![allow(
+        clippy::expect_used,
+        reason = "tests use expect for direct optimization failure messages"
+    )]
 
     #[cfg(not(windows))]
     use super::optimize;

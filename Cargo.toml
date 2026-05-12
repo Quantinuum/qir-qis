@@ -53,6 +53,62 @@ wasm = ["wasmparser"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[lints.rust]
+arithmetic_overflow = "deny"
+unnecessary_transmutes = "deny"
+
+[lints.clippy]
+# Arithmetic
+arithmetic_side_effects = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_precision_loss = "deny"
+cast_sign_loss = "deny"
+checked_conversions = "deny"
+integer_division = "deny"
+unchecked_time_subtraction = "deny"
+
+# Unwraps and panic paths
+expect_used = "deny"
+get_unwrap = "deny"
+option_env_unwrap = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+panicking_unwrap = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unwrap_used = "deny"
+
+# Fixed-position indexing and parsing
+indexing_slicing = "deny"
+string_slice = "deny"
+
+# Path handling
+join_absolute_paths = "deny"
+
+# Serialization issues
+serde_api_misuse = "deny"
+
+# Unbounded input
+uninit_vec = "deny"
+
+# Unsafe code detection
+transmute_ptr_to_ref = "deny"
+transmute_undefined_repr = "deny"
+
+# Defensive programming
+allow_attributes_without_reason = "deny"
+assertions_on_result_states = "deny"
+dbg_macro = "deny"
+fallible_impl_from = "deny"
+fn_params_excessive_bools = "deny"
+map_err_ignore = "deny"
+must_use_candidate = "deny"
+unneeded_field_pattern = "deny"
+unused_result_ok = "deny"
+wildcard_enum_match_arm = "deny"
+
 [dev-dependencies]
 insta = { version = "1", features = ["filters"] }
 proptest = "1"

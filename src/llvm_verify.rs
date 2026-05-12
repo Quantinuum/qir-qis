@@ -35,7 +35,10 @@ pub fn verify_module(module: &Module, error_prefix: &str) -> Result<(), String> 
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
+    #![allow(
+        clippy::expect_used,
+        reason = "tests use expect for direct verifier failure messages"
+    )]
 
     use super::verify_module;
     use inkwell::context::Context;

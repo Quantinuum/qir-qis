@@ -1,44 +1,3 @@
-#![deny(clippy::panic)]
-// Following from https://corrode.dev/blog/pitfalls-of-safe-rust/#clippy-can-prevent-many-of-these-issues
-// and https://corrode.dev/blog/defensive-programming/#clippy-lints-for-defensive-programming
-// Arithmetic
-#![deny(arithmetic_overflow)] // Prevent operations that would cause integer overflow
-#![deny(clippy::arithmetic_side_effects)] // Detect arithmetic operations with potential side effects
-#![deny(clippy::cast_possible_truncation)] // Detect when casting might truncate a value
-#![deny(clippy::cast_possible_wrap)] // Detect when casting might cause value to wrap around
-#![deny(clippy::cast_precision_loss)] // Detect when casting might lose precision
-#![deny(clippy::cast_sign_loss)] // Detect when casting might lose sign information
-#![deny(clippy::checked_conversions)] // Suggest using checked conversions between numeric types
-#![deny(clippy::integer_division)] // Highlight potential bugs from integer division truncation
-#![deny(clippy::unchecked_time_subtraction)] // Ensure duration subtraction won't cause underflow
-
-// Unwraps
-#![deny(clippy::expect_used)] // Prevent using .expect() which can cause panics
-#![deny(clippy::option_env_unwrap)] // Prevent unwrapping environment variables which might be absent
-#![deny(clippy::panicking_unwrap)] // Prevent unwrap on values known to cause panics
-#![deny(clippy::unwrap_used)] // Prevent using .unwrap() which can cause panics
-
-// Path handling
-#![deny(clippy::join_absolute_paths)] // Prevent issues when joining paths with absolute paths
-
-// Serialization issues
-#![deny(clippy::serde_api_misuse)] // Prevent incorrect usage of Serde's serialization/deserialization API
-
-// Unbounded input
-#![deny(clippy::uninit_vec)] // Prevent creating uninitialized vectors which is unsafe
-
-// Unsafe code detection
-#![deny(clippy::transmute_ptr_to_ref)] // Prevent unsafe transmutation from pointers to references
-#![deny(clippy::transmute_undefined_repr)] // Detect transmutes with potentially undefined representations
-#![deny(unnecessary_transmutes)] // Prevent unsafe transmutation
-
-// Defensive programming
-#![deny(clippy::fallible_impl_from)]
-#![deny(clippy::fn_params_excessive_bools)]
-#![deny(clippy::must_use_candidate)]
-#![deny(clippy::unneeded_field_pattern)]
-#![deny(clippy::wildcard_enum_match_arm)]
-
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 #[cfg(feature = "python")]
@@ -61,7 +20,14 @@ pub const DEFAULT_TARGET: &str = "native";
 pub const DEFAULT_TARGET: &str = "aarch64";
 
 mod aux {
-    #![allow(clippy::expect_used)]
+    #![allow(
+        clippy::expect_used,
+        reason = "LLVM builder calls here encode internal lowering invariants; user-facing validation errors are propagated separately"
+    )]
+    #![allow(
+        clippy::indexing_slicing,
+        reason = "LLVM operand and metadata layouts are validated before fixed-position access"
+    )]
 
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -179,25 +145,28 @@ mod aux {
         let params = fn_type.get_param_types();
         let valid = match fn_name {
             "__quantum__rt__qubit_allocate" | "__quantum__rt__result_allocate" => {
-                is_ptr_return(fn_type) && params.len() == 1 && is_ptr_type(params[0])
+                is_ptr_return(fn_type)
+                    && matches!(params.as_slice(), [param] if is_ptr_type(*param))
             }
             "__quantum__rt__qubit_release" | "__quantum__rt__result_release" => {
-                is_void_return(fn_type) && params.len() == 1 && is_ptr_type(params[0])
+                is_void_return(fn_type)
+                    && matches!(params.as_slice(), [param] if is_ptr_type(*param))
             }
             "__quantum__rt__qubit_array_allocate"
             | "__quantum__rt__result_array_allocate"
             | "__quantum__rt__result_array_record_output" => {
                 is_void_return(fn_type)
-                    && params.len() == 3
-                    && is_i64_type(params[0])
-                    && is_ptr_type(params[1])
-                    && is_ptr_type(params[2])
+                    && matches!(
+                        params.as_slice(),
+                        [len, first_ptr, second_ptr]
+                            if is_i64_type(*len)
+                                && is_ptr_type(*first_ptr)
+                                && is_ptr_type(*second_ptr)
+                    )
             }
             "__quantum__rt__qubit_array_release" | "__quantum__rt__result_array_release" => {
                 is_void_return(fn_type)
-                    && params.len() == 2
-                    && is_i64_type(params[0])
-                    && is_ptr_type(params[1])
+                    && matches!(params.as_slice(), [len, ptr] if is_i64_type(*len) && is_ptr_type(*ptr))
             }
             _ => true,
         };
@@ -538,7 +507,11 @@ mod aux {
                 continue;
             };
 
-            let Some(flag_value) = format_module_flag_value(node_values[2]) else {
+            let Some(flag_value) = node_values
+                .get(2)
+                .copied()
+                .and_then(format_module_flag_value)
+            else {
                 malformed.insert(flag_name);
                 continue;
             };
@@ -612,7 +585,7 @@ mod aux {
         }
 
         let expected = if expected_values.len() == 1 {
-            expected_values[0].to_string()
+            expected_values.first().unwrap_or(&"").to_string()
         } else {
             format!("one of {}", expected_values.join(", "))
         };
@@ -658,7 +631,7 @@ mod aux {
         if opcode == InstructionOpcode::Alloca {
             let allocated_type = instr
                 .get_allocated_type()
-                .map_err(|_| array_backing_error())?;
+                .map_err(|_err| array_backing_error())?;
             let BasicTypeEnum::ArrayType(array_type) = allocated_type else {
                 return Err(array_backing_error());
             };
@@ -880,7 +853,10 @@ mod aux {
         instr: inkwell::values::InstructionValue<'ctx>,
         fn_name: String,
         // Reserved for downstream passthrough compatibility.
-        #[allow(dead_code)]
+        #[allow(
+            dead_code,
+            reason = "reserved field keeps downstream passthrough API shape stable"
+        )]
         wasm_fns: *const BTreeMap<String, u64>,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
@@ -1511,6 +1487,10 @@ mod aux {
         }
     }
 
+    #[allow(
+        clippy::unreachable,
+        reason = "a runtime helper returning no basic value indicates a broken lowering invariant"
+    )]
     fn build_dynamic_result_pending_return<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
@@ -1708,6 +1688,10 @@ mod aux {
             .map_err(|e| format!("Failed to compare pointer with null: {e}"))
     }
 
+    #[allow(
+        clippy::unreachable,
+        reason = "the internal qalloc helper must produce a basic value or lowering is inconsistent"
+    )]
     fn ensure_dynamic_qubit_allocate<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
@@ -1868,6 +1852,10 @@ mod aux {
         })
     }
 
+    #[allow(
+        clippy::unreachable,
+        reason = "the dynamic qubit allocation helper must return a pointer or lowering is inconsistent"
+    )]
     fn ensure_dynamic_qubit_array_allocate<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
@@ -1927,9 +1915,7 @@ mod aux {
             .expect("alloc qubit");
         let slot = match slot.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(bv) => bv,
-            inkwell::values::ValueKind::Instruction(_) => {
-                unreachable!("Dynamic qubit allocation did not return a pointer");
-            }
+            inkwell::values::ValueKind::Instruction(_) => unreachable!(),
         };
         let _ = builder.build_store(elem_ptr, slot).expect("store qubit");
         let out_err_is_null =
@@ -2523,9 +2509,8 @@ mod aux {
                 return Err(format!("Output global `{old_name}` not found in mapping"));
             };
         let old_label = full_tag
-            .rfind(':')
-            .and_then(|pos| pos.checked_add(1))
-            .map_or_else(|| full_tag.clone(), |pos| full_tag[pos..].to_string());
+            .rsplit_once(':')
+            .map_or_else(|| full_tag.clone(), |(_, label)| label.to_string());
         let (new_const, new_name) =
             build_result_global(args.ctx, &old_label, &old_name, "RESULT_ARRAY", None)?;
         let new_global = module_ref(args).add_global(new_const.get_type(), None, &new_name);
@@ -2566,7 +2551,10 @@ mod aux {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "measurement lowering needs a fixed set of builder inputs"
+    )]
     fn handle_mz_call<'ctx>(
         ctx: &'ctx Context,
         module: *const (),
@@ -2790,7 +2778,10 @@ mod aux {
             .ok_or_else(|| format!("Invalid barrier function name: {fn_name}"))
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "barrier lowering stays linear to keep validation and rewrite steps aligned"
+    )]
     fn handle_barrier_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs {
             ctx,
@@ -3007,7 +2998,7 @@ mod aux {
                 call_args[0].into_float_value().as_basic_value_enum(),
                 "FLOAT",
             ),
-            _ => unreachable!(),
+            _ => return Err(format!("Unsupported print helper for `{fn_name}`")),
         };
 
         // Get the print function type based on the value type
@@ -3019,7 +3010,7 @@ mod aux {
                 "BOOL" => ctx.bool_type().into(),
                 "INT" => ctx.i64_type().into(),
                 "FLOAT" => ctx.f64_type().into(),
-                _ => unreachable!(),
+                _ => return Err(format!("Unsupported type tag `{type_tag}` for `{fn_name}`")),
             },
         ];
         let fn_type = ret_type.fn_type(param_types, false);
@@ -3048,9 +3039,8 @@ mod aux {
         };
         // Parse the label from the global string (format: USER:RESULT:tag)
         let old_label = full_tag
-            .rfind(':')
-            .and_then(|pos| pos.checked_add(1))
-            .map_or_else(|| full_tag.clone(), |pos| full_tag[pos..].to_string());
+            .rsplit_once(':')
+            .map_or_else(|| full_tag.clone(), |(_, label)| label.to_string());
 
         let (new_const, new_name) =
             build_result_global(ctx, &old_label, &old_name, type_tag, None)?;
@@ -3233,7 +3223,7 @@ pub fn create_memory_buffer_from_bytes(
     use llvm_sys::core::LLVMCreateMemoryBufferWithMemoryRangeCopy;
 
     let name = std::ffi::CString::new(name)
-        .map_err(|_| "Memory buffer name contains interior NUL byte".to_string())?;
+        .map_err(|_err| "Memory buffer name contains interior NUL byte".to_string())?;
     let memory_buffer = unsafe {
         LLVMCreateMemoryBufferWithMemoryRangeCopy(bytes.as_ptr().cast(), bytes.len(), name.as_ptr())
     };
@@ -3268,7 +3258,9 @@ pub fn memory_buffer_to_owned_bytes(
 ) -> Vec<u8> {
     let bytes = memory_buffer.as_slice();
     if bytes.last() == Some(&0) {
-        bytes[..bytes.len().saturating_sub(1)].to_vec()
+        bytes
+            .split_last()
+            .map_or_else(Vec::new, |(_, rest)| rest.to_vec())
     } else {
         bytes.to_vec()
     }
@@ -3541,7 +3533,7 @@ fn decode_string_attribute_kind(attr: inkwell::attributes::Attribute) -> Result<
         return Err("LLVM returned a null attribute kind pointer".to_string());
     }
     let kind_len = usize::try_from(kind_len)
-        .map_err(|_| "Attribute kind length does not fit into usize".to_string())?;
+        .map_err(|_err| "Attribute kind length does not fit into usize".to_string())?;
     let kind_bytes = unsafe { slice::from_raw_parts(kind_ptr.cast::<u8>(), kind_len) };
     std::str::from_utf8(kind_bytes)
         .map_err(|e| format!("Invalid UTF-8 in attribute kind: {e}"))
@@ -3566,7 +3558,7 @@ fn decode_string_attribute_value(
         ));
     }
     let value_len = usize::try_from(value_len)
-        .map_err(|_| format!("Attribute `{kind}` value length does not fit into usize"))?;
+        .map_err(|_err| format!("Attribute `{kind}` value length does not fit into usize"))?;
     let value_bytes = unsafe { slice::from_raw_parts(value_ptr.cast::<u8>(), value_len) };
     let value = std::str::from_utf8(value_bytes)
         .map_err(|e| format!("Invalid UTF-8 in attribute `{kind}` value: {e}"))?
@@ -3662,7 +3654,10 @@ mod qir_qis {
     /// - If a QIR-referenced WASM function is missing from the WASM module.
     #[gen_stub_pyfunction]
     #[pyfunction]
-    #[allow(clippy::needless_pass_by_value)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 entrypoint accepts owned bytes from Python callers"
+    )]
     #[pyo3(signature = (bc_bytes, *, wasm_bytes = None))]
     pub fn validate_qir(bc_bytes: Cow<[u8]>, wasm_bytes: Option<Cow<[u8]>>) -> PyResult<()> {
         crate::validate_qir(&bc_bytes, wasm_bytes.as_deref())
@@ -3683,8 +3678,14 @@ mod qir_qis {
     /// Returns a `CompilerError` if the translation fails.
     #[gen_stub_pyfunction]
     #[pyfunction]
-    #[allow(clippy::needless_pass_by_value)]
-    #[allow(clippy::missing_errors_doc)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 entrypoint accepts owned bytes from Python callers"
+    )]
+    #[allow(
+        clippy::missing_errors_doc,
+        reason = "PyO3 signature and Python exception type already document failures"
+    )]
     #[cfg_attr(
         windows,
         pyo3(signature = (bc_bytes, *, opt_level = 0, target = "native", wasm_bytes = None))
@@ -3725,7 +3726,10 @@ mod qir_qis {
     /// Returns a `ValidationError` if the input bitcode is invalid.
     #[gen_stub_pyfunction]
     #[pyfunction]
-    #[allow(clippy::needless_pass_by_value)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 entrypoint accepts owned bytes from Python callers"
+    )]
     fn get_entry_attributes(bc_bytes: Cow<[u8]>) -> PyResult<BTreeMap<String, Option<String>>> {
         crate::get_entry_attributes(&bc_bytes).map_err(PyErr::new::<ValidationError, _>)
     }
@@ -3736,8 +3740,18 @@ define_stub_info_gatherer!(stub_info);
 
 #[cfg(test)]
 mod test {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::unwrap_used)]
+    #![allow(
+        clippy::expect_used,
+        reason = "tests use expect for direct fixture failure messages"
+    )]
+    #![allow(
+        clippy::unwrap_used,
+        reason = "tests unwrap fixed fixture and parser outputs"
+    )]
+    #![allow(
+        clippy::indexing_slicing,
+        reason = "tests inspect fixed positions in small generated arrays"
+    )]
     use crate::{
         convert::get_string_label, create_memory_buffer_from_bytes, create_module_from_ir_text,
         get_entry_attributes, memory_buffer_to_owned_bytes, parse_bitcode_module, qir_ll_to_bc,
@@ -5201,12 +5215,14 @@ declare void @__quantum__rt__result_record_output(%Result*, i8*)
         fn prop_missing_required_attrs_fail_validation(
             missing_idx in 0usize..4usize
         ) {
-            let missing_attr = [
+            let missing_attr = *[
                 "qir_profiles",
                 "output_labeling_schema",
                 "required_num_qubits",
                 "required_num_results",
-            ][missing_idx];
+            ]
+            .get(missing_idx)
+            .expect("missing_idx is generated within bounds");
             let ll_text = minimal_qir_missing_attr(missing_attr);
             let bc = qir_ll_to_bc(&ll_text)
                 .map_err(|err| TestCaseError::fail(format!("inline IR should parse: {err}")))?;

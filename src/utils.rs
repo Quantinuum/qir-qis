@@ -21,7 +21,7 @@ pub fn add_generator_metadata<'c>(
 ) -> Result<(), String> {
     let md_type = ctx
         .i8_type()
-        .array_type(u32::try_from(value.len()).map_err(|_| "Value length too large")?);
+        .array_type(u32::try_from(value.len()).map_err(|_err| "Value length too large")?);
     let md_value = ctx.const_string(value.as_bytes(), false);
     let gen_global = module.add_global(md_type, None, key);
     gen_global.set_initializer(&md_value);
@@ -79,7 +79,10 @@ pub fn parse_wasm_functions(wasm_bytes: &[u8]) -> Result<BTreeMap<String, u64>, 
 }
 #[cfg(all(test, feature = "wasm"))]
 mod tests {
-    #![allow(clippy::expect_used)]
+    #![allow(
+        clippy::expect_used,
+        reason = "tests use expect for direct fixture failure messages"
+    )]
 
     use super::parse_wasm_functions;
     use proptest::prelude::*;
@@ -118,7 +121,7 @@ mod tests {
         fn prop_parse_wasm_functions_rejects_malformed_input(
             bytes in proptest::collection::vec(any::<u8>(), 0..256)
         ) {
-            prop_assume!(bytes.len() < 4 || bytes[..4] != *b"\0asm");
+            prop_assume!(bytes.len() < 4 || !bytes.starts_with(b"\0asm"));
             prop_assert!(parse_wasm_functions(&bytes).is_err());
         }
     }
