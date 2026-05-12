@@ -63,10 +63,21 @@ When touching `Makefile`, `.cargo/mutants.toml`, `fuzz/`, or `.github/workflows/
 - reserve longer fuzzing and mutation campaigns for scheduled/manual runs unless there is a strong reason otherwise
 - avoid adding unused tooling installs to CI jobs
 
+When touching Clippy policy or lint-driven cleanup:
+
+- keep package-wide lint policy in `Cargo.toml` under `[lints.clippy]` and `[lints.rust]`, not in `src/lib.rs`
+- group manifest lint entries by intent, mirroring the categories that would otherwise live in crate attributes
+- only add `clippy.toml` when a real Clippy config value is needed; do not add it just to repeat `msrv` that already matches `package.rust-version`
+- when enabling stricter lints such as `indexing_slicing`, prefer removing panic-prone production indexing, but use narrow `#[allow(..., reason = "...")]` on tests or validated LLVM-layout helpers when fixed-position access is intentional and already guarded
+- every surviving `#[allow(...)]` for Clippy lints should include a `reason = "..."`
+- preserve the product guarantee that malformed inputs return `Err`; do not “fix” Clippy findings by introducing Rust panics
+
 Before pushing changes:
 
 - run `make lint`
 - run `make test`
+
+If local validation is running on a protected branch such as `main`, it is acceptable to skip only the `no-commit-to-branch` pre-commit hook for local lint runs; keep the hook enabled for normal developer protection.
 
 ## Suggested validation
 
