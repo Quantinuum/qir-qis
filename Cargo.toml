@@ -53,6 +53,47 @@ wasm = ["wasmparser"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[lints.rust]
+arithmetic_overflow = "deny"
+unnecessary_transmutes = "deny"
+
+[lints.clippy]
+allow_attributes_without_reason = "deny"
+arithmetic_side_effects = "deny"
+assertions_on_result_states = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_precision_loss = "deny"
+cast_sign_loss = "deny"
+checked_conversions = "deny"
+dbg_macro = "deny"
+expect_used = "deny"
+fallible_impl_from = "deny"
+fn_params_excessive_bools = "deny"
+get_unwrap = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+join_absolute_paths = "deny"
+map_err_ignore = "deny"
+must_use_candidate = "deny"
+option_env_unwrap = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+panicking_unwrap = "deny"
+serde_api_misuse = "deny"
+string_slice = "deny"
+todo = "deny"
+transmute_ptr_to_ref = "deny"
+transmute_undefined_repr = "deny"
+unchecked_time_subtraction = "deny"
+unimplemented = "deny"
+uninit_vec = "deny"
+unneeded_field_pattern = "deny"
+unreachable = "deny"
+unused_result_ok = "deny"
+unwrap_used = "deny"
+wildcard_enum_match_arm = "deny"
+
 [dev-dependencies]
 insta = { version = "1", features = ["filters"] }
 proptest = "1"

@@ -171,7 +171,7 @@ fn create_cl_str(tag: &str, ty: &str, label: &str) -> Result<Vec<u8>, String> {
     }
     let new_cl_str_bytes = [
         &[u8::try_from(new_len)
-            .map_err(|_| format!("Failed to convert length {new_len} to u8"))?],
+            .map_err(|_err| format!("Failed to convert length {new_len} to u8"))?],
         new_bytes,
     ]
     .concat();
@@ -282,7 +282,7 @@ pub fn get_required_num_qubits_strict(function: FunctionValue) -> Result<u32, St
     let raw = decode_llvm_c_string(attr.get_string_value())
         .ok_or_else(|| "Invalid required_num_qubits attribute (not UTF-8)".to_string())?;
     raw.parse::<u32>()
-        .map_err(|_| format!("Invalid required_num_qubits attribute value: {raw}"))
+        .map_err(|_err| format!("Invalid required_num_qubits attribute value: {raw}"))
 }
 
 /// Creates a global array of qubits and initializes them using `___qalloc` calls.
@@ -553,7 +553,7 @@ pub fn get_required_num_results(entry_fn: FunctionValue) -> Result<usize, String
 
     let required_num_results = decoded_value
         .parse::<u32>()
-        .map_err(|_| format!("Invalid required_num_results attribute value: {decoded_value}"))?;
+        .map_err(|_err| format!("Invalid required_num_results attribute value: {decoded_value}"))?;
 
     Ok(required_num_results as usize)
 }
@@ -570,7 +570,10 @@ pub fn get_required_num_results(entry_fn: FunctionValue) -> Result<usize, String
 ///
 /// # Errors
 /// Returns an error if the `required_num_results` attribute is missing or invalid.
-#[allow(clippy::type_complexity)]
+#[allow(
+    clippy::type_complexity,
+    reason = "result futures carry paired optional values together"
+)]
 pub fn get_result_vars(
     entry_fn: FunctionValue,
 ) -> Result<Vec<Option<(BasicValueEnum, Option<BasicValueEnum>)>>, String> {
@@ -762,16 +765,24 @@ pub fn replace_rxy_call<'a>(
             ctx.f64_type().into(), // angle
         ],
         |args, builder| {
-            let qubit_ptr = args[2].into_pointer_value();
+            let angle1 = *args.first().ok_or_else(|| {
+                "Missing first argument for __quantum__qis__rxy__body".to_string()
+            })?;
+            let angle2 = *args.get(1).ok_or_else(|| {
+                "Missing second argument for __quantum__qis__rxy__body".to_string()
+            })?;
+            let qubit_ptr = args.get(2).ok_or_else(|| {
+                "Missing qubit argument for __quantum__qis__rxy__body".to_string()
+            })?;
             let handle = get_native_qubit_handle(
                 ctx,
                 module,
                 builder,
-                qubit_ptr,
+                qubit_ptr.into_pointer_value(),
                 dynamic_qubit_management,
                 "qbit",
             )?;
-            Ok(vec![handle, args[0], args[1]])
+            Ok(vec![handle, angle1, angle2])
         },
     )
     .map_err(|e| e.to_string())
@@ -794,16 +805,21 @@ pub fn replace_rz_call<'a>(
         "___rz",
         &[ctx.i64_type().into(), ctx.f64_type().into()],
         |args, builder| {
-            let qubit_ptr = args[1].into_pointer_value();
+            let angle = *args
+                .first()
+                .ok_or_else(|| "Missing angle argument for __quantum__qis__rz__body".to_string())?;
+            let qubit_ptr = args
+                .get(1)
+                .ok_or_else(|| "Missing qubit argument for __quantum__qis__rz__body".to_string())?;
             let handle = get_native_qubit_handle(
                 ctx,
                 module,
                 builder,
-                qubit_ptr,
+                qubit_ptr.into_pointer_value(),
                 dynamic_qubit_management,
                 "qbit",
             )?;
-            Ok(vec![handle, args[0]])
+            Ok(vec![handle, angle])
         },
     )
     .map_err(|e| e.to_string())
@@ -830,11 +846,20 @@ pub fn replace_rzz_call<'a>(
             ctx.f64_type().into(), // angle
         ],
         |args, builder| {
+            let angle = *args.first().ok_or_else(|| {
+                "Missing angle argument for __quantum__qis__rzz__body".to_string()
+            })?;
+            let q1_ptr = args.get(1).ok_or_else(|| {
+                "Missing first qubit argument for __quantum__qis__rzz__body".to_string()
+            })?;
+            let q2_ptr = args.get(2).ok_or_else(|| {
+                "Missing second qubit argument for __quantum__qis__rzz__body".to_string()
+            })?;
             let q1 = get_native_qubit_handle(
                 ctx,
                 module,
                 builder,
-                args[1].into_pointer_value(),
+                q1_ptr.into_pointer_value(),
                 dynamic_qubit_management,
                 "qbit1",
             )?;
@@ -842,11 +867,11 @@ pub fn replace_rzz_call<'a>(
                 ctx,
                 module,
                 builder,
-                args[2].into_pointer_value(),
+                q2_ptr.into_pointer_value(),
                 dynamic_qubit_management,
                 "qbit2",
             )?;
-            Ok(vec![q1, q2, args[0]])
+            Ok(vec![q1, q2, angle])
         },
     )
     .map_err(|e| e.to_string())
@@ -884,17 +909,13 @@ fn get_native_qubit_handle<'ctx>(
 /// Extracts the qubit index from an `IntToPtr` conversion string.
 fn get_idx_from_pointer_repr(ir_string: &str) -> Result<u64, String> {
     // Expected form: `inttoptr (i64 <index> to ...)`
-    let pattern = "inttoptr (i64 ";
-    if let Some(start) = ir_string.find(pattern) {
-        let rest = &ir_string[start
-            .checked_add(pattern.len())
-            .ok_or("Failed to calculate string index")?..];
-        if let Some(end) = rest.find(' ') {
-            let num_str = &rest[..end];
-            if let Ok(idx) = num_str.parse::<u64>() {
-                return Ok(idx);
-            }
-        }
+    let Some((_, rest)) = ir_string.split_once("inttoptr (i64 ") else {
+        return Err(format!("Cannot extract pointer index from: {ir_string}"));
+    };
+    if let Some(num_str) = rest.split(' ').next()
+        && let Ok(idx) = num_str.parse::<u64>()
+    {
+        return Ok(idx);
     }
     Err(format!("Cannot extract pointer index from: {ir_string}"))
 }
@@ -1258,8 +1279,14 @@ pub fn handle_tuple_or_array_output<'a, S: BuildHasher>(
             }
         })
         .collect::<Result<_, _>>()?;
-    let length = args[0].into_int_value().as_basic_value_enum();
-    let old_name = parse_gep(args[1])?;
+    let [length, output_ptr, ..] = args.as_slice() else {
+        return Err(format!(
+            "{fn_name} expected at least two operands, found {}",
+            args.len()
+        ));
+    };
+    let length = length.into_int_value().as_basic_value_enum();
+    let old_name = parse_gep(*output_ptr)?;
 
     let full_tag = if let Some(global) = global_mapping.get(old_name.as_str()) {
         get_string_label(*global)?
@@ -1268,9 +1295,8 @@ pub fn handle_tuple_or_array_output<'a, S: BuildHasher>(
     };
     // Parse the label from the global string (format: USER:RESULT:tag)
     let old_label = full_tag
-        .rfind(':')
-        .and_then(|pos| pos.checked_add(1))
-        .map_or_else(|| full_tag.clone(), |pos| full_tag[pos..].to_string());
+        .rsplit_once(':')
+        .map_or_else(|| full_tag.clone(), |(_, label)| label.to_string());
 
     let (new_const, new_name) = build_result_global(
         ctx,
@@ -1303,8 +1329,22 @@ pub fn handle_tuple_or_array_output<'a, S: BuildHasher>(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::unwrap_used)]
+    #![allow(
+        clippy::expect_used,
+        reason = "tests use expect for direct fixture failure messages"
+    )]
+    #![allow(
+        clippy::unwrap_used,
+        reason = "tests unwrap fixed fixtures and helper outputs"
+    )]
+    #![allow(
+        clippy::indexing_slicing,
+        reason = "tests inspect fixed operand positions in known IR layouts"
+    )]
+    #![allow(
+        clippy::unreachable,
+        reason = "test-only operand matching is constrained by fixture shape"
+    )]
 
     use inkwell::{types::AnyType, values::BasicValue};
     use proptest::prelude::*;
@@ -1630,7 +1670,7 @@ mod tests {
         .unwrap();
 
         assert!(mapping.contains_key("greet"));
-        let new_global = mapping.get("greet").unwrap();
+        let new_global = &mapping["greet"];
         assert_eq!(
             new_global
                 .get_name()
@@ -1852,7 +1892,7 @@ mod tests {
             .unwrap();
 
             // Check that output global mapping was updated
-            let new_global = global_mapping.get(&format!("{name}_array")).unwrap();
+            let new_global = &global_mapping[&format!("{name}_array")];
             let new_name = new_global
                 .get_name()
                 .to_str()
@@ -1933,7 +1973,7 @@ mod tests {
         .unwrap();
 
         // Check that output global mapping was updated
-        let new_global = global_mapping.get("tuple_out").unwrap();
+        let new_global = &global_mapping["tuple_out"];
         let new_name = new_global
             .get_name()
             .to_str()
@@ -2189,7 +2229,8 @@ entry:
         let ll_path = Path::new("tests/data/bad/ir_fn_main.ll");
         let qir_bytes = get_qir_bytes(ll_path);
 
-        assert!(qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).is_err());
+        qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None)
+            .expect_err("IR-defined main helper should be rejected");
     }
 
     #[test]
@@ -2197,8 +2238,10 @@ entry:
         let ll_path = Path::new("tests/data/bad/mz_to_creg_bit.ll");
         let qir_bytes = get_qir_bytes(ll_path);
 
-        assert!(qir_qis::validate_qir(qir_bytes.clone().into(), None).is_err());
-        assert!(qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).is_err());
+        qir_qis::validate_qir(qir_bytes.clone().into(), None)
+            .expect_err("invalid QIR should fail validation");
+        qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None)
+            .expect_err("invalid QIR should fail translation");
     }
 
     #[test]
@@ -2300,7 +2343,8 @@ entry:
         let ll_path = Path::new("tests/data/bad/pytket_qir_12.ll");
         let qir_bytes = get_qir_bytes(ll_path);
 
-        assert!(qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).is_err());
+        qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None)
+            .expect_err("unsupported QIR should fail translation");
     }
 
     #[test]

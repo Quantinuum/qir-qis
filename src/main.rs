@@ -15,7 +15,10 @@ struct Args {
     #[bpaf(short('O'), long("opt-level"), fallback(DEFAULT_OPT_LEVEL))]
     opt_level: u32,
 
-    #[allow(clippy::doc_markdown)]
+    #[allow(
+        clippy::doc_markdown,
+        reason = "bpaf option docs include quoted target spellings"
+    )]
     /// Target architecture (e.g., "aarch64", "x86-64", "native")
     #[bpaf(short('t'), long("target"), fallback(String::from(DEFAULT_TARGET)))]
     target: String,
@@ -32,9 +35,21 @@ fn main() {
     let args = args().run();
 
     let ll_path = Path::new(&args.ll_path);
-    let ll_text = fs::read_to_string(ll_path).expect("Failed to read input file");
+    let ll_text = match fs::read_to_string(ll_path) {
+        Ok(ll_text) => ll_text,
+        Err(err) => {
+            eprintln!("Failed to read input file: {err}");
+            exit(1);
+        }
+    };
 
-    let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
+    let bc_bytes = match qir_ll_to_bc(&ll_text) {
+        Ok(bc_bytes) => bc_bytes,
+        Err(err) => {
+            eprintln!("Failed to convert input LLVM IR to bitcode: {err}");
+            exit(1);
+        }
+    };
     if let Err(err) = validate_qir(&bc_bytes, None) {
         eprintln!("QIR validation failed: {err:?}");
         exit(1);
@@ -50,5 +65,8 @@ fn main() {
         }
     };
     let qis_path = ll_path.with_extension("qis.bc");
-    fs::write(&qis_path, qis_module).expect("Failed to write output file");
+    if let Err(err) = fs::write(&qis_path, qis_module) {
+        eprintln!("Failed to write output file: {err}");
+        exit(1);
+    }
 }
