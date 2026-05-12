@@ -38,7 +38,7 @@ fn main() {
     let ll_text = match fs::read_to_string(ll_path) {
         Ok(ll_text) => ll_text,
         Err(err) => {
-            eprintln!("Failed to read input file: {err}");
+            eprintln!("Failed to read input file `{}`: {err}", ll_path.display());
             exit(1);
         }
     };
@@ -66,7 +66,10 @@ fn main() {
     };
     let qis_path = ll_path.with_extension("qis.bc");
     if let Err(err) = fs::write(&qis_path, qis_module) {
-        eprintln!("Failed to write output file: {err}");
+        eprintln!(
+            "Failed to write output file `{}`: {err}",
+            qis_path.display()
+        );
         exit(1);
     }
 }

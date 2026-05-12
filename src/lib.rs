@@ -22,7 +22,7 @@ pub const DEFAULT_TARGET: &str = "aarch64";
 mod aux {
     #![allow(
         clippy::expect_used,
-        reason = "test helpers use expect for concise setup failures"
+        reason = "LLVM builder calls here encode internal lowering invariants; user-facing validation errors are propagated separately"
     )]
     #![allow(
         clippy::indexing_slicing,
