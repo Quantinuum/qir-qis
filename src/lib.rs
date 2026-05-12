@@ -1487,6 +1487,10 @@ mod aux {
         }
     }
 
+    #[allow(
+        clippy::unreachable,
+        reason = "a runtime helper returning no basic value indicates a broken lowering invariant"
+    )]
     fn build_dynamic_result_pending_return<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
@@ -1513,12 +1517,7 @@ mod aux {
             .expect("read future");
         let bool_val = match bool_call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(bv) => bv,
-            inkwell::values::ValueKind::Instruction(_) => {
-                builder
-                    .build_unreachable()
-                    .expect("read future should produce a basic value");
-                return;
-            }
+            inkwell::values::ValueKind::Instruction(_) => unreachable!(),
         };
         let _ = builder.build_call(dec_fn, &[future.into()], "");
         let _ = builder.build_store(cached_ptr, bool_val);
@@ -1689,6 +1688,10 @@ mod aux {
             .map_err(|e| format!("Failed to compare pointer with null: {e}"))
     }
 
+    #[allow(
+        clippy::unreachable,
+        reason = "the internal qalloc helper must produce a basic value or lowering is inconsistent"
+    )]
     fn ensure_dynamic_qubit_allocate<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
@@ -1724,12 +1727,7 @@ mod aux {
             .expect("qalloc call");
         let qid = match call_result.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(bv) => bv.into_int_value(),
-            inkwell::values::ValueKind::Instruction(_) => {
-                builder
-                    .build_unreachable()
-                    .expect("qalloc should produce a basic value");
-                return function;
-            }
+            inkwell::values::ValueKind::Instruction(_) => unreachable!(),
         };
         let is_fail = builder
             .build_int_compare(
@@ -1854,6 +1852,10 @@ mod aux {
         })
     }
 
+    #[allow(
+        clippy::unreachable,
+        reason = "the dynamic qubit allocation helper must return a pointer or lowering is inconsistent"
+    )]
     fn ensure_dynamic_qubit_array_allocate<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
@@ -1913,12 +1915,7 @@ mod aux {
             .expect("alloc qubit");
         let slot = match slot.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(bv) => bv,
-            inkwell::values::ValueKind::Instruction(_) => {
-                builder
-                    .build_unreachable()
-                    .expect("dynamic qubit allocation should return a pointer");
-                return function;
-            }
+            inkwell::values::ValueKind::Instruction(_) => unreachable!(),
         };
         let _ = builder.build_store(elem_ptr, slot).expect("store qubit");
         let out_err_is_null =
