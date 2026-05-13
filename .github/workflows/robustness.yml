@@ -143,7 +143,7 @@ jobs:
         run: cargo +nightly fuzz run --target "${RUST_HOST_TARGET}" ${{ matrix.target }} -- -max_total_time=300
       - name: Upload fuzz artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-${{ matrix.target }}-artifacts
           path: |

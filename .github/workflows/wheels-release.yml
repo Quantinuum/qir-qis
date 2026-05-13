@@ -82,7 +82,7 @@ jobs:
           ref: ${{ needs.prepare_release_context.outputs.checkout_ref }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
 
@@ -98,7 +98,7 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.3
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}-${{ strategy.job-index }}
           path: ./wheelhouse/*.whl
@@ -113,13 +113,13 @@ jobs:
       # Used to upload release artifacts
       contents: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheels-*
           path: wheelhouse
           merge-multiple: true
       - name: GH Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: wheelhouse/*.whl
           generate_release_notes: true
