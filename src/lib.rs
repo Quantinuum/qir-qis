@@ -2062,17 +2062,13 @@ mod aux {
         function
     }
 
-    #[allow(
-        clippy::or_fun_call,
-        reason = "direct ok_or avoids a CodeQL false positive on the opname capture"
-    )]
     fn extract_const_len(value: BasicValueEnum<'_>, opname: &str) -> Result<u64, String> {
-        value
-            .into_int_value()
-            .get_zero_extended_constant()
-            .ok_or(format!(
+        let Some(len) = value.into_int_value().get_zero_extended_constant() else {
+            return Err(format!(
                 "{opname} currently requires a constant array length"
-            ))
+            ));
+        };
+        Ok(len)
     }
 
     fn lower_void_helper_call<'ctx>(
