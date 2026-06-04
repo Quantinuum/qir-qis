@@ -3896,17 +3896,6 @@ attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_
     }
 
     fn minimal_qir_missing_attr(missing_attr: &str) -> String {
-        #[allow(
-            clippy::option_if_let_else,
-            reason = "explicit match avoids a CodeQL false positive on the attribute name capture"
-        )]
-        fn render_attr(name: &str, value: Option<&str>) -> String {
-            match value {
-                Some(value) => format!(r#""{name}"="{value}""#),
-                None => format!(r#""{name}""#),
-            }
-        }
-
         let attrs = [
             ("entry_point", None),
             ("qir_profiles", Some("base_profile")),
@@ -3917,7 +3906,12 @@ attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_
         let rendered_attrs = attrs
             .into_iter()
             .filter(|(name, _)| *name != missing_attr)
-            .map(|(name, value)| render_attr(name, value))
+            .map(|(name, value)| {
+                value.map_or_else(
+                    || format!(r#""{name}""#),
+                    |value| format!(r#""{name}"="{value}""#),
+                )
+            })
             .collect::<Vec<_>>()
             .join(" ");
 
