@@ -428,15 +428,15 @@ mod aux {
             return;
         };
 
-        if major_values.iter().any(|major| {
-            minor_values.iter().any(|minor| {
-                matches!(
-                    (major.as_str(), minor.as_str()),
+        for major_value in major_values {
+            for minor_value in minor_values {
+                if matches!(
+                    (major_value.as_str(), minor_value.as_str()),
                     ("i32 1", "i32 0") | ("i32 2", "i32 0" | "i32 1")
-                )
-            })
-        }) {
-            return;
+                ) {
+                    return;
+                }
+            }
         }
 
         if !major_values
@@ -1535,9 +1535,10 @@ mod aux {
         build_error: &str,
         value_error: &str,
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        let call = builder
-            .build_call(callee, args, name)
-            .map_err(|e| format!("{build_error}: {e}"))?;
+        let call = match builder.build_call(callee, args, name) {
+            Ok(call) => call,
+            Err(err) => return Err(format!("{build_error}: {err}")),
+        };
         match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(bv) => Ok(bv),
             inkwell::values::ValueKind::Instruction(_) => Err(value_error.to_string()),
@@ -2061,11 +2062,17 @@ mod aux {
         function
     }
 
+    #[allow(
+        clippy::or_fun_call,
+        reason = "direct ok_or avoids a CodeQL false positive on the opname capture"
+    )]
     fn extract_const_len(value: BasicValueEnum<'_>, opname: &str) -> Result<u64, String> {
         value
             .into_int_value()
             .get_zero_extended_constant()
-            .ok_or_else(|| format!("{opname} currently requires a constant array length"))
+            .ok_or(format!(
+                "{opname} currently requires a constant array length"
+            ))
     }
 
     fn lower_void_helper_call<'ctx>(
@@ -2079,9 +2086,9 @@ mod aux {
         builder.position_before(&instr);
         let metadata_args: Vec<BasicMetadataValueEnum<'ctx>> =
             call_args.iter().copied().map(Into::into).collect();
-        let _ = builder
-            .build_call(helper, &metadata_args, "")
-            .map_err(|e| format!("{error_context}: {e}"))?;
+        if let Err(err) = builder.build_call(helper, &metadata_args, "") {
+            return Err(format!("{error_context}: {err}"));
+        }
         instr.erase_from_basic_block();
         Ok(())
     }
@@ -3101,9 +3108,9 @@ mod aux {
     ) -> Result<(), String> {
         let builder = ctx.create_builder();
         builder.position_before(&instr);
-        let _ = builder
-            .build_call(callee, call_args, "")
-            .map_err(|e| format!("{build_error}: {e}"))?;
+        if let Err(err) = builder.build_call(callee, call_args, "") {
+            return Err(format!("{build_error}: {err}"));
+        }
         instr.erase_from_basic_block();
         Ok(())
     }
@@ -3893,6 +3900,17 @@ attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_
     }
 
     fn minimal_qir_missing_attr(missing_attr: &str) -> String {
+        #[allow(
+            clippy::option_if_let_else,
+            reason = "explicit match avoids a CodeQL false positive on the attribute name capture"
+        )]
+        fn render_attr(name: &str, value: Option<&str>) -> String {
+            match value {
+                Some(value) => format!(r#""{name}"="{value}""#),
+                None => format!(r#""{name}""#),
+            }
+        }
+
         let attrs = [
             ("entry_point", None),
             ("qir_profiles", Some("base_profile")),
@@ -3903,12 +3921,7 @@ attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_
         let rendered_attrs = attrs
             .into_iter()
             .filter(|(name, _)| *name != missing_attr)
-            .map(|(name, value)| {
-                value.map_or_else(
-                    || format!(r#""{name}""#),
-                    |value| format!(r#""{name}"="{value}""#),
-                )
-            })
+            .map(|(name, value)| render_attr(name, value))
             .collect::<Vec<_>>()
             .join(" ");
 
