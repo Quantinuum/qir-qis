@@ -25,9 +25,10 @@ pub fn verify_module(module: &Module, error_prefix: &str) -> Result<(), String> 
 
 #[cfg(not(windows))]
 pub fn verify_module(module: &Module, error_prefix: &str) -> Result<(), String> {
-    module
-        .verify()
-        .map_err(|err| format!("{error_prefix}: {err}"))
+    match module.verify() {
+        Ok(()) => Ok(()),
+        Err(err) => Err(format!("{error_prefix}: {err}")),
+    }
 }
 
 #[cfg(test)]
