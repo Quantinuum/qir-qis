@@ -428,15 +428,15 @@ mod aux {
             return;
         };
 
-        if major_values.iter().any(|major| {
-            minor_values.iter().any(|minor| {
-                matches!(
-                    (major.as_str(), minor.as_str()),
+        for major_value in major_values {
+            for minor_value in minor_values {
+                if matches!(
+                    (major_value.as_str(), minor_value.as_str()),
                     ("i32 1", "i32 0") | ("i32 2", "i32 0" | "i32 1")
-                )
-            })
-        }) {
-            return;
+                ) {
+                    return;
+                }
+            }
         }
 
         if !major_values
@@ -1535,9 +1535,10 @@ mod aux {
         build_error: &str,
         value_error: &str,
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        let call = builder
-            .build_call(callee, args, name)
-            .map_err(|e| format!("{build_error}: {e}"))?;
+        let call = match builder.build_call(callee, args, name) {
+            Ok(call) => call,
+            Err(err) => return Err(format!("{build_error}: {err}")),
+        };
         match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(bv) => Ok(bv),
             inkwell::values::ValueKind::Instruction(_) => Err(value_error.to_string()),
@@ -2062,10 +2063,12 @@ mod aux {
     }
 
     fn extract_const_len(value: BasicValueEnum<'_>, opname: &str) -> Result<u64, String> {
-        value
-            .into_int_value()
-            .get_zero_extended_constant()
-            .ok_or_else(|| format!("{opname} currently requires a constant array length"))
+        let Some(len) = value.into_int_value().get_zero_extended_constant() else {
+            return Err(format!(
+                "{opname} currently requires a constant array length"
+            ));
+        };
+        Ok(len)
     }
 
     fn lower_void_helper_call<'ctx>(
@@ -2079,9 +2082,9 @@ mod aux {
         builder.position_before(&instr);
         let metadata_args: Vec<BasicMetadataValueEnum<'ctx>> =
             call_args.iter().copied().map(Into::into).collect();
-        let _ = builder
-            .build_call(helper, &metadata_args, "")
-            .map_err(|e| format!("{error_context}: {e}"))?;
+        if let Err(err) = builder.build_call(helper, &metadata_args, "") {
+            return Err(format!("{error_context}: {err}"));
+        }
         instr.erase_from_basic_block();
         Ok(())
     }
@@ -3101,9 +3104,9 @@ mod aux {
     ) -> Result<(), String> {
         let builder = ctx.create_builder();
         builder.position_before(&instr);
-        let _ = builder
-            .build_call(callee, call_args, "")
-            .map_err(|e| format!("{build_error}: {e}"))?;
+        if let Err(err) = builder.build_call(callee, call_args, "") {
+            return Err(format!("{build_error}: {err}"));
+        }
         instr.erase_from_basic_block();
         Ok(())
     }
