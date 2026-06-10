@@ -1,8 +1,8 @@
 # Quantinuum QIR Reference
 
 Quantinuum Helios and beyond support [QIR](https://www.qir-alliance.org/)
-[Adaptive Profile](https://github.com/qir-alliance/qir-spec/blob/1.0/specification/profiles/Adaptive_Profile.md)
-and [Labeled Output Schema](https://github.com/qir-alliance/qir-spec/blob/1.0/specification/output_schemas/Labeled.md).
+[Adaptive Profile](https://github.com/qir-alliance/qir-spec/blob/2.1/specification/profiles/Adaptive_Profile.md)
+and [Labeled Output Schema](https://github.com/qir-alliance/qir-spec/blob/2.1/specification/output_schemas/Labeled.md).
 
 We document Quantinuum-specific QIS, runtime and platform functions here.
 
@@ -168,8 +168,8 @@ where:
 
 ## Runtime Functions
 
-See QIR [Adaptive Profile: §Runtime Functions](https://github.com/qir-alliance/qir-spec/blob/1.0/specification/profiles/Adaptive_Profile.md#runtime-functions)
-and [Labeled Output Schema: §Output Recording Functions](https://github.com/qir-alliance/qir-spec/blob/1.0/specification/output_schemas/Labeled.md#output-recording-functions)
+See QIR [Adaptive Profile: §Runtime Functions](https://github.com/qir-alliance/qir-spec/blob/2.1/specification/profiles/Adaptive_Profile.md#runtime-functions)
+and [Labeled Output Schema: §Output Recording Functions](https://github.com/qir-alliance/qir-spec/blob/2.1/specification/output_schemas/Labeled.md#output-recording-functions)
 for more details.
 
 ```llvm
