@@ -15,7 +15,7 @@ exclude_re = [
   'src/lib\.rs:\d+:\d+: replace == with != in aux::handle_mz_call',
   'src/lib\.rs:\d+:\d+: replace get_wasm_functions -> .*',
   'src/llvm_verify\.rs:\d+:\d+: replace verify_module_windows -> .*',
-  'src/llvm_verify\.rs:\d+:\d+: replace == with != in verify_module',
+  'src/llvm_verify\.rs:\d+:\d+: replace == with != in verify_module_windows',
   'src/opt\.rs:\d+:\d+: replace > with >= in optimize',
   'src/opt\.rs:\d+:\d+: replace > with == in optimize',
   'src/opt\.rs:\d+:\d+: replace > with < in optimize',
