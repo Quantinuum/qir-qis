@@ -523,12 +523,13 @@ mod aux {
     }
 
     fn extract_module_flag_name(values: &[BasicMetadataValueEnum]) -> Option<String> {
-        values
-            .get(1)?
-            .into_metadata_value()
-            .get_string_value()
-            .and_then(decode_llvm_bytes)
-            .map(str::to_owned)
+        match values.get(1)? {
+            BasicMetadataValueEnum::MetadataValue(value) => value
+                .get_string_value()
+                .and_then(decode_llvm_bytes)
+                .map(str::to_owned),
+            _ => None,
+        }
     }
 
     fn format_module_flag_value(value: BasicMetadataValueEnum) -> Option<String> {
@@ -4381,6 +4382,29 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
         let err = validate_qir(&bc_bytes, None).expect_err("Malformed module flag should fail");
         assert!(err.contains("Missing or unsupported module flag: qir_major_version"));
+    }
+
+    #[test]
+    fn test_validate_module_flags_with_non_metadata_name_operand_does_not_panic() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, i32 123, i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("Non-metadata module flag name operand should fail validation");
+        assert!(err.contains("Missing required module flag: qir_major_version"));
     }
 
     #[test]
