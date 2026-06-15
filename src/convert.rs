@@ -38,28 +38,45 @@ pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StaticQubitIndexMode {
+    ZeroBased,
+    OneBased,
+}
+
 /// Normalize static qubit IDs to the backing array slot used by translation.
-///
-/// This translator accepts the historical zero-based fixtures in the repo
-/// (`null`, `inttoptr i64 1`, ...) while also accepting the single-qubit
-/// one-based form (`inttoptr i64 1` with `required_num_qubits="1"`).
 ///
 /// # Errors
 /// Returns an error when the encoded qubit ID falls outside the module's
 /// declared static qubit range.
-pub fn checked_qubit_index(qubit_idx: u64, required_num_qubits: u32) -> Result<u64, String> {
+pub fn checked_qubit_index(
+    qubit_idx: u64,
+    required_num_qubits: u32,
+    mode: StaticQubitIndexMode,
+) -> Result<u64, String> {
     let required_num_qubits = u64::from(required_num_qubits);
-    if qubit_idx < required_num_qubits {
-        return Ok(qubit_idx);
+    match mode {
+        StaticQubitIndexMode::ZeroBased => {
+            if qubit_idx < required_num_qubits {
+                Ok(qubit_idx)
+            } else {
+                Err(format!(
+                    "Qubit index {qubit_idx} exceeds required_num_qubits ({required_num_qubits})"
+                ))
+            }
+        }
+        StaticQubitIndexMode::OneBased => {
+            if (1..=required_num_qubits).contains(&qubit_idx) {
+                qubit_idx.checked_sub(1).ok_or_else(|| {
+                    "Qubit index underflow during one-based static qubit normalization".to_string()
+                })
+            } else {
+                Err(format!(
+                    "Qubit index {qubit_idx} exceeds required_num_qubits ({required_num_qubits})"
+                ))
+            }
+        }
     }
-    if qubit_idx == required_num_qubits {
-        return qubit_idx
-            .checked_sub(1)
-            .ok_or_else(|| "Qubit index underflow during static qubit normalization".to_string());
-    }
-    Err(format!(
-        "Qubit index {qubit_idx} exceeds required_num_qubits ({required_num_qubits})"
-    ))
 }
 
 /// Checks if the given type is an i8 array type.

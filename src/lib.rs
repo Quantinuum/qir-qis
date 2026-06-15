@@ -33,11 +33,12 @@ mod aux {
 
     use crate::{
         convert::{
-            INIT_QARRAY_FN, add_print_call, build_result_global, checked_qubit_index,
-            convert_globals, create_reset_call, get_index, get_or_create_function,
-            get_required_num_qubits, get_required_num_qubits_strict, get_required_num_results,
-            get_result_vars, get_string_label, handle_tuple_or_array_output, parse_gep,
-            record_classical_output, replace_rxy_call, replace_rz_call, replace_rzz_call,
+            INIT_QARRAY_FN, StaticQubitIndexMode, add_print_call, build_result_global,
+            checked_qubit_index, convert_globals, create_reset_call, get_index,
+            get_or_create_function, get_required_num_qubits, get_required_num_qubits_strict,
+            get_required_num_results, get_result_vars, get_string_label,
+            handle_tuple_or_array_output, parse_gep, record_classical_output, replace_rxy_call,
+            replace_rz_call, replace_rzz_call,
         },
         decode_llvm_bytes,
         utils::extract_operands,
@@ -860,9 +861,140 @@ mod aux {
         wasm_fns: *const BTreeMap<String, u64>,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
+        static_qubit_index_mode: StaticQubitIndexMode,
         capability_flags: CapabilityFlags,
         global_mapping: *mut HashMap<String, inkwell::values::GlobalValue<'ctx>>,
         result_ssa: *mut Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>,
+    }
+
+    fn note_static_qubit_pointer(
+        value: BasicValueEnum<'_>,
+        required_num_qubits: u64,
+        saw_zero_based: &mut bool,
+        saw_one_based_upper_bound: &mut bool,
+    ) {
+        let BasicValueEnum::PointerValue(ptr) = value else {
+            return;
+        };
+        let Ok(index) = get_index(ptr) else {
+            return;
+        };
+        if index == 0 {
+            *saw_zero_based = true;
+        }
+        if index == required_num_qubits {
+            *saw_one_based_upper_bound = true;
+        }
+    }
+
+    fn infer_static_qubit_index_mode(entry_fn: FunctionValue<'_>) -> StaticQubitIndexMode {
+        let Some(required_num_qubits) = get_required_num_qubits(entry_fn).map(u64::from) else {
+            return StaticQubitIndexMode::ZeroBased;
+        };
+
+        let mut saw_zero_based = false;
+        let mut saw_one_based_upper_bound = false;
+
+        for bb in entry_fn.get_basic_blocks() {
+            for instr in bb.get_instructions() {
+                let Ok(call) = CallSiteValue::try_from(instr) else {
+                    continue;
+                };
+                let Some(fn_name) = call.get_called_fn_value().and_then(|f| {
+                    f.as_global_value()
+                        .get_name()
+                        .to_str()
+                        .ok()
+                        .map(ToOwned::to_owned)
+                }) else {
+                    continue;
+                };
+                let Ok(call_args) = extract_operands(&instr) else {
+                    continue;
+                };
+
+                match fn_name.as_str() {
+                    "__quantum__qis__m__body"
+                    | "__quantum__qis__mresetz__body"
+                    | "__quantum__qis__mz__body"
+                    | "__quantum__qis__mz_leaked__body"
+                    | "__quantum__qis__reset__body"
+                    | "__quantum__qis__h__body"
+                    | "__quantum__qis__x__body"
+                    | "__quantum__qis__y__body"
+                    | "__quantum__qis__z__body"
+                    | "__quantum__qis__s__body"
+                    | "__quantum__qis__s__adj"
+                    | "__quantum__qis__t__body"
+                    | "__quantum__qis__t__adj" => {
+                        if let Some(arg) = call_args.first().copied() {
+                            note_static_qubit_pointer(
+                                arg,
+                                required_num_qubits,
+                                &mut saw_zero_based,
+                                &mut saw_one_based_upper_bound,
+                            );
+                        }
+                    }
+                    "__quantum__qis__rxy__body"
+                    | "__quantum__qis__rx__body"
+                    | "__quantum__qis__ry__body"
+                    | "__quantum__qis__rz__body"
+                    | "__quantum__qis__u1q__body" => {
+                        if let Some(arg) = call_args.last().copied() {
+                            note_static_qubit_pointer(
+                                arg,
+                                required_num_qubits,
+                                &mut saw_zero_based,
+                                &mut saw_one_based_upper_bound,
+                            );
+                        }
+                    }
+                    "__quantum__qis__rzz__body" => {
+                        for arg in call_args.iter().rev().take(2).copied() {
+                            note_static_qubit_pointer(
+                                arg,
+                                required_num_qubits,
+                                &mut saw_zero_based,
+                                &mut saw_one_based_upper_bound,
+                            );
+                        }
+                    }
+                    "__quantum__qis__cz__body"
+                    | "__quantum__qis__cx__body"
+                    | "__quantum__qis__cnot__body"
+                    | "__quantum__qis__ccx__body" => {
+                        for arg in call_args.iter().copied() {
+                            note_static_qubit_pointer(
+                                arg,
+                                required_num_qubits,
+                                &mut saw_zero_based,
+                                &mut saw_one_based_upper_bound,
+                            );
+                        }
+                    }
+                    _ if fn_name.starts_with("__quantum__qis__barrier")
+                        && fn_name.ends_with("__body") =>
+                    {
+                        for arg in call_args.iter().copied() {
+                            note_static_qubit_pointer(
+                                arg,
+                                required_num_qubits,
+                                &mut saw_zero_based,
+                                &mut saw_one_based_upper_bound,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if !saw_zero_based && saw_one_based_upper_bound {
+            StaticQubitIndexMode::OneBased
+        } else {
+            StaticQubitIndexMode::ZeroBased
+        }
     }
 
     /// Primary translation loop over the entry function for translation to QIS.
@@ -892,6 +1024,11 @@ mod aux {
                     .array_type(get_required_num_qubits_strict(entry_fn)?),
             )
         };
+        let static_qubit_index_mode = if capability_flags.dynamic_qubit_management {
+            StaticQubitIndexMode::ZeroBased
+        } else {
+            infer_static_qubit_index_mode(entry_fn)
+        };
 
         for bb in entry_fn.get_basic_blocks() {
             // Snapshot instructions before rewriting calls. Some rewrite paths
@@ -916,6 +1053,7 @@ mod aux {
                         wasm_fns: std::ptr::from_ref(wasm_fns),
                         qubit_array,
                         qubit_array_type,
+                        static_qubit_index_mode,
                         capability_flags,
                         global_mapping: &raw mut global_mapping,
                         result_ssa: &raw mut result_ssa,
@@ -1031,6 +1169,7 @@ mod aux {
                     args.capability_flags,
                     args.qubit_array,
                     args.qubit_array_type,
+                    args.static_qubit_index_mode,
                     args.result_ssa.cast::<()>(),
                 )?;
             }
@@ -1158,6 +1297,7 @@ mod aux {
         capability_flags: CapabilityFlags,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
+        static_qubit_index_mode: StaticQubitIndexMode,
         builder: &inkwell::builder::Builder<'ctx>,
         qubit_ptr: PointerValue<'ctx>,
     ) -> Result<BasicValueEnum<'ctx>, String> {
@@ -1173,7 +1313,7 @@ mod aux {
             qubit_array_type.ok_or("Missing static qubit array type for qubit lookup")?;
         let i64_type = ctx.i64_type();
         let index = get_index(qubit_ptr)?;
-        let index = checked_qubit_index(index, qubit_array_type.len())?;
+        let index = checked_qubit_index(index, qubit_array_type.len(), static_qubit_index_mode)?;
         let index_val = i64_type.const_int(index, false);
         let elem_ptr = unsafe {
             builder.build_gep(
@@ -2564,6 +2704,7 @@ mod aux {
         capability_flags: CapabilityFlags,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
+        static_qubit_index_mode: StaticQubitIndexMode,
         result_ssa: *mut (),
     ) -> Result<(), String> {
         let module = unsafe { &*module.cast::<Module<'ctx>>() };
@@ -2585,6 +2726,7 @@ mod aux {
             capability_flags,
             qubit_array,
             qubit_array_type,
+            static_qubit_index_mode,
             &builder,
             qubit_ptr,
         )?;
@@ -2664,6 +2806,7 @@ mod aux {
             args.capability_flags,
             args.qubit_array,
             args.qubit_array_type,
+            args.static_qubit_index_mode,
             &builder,
             qubit_ptr,
         )?;
@@ -2751,6 +2894,7 @@ mod aux {
             args.capability_flags,
             args.qubit_array,
             args.qubit_array_type,
+            args.static_qubit_index_mode,
             &builder,
             qubit_ptr,
         )?;
@@ -2819,6 +2963,7 @@ mod aux {
                 args.capability_flags,
                 args.qubit_array,
                 args.qubit_array_type,
+                args.static_qubit_index_mode,
                 &builder,
                 qubit_ptr,
             )?;
@@ -4860,24 +5005,98 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
-    fn test_checked_qubit_index_accepts_one_based_static_ids() {
+    fn test_checked_qubit_index_accepts_zero_based_static_ids() {
         assert_eq!(
-            crate::convert::checked_qubit_index(1, 1)
-                .expect("one-based first qubit id should map to slot 0"),
+            crate::convert::checked_qubit_index(
+                0,
+                2,
+                crate::convert::StaticQubitIndexMode::ZeroBased
+            )
+            .expect("zero-based first qubit id should map to slot 0"),
             0
         );
         assert_eq!(
-            crate::convert::checked_qubit_index(2, 2)
-                .expect("one-based last qubit id should map to the last slot"),
+            crate::convert::checked_qubit_index(
+                1,
+                2,
+                crate::convert::StaticQubitIndexMode::ZeroBased
+            )
+            .expect("zero-based second qubit id should map to slot 1"),
+            1
+        );
+    }
+
+    #[test]
+    fn test_checked_qubit_index_accepts_one_based_static_ids() {
+        assert_eq!(
+            crate::convert::checked_qubit_index(
+                1,
+                1,
+                crate::convert::StaticQubitIndexMode::OneBased
+            )
+            .expect("one-based first qubit id should map to slot 0"),
+            0
+        );
+        assert_eq!(
+            crate::convert::checked_qubit_index(
+                1,
+                2,
+                crate::convert::StaticQubitIndexMode::OneBased
+            )
+            .expect("one-based first qubit id should map to slot 0"),
+            0
+        );
+        assert_eq!(
+            crate::convert::checked_qubit_index(
+                2,
+                2,
+                crate::convert::StaticQubitIndexMode::OneBased
+            )
+            .expect("one-based last qubit id should map to the last slot"),
             1
         );
     }
 
     #[test]
     fn test_checked_qubit_index_rejects_out_of_bounds_values() {
-        let err = crate::convert::checked_qubit_index(2, 1)
-            .expect_err("out-of-bounds one-based qubit ids should fail cleanly");
+        let err = crate::convert::checked_qubit_index(
+            2,
+            1,
+            crate::convert::StaticQubitIndexMode::OneBased,
+        )
+        .expect_err("out-of-bounds one-based qubit ids should fail cleanly");
         assert_eq!(err, "Qubit index 2 exceeds required_num_qubits (1)");
+    }
+
+    #[test]
+    fn test_qir_to_qis_accepts_one_based_two_qubit_barrier() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__barrier2__body(%Qubit*, %Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 1 to %Qubit*
+  %q1 = inttoptr i64 2 to %Qubit*
+  call void @__quantum__qis__barrier2__body(%Qubit* %q0, %Qubit* %q1)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="2" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let output_bc = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect("one-based static barrier operands should translate successfully");
+        verify_bitcode_module(&output_bc, "one_based_two_qubit_barrier")
+            .expect("translated QIS should remain LLVM-verifiable");
     }
 
     #[test]
