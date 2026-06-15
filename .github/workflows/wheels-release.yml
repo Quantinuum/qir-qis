@@ -18,7 +18,6 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  actions: write
   contents: read
 
 jobs:
@@ -87,7 +86,7 @@ jobs:
           enable-cache: true
 
       - name: Install hugrenv LLVM
-        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@5d6d5f7dd6f2c6fb0b6b43c2b6e5b6f2876b7d09 # v1.0.0
         with:
           packages: "llvm"
 
