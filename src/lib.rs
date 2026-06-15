@@ -1143,6 +1143,9 @@ mod aux {
                 // External context calls are left as-is for downstream processing
                 log::debug!("___get_wasm_context found, leaving as-is for downstream processing");
             }
+            "___barrier" => {
+                return Err("Unsupported Qtm QIS function: ___barrier".to_string());
+            }
             _ => {
                 // Ignore already converted Qtm QIS functions
                 log::trace!("Ignoring Qtm QIS function: {}", args.fn_name);
@@ -4724,6 +4727,32 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
         let err = validate_qir(&bc_bytes, None)
             .expect_err("raw ___barrier declarations should fail validation");
+        assert!(err.contains("Unsupported Qtm QIS function: ___barrier"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_raw_barrier_runtime_function() {
+        let ll_text = r#"
+declare void @___barrier(ptr, i64)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  call void @___barrier(ptr null, i64 1)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("raw ___barrier declarations should fail translation");
         assert!(err.contains("Unsupported Qtm QIS function: ___barrier"));
     }
 
