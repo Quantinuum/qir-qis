@@ -375,13 +375,7 @@ pub fn create_qubit_array<'ctx>(
             .map_err(|e| format!("Failed to build call to {INIT_QARRAY_FN}: {e}"))?;
     }
 
-    let _ = add_load_qubit_fn(
-        ctx,
-        module,
-        global_ptr,
-        array_type,
-        static_qubit_index_mode,
-    );
+    let _ = add_load_qubit_fn(ctx, module, global_ptr, array_type, static_qubit_index_mode);
 
     Ok(global_ptr)
 }
@@ -443,7 +437,11 @@ fn add_load_qubit_fn<'ctx>(
                 )
                 .map_err(|e| format!("Failed to build static qubit upper-bound check: {e}"))?;
             builder
-                .build_and(nonzero, within_upper_bound, "valid_one_based_static_qubit_index")
+                .build_and(
+                    nonzero,
+                    within_upper_bound,
+                    "valid_one_based_static_qubit_index",
+                )
                 .map_err(|e| format!("Failed to combine static qubit bounds checks: {e}"))?
         }
     };
@@ -466,7 +464,11 @@ fn add_load_qubit_fn<'ctx>(
     let normalized_index = match static_qubit_index_mode {
         StaticQubitIndexMode::ZeroBased => index_val,
         StaticQubitIndexMode::OneBased => builder
-            .build_int_sub(index_val, i64_type.const_int(1, false), "normalized_static_qubit_idx")
+            .build_int_sub(
+                index_val,
+                i64_type.const_int(1, false),
+                "normalized_static_qubit_idx",
+            )
             .map_err(|e| format!("Failed to normalize one-based static qubit index: {e}"))?,
     };
     let elem_ptr = unsafe {
@@ -1860,13 +1862,7 @@ mod tests {
             )
             .unwrap();
 
-        create_qubit_array(
-            &context,
-            &module,
-            func,
-            StaticQubitIndexMode::ZeroBased,
-        )
-        .unwrap();
+        create_qubit_array(&context, &module, func, StaticQubitIndexMode::ZeroBased).unwrap();
 
         let instr = call.try_as_basic_value().unwrap_instruction();
         replace_rz_call(
@@ -1932,12 +1928,7 @@ mod tests {
         let entry_block = entry_fn.get_first_basic_block().unwrap();
         builder.position_at_end(entry_block);
         let _ = builder.build_call(initialize_fn, &[], "");
-        let _ = create_qubit_array(
-            &context,
-            &module,
-            entry_fn,
-            StaticQubitIndexMode::ZeroBased,
-        );
+        let _ = create_qubit_array(&context, &module, entry_fn, StaticQubitIndexMode::ZeroBased);
         // If it doesn't panic, it's fine
     }
 
@@ -1957,13 +1948,9 @@ mod tests {
         let entry_block = entry_fn.get_first_basic_block().unwrap();
         builder.position_at_end(entry_block);
         let _ = builder.build_call(initialize_fn, &[], "");
-        let qubit_array = create_qubit_array(
-            &context,
-            &module,
-            entry_fn,
-            StaticQubitIndexMode::ZeroBased,
-        )
-        .unwrap();
+        let qubit_array =
+            create_qubit_array(&context, &module, entry_fn, StaticQubitIndexMode::ZeroBased)
+                .unwrap();
         free_all_qubits(&context, &module, entry_fn, qubit_array).unwrap();
         // If it doesn't panic, it's fine
     }
@@ -2574,7 +2561,7 @@ entry:
             false,
             StaticQubitIndexMode::ZeroBased,
         )
-            .expect("entry function should be excluded from IR-defined helper processing");
+        .expect("entry function should be excluded from IR-defined helper processing");
     }
 
     #[test]

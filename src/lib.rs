@@ -965,6 +965,10 @@ mod aux {
         }
     }
 
+    #[allow(
+        clippy::redundant_pub_crate,
+        reason = "helper is intentionally exposed only to the parent module"
+    )]
     pub(super) fn infer_static_qubit_index_mode(
         entry_fn: FunctionValue<'_>,
     ) -> Result<StaticQubitIndexMode, String> {
@@ -1147,7 +1151,9 @@ mod aux {
     }
 
     fn handle_qis_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
-        let required_num_qubits = args.qubit_array_type.map_or(0, |array_type| array_type.len());
+        let required_num_qubits = args
+            .qubit_array_type
+            .map_or(0, inkwell::types::ArrayType::len);
         match args.fn_name.as_str() {
             "__quantum__qis__rxy__body" => {
                 replace_rxy_call(
