@@ -717,6 +717,12 @@ mod aux {
                         ));
                         continue;
                     }
+                    let BasicValueEnum::IntValue(_) = call_args[0] else {
+                        errors.push(format!(
+                            "{fn_name} requires a constant array length and backing array pointer"
+                        ));
+                        continue;
+                    };
                     let requested_len = match extract_const_len(call_args[0], fn_name) {
                         Ok(len) => len,
                         Err(err) => {
@@ -6001,6 +6007,35 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
         ));
         assert!(err.contains(
             "__quantum__rt__qubit_array_allocate requires a constant array length and backing array pointer"
+        ));
+    }
+
+    #[test]
+    fn test_validate_dynamic_result_array_allocate_pointer_length_fails_without_panic() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %len = alloca ptr, align 8
+  %results = alloca [2 x ptr], align 8
+  call void @__quantum__rt__result_array_allocate(ptr %len, ptr %results, ptr null)
+  ret i64 0
+}
+
+declare void @__quantum__rt__result_array_allocate(ptr, ptr, ptr)
+
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 true}
+!3 = !{i32 1, !"dynamic_result_management", i1 true}
+!4 = !{i32 1, !"arrays", i1 true}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let err = validate_qir(&bc_bytes, None).expect_err("fixture should fail validation");
+        assert!(err.contains(
+            "__quantum__rt__result_array_allocate requires a constant array length and backing array pointer"
         ));
     }
 
