@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install hugrenv LLVM
-        uses: Quantinuum/hugrverse-env/install-hugrenv-action@5d6d5f7dd6f2c6fb0b6b43c2b6e5b6f2876b7d09 # v1.0.0
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@e90a8802bbc6190de0d434eeabc2461160aa6a2a # v1.0.0
         with:
           packages: "llvm"
 
