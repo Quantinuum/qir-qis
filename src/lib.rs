@@ -405,6 +405,9 @@ mod aux {
 
     pub fn validate_module_flags(module: &Module, errors: &mut Vec<String>) {
         let module_flags = collect_module_flags(module);
+        if module_flags.has_malformed_name() {
+            errors.push("Malformed llvm.module.flags entry: expected metadata string name".to_string());
+        }
         validate_qir_version_flags(&module_flags, errors);
         validate_exact_module_flag(
             &module_flags,
@@ -473,12 +476,17 @@ mod aux {
 
     pub struct ModuleFlags {
         values: BTreeMap<String, Vec<String>>,
+        has_malformed_name: bool,
         malformed: BTreeSet<String>,
     }
 
     impl ModuleFlags {
         pub fn get(&self, flag_name: &str) -> Option<&[String]> {
             self.values.get(flag_name).map(Vec::as_slice)
+        }
+
+        fn has_malformed_name(&self) -> bool {
+            self.has_malformed_name
         }
 
         fn is_malformed(&self, flag_name: &str) -> bool {
@@ -488,6 +496,7 @@ mod aux {
 
     pub fn collect_module_flags(module: &Module) -> ModuleFlags {
         let mut values = BTreeMap::<String, Vec<String>>::new();
+        let mut has_malformed_name = false;
         let mut malformed = BTreeSet::new();
 
         for entry in module.get_global_metadata("llvm.module.flags") {
@@ -495,6 +504,9 @@ mod aux {
                 continue;
             };
             let flag_name = extract_module_flag_name(&node_values);
+            if flag_name.is_none() {
+                has_malformed_name = true;
+            }
 
             if node_values.len() != 3 {
                 if let Some(flag_name) = flag_name {
@@ -519,11 +531,15 @@ mod aux {
             values.entry(flag_name).or_default().push(flag_value);
         }
 
-        ModuleFlags { values, malformed }
+        ModuleFlags {
+            values,
+            has_malformed_name,
+            malformed,
+        }
     }
 
     fn extract_module_flag_name(values: &[BasicMetadataValueEnum]) -> Option<String> {
-        match values.get(1)? {
+        match values.get(1).copied()? {
             BasicMetadataValueEnum::MetadataValue(value) => value
                 .get_string_value()
                 .and_then(decode_llvm_bytes)
@@ -4411,6 +4427,30 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let err = validate_qir(&bc_bytes, None)
             .expect_err("Non-metadata module flag name operand should fail validation");
         assert!(err.contains("Missing required module flag: qir_major_version"));
+    }
+
+    #[test]
+    fn test_validate_module_flags_rejects_malformed_name_even_when_required_flags_exist() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, i32 123, i32 2}
+!1 = !{i32 1, !"qir_major_version", i32 1}
+!2 = !{i32 7, !"qir_minor_version", i32 0}
+!3 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!4 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("Malformed module flag names should fail even with complete required flags");
+        assert!(err.contains("Malformed llvm.module.flags entry: expected metadata string name"));
     }
 
     #[test]
