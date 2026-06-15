@@ -84,7 +84,7 @@ jobs:
           ref: ${{ needs.prepare_release_context.outputs.checkout_ref }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
 
@@ -98,7 +98,7 @@ jobs:
         run: echo "HUGRENV_PATH=${LLVM_SYS_211_PREFIX}" >>"$GITHUB_ENV"
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.3
+        uses: pypa/cibuildwheel@v4.1
 
       - uses: actions/upload-artifact@v7
         with:

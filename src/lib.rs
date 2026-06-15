@@ -194,18 +194,6 @@ mod aux {
     }
 
     #[cfg(feature = "wasm")]
-    static ALLOWED_QTM_FNS: [&str; 8] = [
-        "___get_current_shot",
-        "___random_seed",
-        "___random_int",
-        "___random_float",
-        "___random_int_bounded",
-        "___random_advance",
-        "___get_wasm_context",
-        "___barrier",
-    ];
-
-    #[cfg(not(feature = "wasm"))]
     static ALLOWED_QTM_FNS: [&str; 7] = [
         "___get_current_shot",
         "___random_seed",
@@ -213,7 +201,17 @@ mod aux {
         "___random_float",
         "___random_int_bounded",
         "___random_advance",
-        "___barrier",
+        "___get_wasm_context",
+    ];
+
+    #[cfg(not(feature = "wasm"))]
+    static ALLOWED_QTM_FNS: [&str; 6] = [
+        "___get_current_shot",
+        "___random_seed",
+        "___random_int",
+        "___random_float",
+        "___random_int_bounded",
+        "___random_advance",
     ];
 
     #[cfg(not(windows))]
@@ -405,6 +403,11 @@ mod aux {
 
     pub fn validate_module_flags(module: &Module, errors: &mut Vec<String>) {
         let module_flags = collect_module_flags(module);
+        if module_flags.has_malformed_name() {
+            errors.push(
+                "Malformed llvm.module.flags entry: expected metadata string name".to_string(),
+            );
+        }
         validate_qir_version_flags(&module_flags, errors);
         validate_exact_module_flag(
             &module_flags,
@@ -428,15 +431,15 @@ mod aux {
             return;
         };
 
-        if major_values.iter().any(|major| {
-            minor_values.iter().any(|minor| {
-                matches!(
-                    (major.as_str(), minor.as_str()),
+        for major_value in major_values {
+            for minor_value in minor_values {
+                if matches!(
+                    (major_value.as_str(), minor_value.as_str()),
                     ("i32 1", "i32 0") | ("i32 2", "i32 0" | "i32 1")
-                )
-            })
-        }) {
-            return;
+                ) {
+                    return;
+                }
+            }
         }
 
         if !major_values
@@ -473,12 +476,17 @@ mod aux {
 
     pub struct ModuleFlags {
         values: BTreeMap<String, Vec<String>>,
+        has_malformed_name: bool,
         malformed: BTreeSet<String>,
     }
 
     impl ModuleFlags {
         pub fn get(&self, flag_name: &str) -> Option<&[String]> {
             self.values.get(flag_name).map(Vec::as_slice)
+        }
+
+        const fn has_malformed_name(&self) -> bool {
+            self.has_malformed_name
         }
 
         fn is_malformed(&self, flag_name: &str) -> bool {
@@ -488,6 +496,7 @@ mod aux {
 
     pub fn collect_module_flags(module: &Module) -> ModuleFlags {
         let mut values = BTreeMap::<String, Vec<String>>::new();
+        let mut has_malformed_name = false;
         let mut malformed = BTreeSet::new();
 
         for entry in module.get_global_metadata("llvm.module.flags") {
@@ -495,6 +504,9 @@ mod aux {
                 continue;
             };
             let flag_name = extract_module_flag_name(&node_values);
+            if flag_name.is_none() {
+                has_malformed_name = true;
+            }
 
             if node_values.len() != 3 {
                 if let Some(flag_name) = flag_name {
@@ -519,16 +531,27 @@ mod aux {
             values.entry(flag_name).or_default().push(flag_value);
         }
 
-        ModuleFlags { values, malformed }
+        ModuleFlags {
+            values,
+            has_malformed_name,
+            malformed,
+        }
     }
 
     fn extract_module_flag_name(values: &[BasicMetadataValueEnum]) -> Option<String> {
-        values
-            .get(1)?
-            .into_metadata_value()
-            .get_string_value()
-            .and_then(decode_llvm_bytes)
-            .map(str::to_owned)
+        match values.get(1).copied()? {
+            BasicMetadataValueEnum::MetadataValue(value) => value
+                .get_string_value()
+                .and_then(decode_llvm_bytes)
+                .map(str::to_owned),
+            BasicMetadataValueEnum::ArrayValue(_)
+            | BasicMetadataValueEnum::IntValue(_)
+            | BasicMetadataValueEnum::FloatValue(_)
+            | BasicMetadataValueEnum::PointerValue(_)
+            | BasicMetadataValueEnum::StructValue(_)
+            | BasicMetadataValueEnum::VectorValue(_)
+            | BasicMetadataValueEnum::ScalableVectorValue(_) => None,
+        }
     }
 
     fn format_module_flag_value(value: BasicMetadataValueEnum) -> Option<String> {
@@ -711,6 +734,18 @@ mod aux {
                             continue;
                         }
                     };
+                    if call_args.len() < 2 {
+                        errors.push(format!(
+                            "{fn_name} requires a constant array length and backing array pointer"
+                        ));
+                        continue;
+                    }
+                    let BasicValueEnum::IntValue(_) = call_args[0] else {
+                        errors.push(format!(
+                            "{fn_name} requires a constant array length and backing array pointer"
+                        ));
+                        continue;
+                    };
                     let requested_len = match extract_const_len(call_args[0], fn_name) {
                         Ok(len) => len,
                         Err(err) => {
@@ -718,10 +753,13 @@ mod aux {
                             continue;
                         }
                     };
-                    let backing_len = match get_fixed_pointer_array_len(
-                        call_args[1].into_pointer_value(),
-                        fn_name,
-                    ) {
+                    let BasicValueEnum::PointerValue(backing_ptr) = call_args[1] else {
+                        errors.push(format!(
+                            "{fn_name} requires a fixed-size backing array allocated as [N x ptr]"
+                        ));
+                        continue;
+                    };
+                    let backing_len = match get_fixed_pointer_array_len(backing_ptr, fn_name) {
                         Ok(len) => len,
                         Err(err) => {
                             errors.push(err);
@@ -1145,6 +1183,9 @@ mod aux {
                 // External context calls are left as-is for downstream processing
                 log::debug!("___get_wasm_context found, leaving as-is for downstream processing");
             }
+            "___barrier" => {
+                return Err("Unsupported Qtm QIS function: ___barrier".to_string());
+            }
             _ => {
                 // Ignore already converted Qtm QIS functions
                 log::trace!("Ignoring Qtm QIS function: {}", args.fn_name);
@@ -1535,9 +1576,10 @@ mod aux {
         build_error: &str,
         value_error: &str,
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        let call = builder
-            .build_call(callee, args, name)
-            .map_err(|e| format!("{build_error}: {e}"))?;
+        let call = match builder.build_call(callee, args, name) {
+            Ok(call) => call,
+            Err(err) => return Err(format!("{build_error}: {err}")),
+        };
         match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(bv) => Ok(bv),
             inkwell::values::ValueKind::Instruction(_) => Err(value_error.to_string()),
@@ -2062,10 +2104,12 @@ mod aux {
     }
 
     fn extract_const_len(value: BasicValueEnum<'_>, opname: &str) -> Result<u64, String> {
-        value
-            .into_int_value()
-            .get_zero_extended_constant()
-            .ok_or_else(|| format!("{opname} currently requires a constant array length"))
+        let Some(len) = value.into_int_value().get_zero_extended_constant() else {
+            return Err(format!(
+                "{opname} currently requires a constant array length"
+            ));
+        };
+        Ok(len)
     }
 
     fn lower_void_helper_call<'ctx>(
@@ -2079,9 +2123,9 @@ mod aux {
         builder.position_before(&instr);
         let metadata_args: Vec<BasicMetadataValueEnum<'ctx>> =
             call_args.iter().copied().map(Into::into).collect();
-        let _ = builder
-            .build_call(helper, &metadata_args, "")
-            .map_err(|e| format!("{error_context}: {e}"))?;
+        if let Err(err) = builder.build_call(helper, &metadata_args, "") {
+            return Err(format!("{error_context}: {err}"));
+        }
         instr.erase_from_basic_block();
         Ok(())
     }
@@ -3101,9 +3145,9 @@ mod aux {
     ) -> Result<(), String> {
         let builder = ctx.create_builder();
         builder.position_before(&instr);
-        let _ = builder
-            .build_call(callee, call_args, "")
-            .map_err(|e| format!("{build_error}: {e}"))?;
+        if let Err(err) = builder.build_call(callee, call_args, "") {
+            return Err(format!("{build_error}: {err}"));
+        }
         instr.erase_from_basic_block();
         Ok(())
     }
@@ -4384,6 +4428,54 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_validate_module_flags_with_non_metadata_name_operand_does_not_panic() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, i32 123, i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("Non-metadata module flag name operand should fail validation");
+        assert!(err.contains("Missing required module flag: qir_major_version"));
+    }
+
+    #[test]
+    fn test_validate_module_flags_rejects_malformed_name_even_when_required_flags_exist() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, i32 123, i32 2}
+!1 = !{i32 1, !"qir_major_version", i32 1}
+!2 = !{i32 7, !"qir_minor_version", i32 0}
+!3 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!4 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None).expect_err(
+            "Malformed module flag names should fail even with complete required flags",
+        );
+        assert!(err.contains("Malformed llvm.module.flags entry: expected metadata string name"));
+    }
+
+    #[test]
     fn test_validate_qir_reports_exact_single_expected_module_flag_value() {
         let ll_text = r#"
 define i64 @Entry_Point_Name() #0 {
@@ -4701,6 +4793,58 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let err = validate_qir(&bc_bytes, None)
             .expect_err("unsupported QTM declarations should fail validation");
         assert!(err.contains("Unsupported Qtm QIS function: ___unknown_qtm"));
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_raw_barrier_runtime_function() {
+        let ll_text = r#"
+declare void @___barrier(ptr, i64)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  call void @___barrier(ptr null, i64 1)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("raw ___barrier declarations should fail validation");
+        assert!(err.contains("Unsupported Qtm QIS function: ___barrier"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_raw_barrier_runtime_function() {
+        let ll_text = r#"
+declare void @___barrier(ptr, i64)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  call void @___barrier(ptr null, i64 1)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("raw ___barrier declarations should fail translation");
+        assert!(err.contains("Unsupported Qtm QIS function: ___barrier"));
     }
 
     #[test]
@@ -5963,6 +6107,65 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
             err.contains("__quantum__rt__qubit_array_allocate requires a fixed-size backing array")
         );
         assert!(err.contains("requested length 2 does not match backing array length 1"));
+    }
+
+    #[test]
+    fn test_validate_dynamic_qubit_array_allocate_malformed_signature_fails_without_panic() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  call void @__quantum__rt__qubit_array_allocate()
+  ret i64 0
+}
+
+declare void @__quantum__rt__qubit_array_allocate()
+
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 true}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 1, !"arrays", i1 true}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let err = validate_qir(&bc_bytes, None).expect_err("fixture should fail validation");
+        assert!(err.contains(
+            "Malformed QIR RT function declaration: __quantum__rt__qubit_array_allocate"
+        ));
+        assert!(err.contains(
+            "__quantum__rt__qubit_array_allocate requires a constant array length and backing array pointer"
+        ));
+    }
+
+    #[test]
+    fn test_validate_dynamic_result_array_allocate_pointer_length_fails_without_panic() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %len = alloca ptr, align 8
+  %results = alloca [2 x ptr], align 8
+  call void @__quantum__rt__result_array_allocate(ptr %len, ptr %results, ptr null)
+  ret i64 0
+}
+
+declare void @__quantum__rt__result_array_allocate(ptr, ptr, ptr)
+
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 true}
+!3 = !{i32 1, !"dynamic_result_management", i1 true}
+!4 = !{i32 1, !"arrays", i1 true}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
+        let err = validate_qir(&bc_bytes, None).expect_err("fixture should fail validation");
+        assert!(err.contains(
+            "__quantum__rt__result_array_allocate requires a constant array length and backing array pointer"
+        ));
     }
 
     #[test]
