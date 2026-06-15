@@ -33,11 +33,11 @@ mod aux {
 
     use crate::{
         convert::{
-            INIT_QARRAY_FN, LOAD_QUBIT_FN, add_print_call, build_result_global, convert_globals,
-            create_reset_call, get_index, get_or_create_function, get_required_num_qubits,
-            get_required_num_qubits_strict, get_required_num_results, get_result_vars,
-            get_string_label, handle_tuple_or_array_output, parse_gep, record_classical_output,
-            replace_rxy_call, replace_rz_call, replace_rzz_call,
+            INIT_QARRAY_FN, add_print_call, build_result_global, checked_qubit_index,
+            convert_globals, create_reset_call, get_index, get_or_create_function,
+            get_required_num_qubits, get_required_num_qubits_strict, get_required_num_results,
+            get_result_vars, get_string_label, handle_tuple_or_array_output, parse_gep,
+            record_classical_output, replace_rxy_call, replace_rz_call, replace_rzz_call,
         },
         decode_llvm_bytes,
         utils::extract_operands,
@@ -2659,22 +2659,14 @@ mod aux {
         let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
         let qubit_ptr = mz_leaked_qubit_operand(&call_args)?;
 
-        let q_handle = {
-            let idx_fn = module
-                .get_function(LOAD_QUBIT_FN)
-                .ok_or_else(|| format!("{LOAD_QUBIT_FN} not found"))?;
-            let idx_call = builder
-                .build_call(idx_fn, &[qubit_ptr.into()], "qbit")
-                .map_err(|e| format!("Failed to build call to {LOAD_QUBIT_FN}: {e}"))?;
-            match idx_call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(bv) => bv,
-                inkwell::values::ValueKind::Instruction(_) => {
-                    return Err(format!(
-                        "Failed to get basic value from {LOAD_QUBIT_FN} call"
-                    ));
-                }
-            }
-        };
+        let q_handle = get_qubit_handle(
+            ctx,
+            args.capability_flags,
+            args.qubit_array,
+            args.qubit_array_type,
+            &builder,
+            qubit_ptr,
+        )?;
 
         let meas_handle = {
             let meas_func = get_or_create_function(
@@ -2971,15 +2963,6 @@ mod aux {
             ));
         }
         Ok(result_idx_usize)
-    }
-
-    pub fn checked_qubit_index(qubit_idx: u64, required_num_qubits: u32) -> Result<u64, String> {
-        if qubit_idx >= u64::from(required_num_qubits) {
-            return Err(format!(
-                "Qubit index {qubit_idx} exceeds required_num_qubits ({required_num_qubits})"
-            ));
-        }
-        Ok(qubit_idx)
     }
 
     fn handle_classical_record_output(args: &mut ProcessCallArgs<'_>) -> Result<(), String> {
@@ -4877,9 +4860,23 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_checked_qubit_index_accepts_one_based_static_ids() {
+        assert_eq!(
+            crate::convert::checked_qubit_index(1, 1)
+                .expect("one-based first qubit id should map to slot 0"),
+            0
+        );
+        assert_eq!(
+            crate::convert::checked_qubit_index(2, 2)
+                .expect("one-based last qubit id should map to the last slot"),
+            1
+        );
+    }
+
+    #[test]
     fn test_checked_qubit_index_rejects_out_of_bounds_values() {
-        let err = crate::aux::checked_qubit_index(2, 1)
-            .expect_err("out-of-bounds qubit indices should fail cleanly");
+        let err = crate::convert::checked_qubit_index(2, 1)
+            .expect_err("out-of-bounds one-based qubit ids should fail cleanly");
         assert_eq!(err, "Qubit index 2 exceeds required_num_qubits (1)");
     }
 
@@ -4895,7 +4892,7 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
 
 @0 = private constant [7 x i8] c"leaked\00"
 "#,
-            r"  %q0 = inttoptr i64 0 to %Qubit*
+            r"  %q0 = inttoptr i64 1 to %Qubit*
   %0 = call i64 @__quantum__qis__mz_leaked__body(%Qubit* %q0)
   call void @__quantum__rt__int_record_output(i64 %0, i8* getelementptr inbounds ([7 x i8], [7 x i8]* @0, i64 0, i64 0))",
         );
@@ -5112,6 +5109,39 @@ declare void @__quantum__rt__result_record_output(%Result*, i8*)
             err,
             "Malformed mz_leaked call: expected signature i64 (ptr)"
         );
+    }
+
+    #[test]
+    fn test_qir_to_qis_accepts_one_based_mz_leaked_static_qubit() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "0",
+            "1",
+            "declare i64 @__quantum__qis__mz_leaked__body(%Qubit*)",
+            r"  %q0 = inttoptr i64 1 to %Qubit*
+  %0 = call i64 @__quantum__qis__mz_leaked__body(%Qubit* %q0)",
+        );
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect("one-based mz_leaked qubit ids should compile successfully");
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_out_of_bounds_mz_leaked_static_qubit() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "0",
+            "1",
+            "declare i64 @__quantum__qis__mz_leaked__body(%Qubit*)",
+            r"  %q0 = inttoptr i64 2 to %Qubit*
+  %0 = call i64 @__quantum__qis__mz_leaked__body(%Qubit* %q0)",
+        );
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("out-of-bounds mz_leaked qubit ids should fail cleanly");
+        assert_eq!(err, "Qubit index 2 exceeds required_num_qubits (1)");
     }
 
     #[test]

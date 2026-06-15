@@ -38,6 +38,17 @@ pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
 
+pub fn checked_qubit_index(qubit_idx: u64, required_num_qubits: u32) -> Result<u64, String> {
+    if qubit_idx == 0 || qubit_idx > u64::from(required_num_qubits) {
+        return Err(format!(
+            "Qubit index {qubit_idx} exceeds required_num_qubits ({required_num_qubits})"
+        ));
+    }
+    qubit_idx
+        .checked_sub(1)
+        .ok_or_else(|| "Qubit index underflow during static qubit normalization".to_string())
+}
+
 /// Checks if the given type is an i8 array type.
 fn is_i8_array_type(ty: AnyTypeEnum) -> bool {
     ty.is_array_type()
@@ -366,13 +377,16 @@ fn add_load_qubit_fn<'ctx>(
     let index_val = builder
         .build_ptr_to_int(qubit_ptr, i64_type, "idx")
         .map_err(|e| format!("Failed to build ptr_to_int: {e}"))?;
+    let slot_val = builder
+        .build_int_sub(index_val, i64_type.const_int(1, false), "slot")
+        .map_err(|e| format!("Failed to normalize static qubit index: {e}"))?;
 
     let elem_ptr = unsafe {
         builder
             .build_gep(
                 qubit_array_type,
                 global_ptr,
-                &[i64_type.const_zero(), index_val],
+                &[i64_type.const_zero(), slot_val],
                 "qbit_ptr",
             )
             .map_err(|e| format!("Failed to build GEP: {e}"))?
@@ -908,14 +922,13 @@ fn get_native_qubit_handle<'ctx>(
 
 /// Extracts the qubit index from an `IntToPtr` conversion string.
 fn get_idx_from_pointer_repr(ir_string: &str) -> Result<u64, String> {
-    // Expected form: `inttoptr (i64 <index> to ...)`
-    let Some((_, rest)) = ir_string.split_once("inttoptr (i64 ") else {
-        return Err(format!("Cannot extract pointer index from: {ir_string}"));
-    };
-    if let Some(num_str) = rest.split(' ').next()
-        && let Ok(idx) = num_str.parse::<u64>()
-    {
-        return Ok(idx);
+    for prefix in ["inttoptr (i64 ", "inttoptr i64 "] {
+        if let Some((_, rest)) = ir_string.split_once(prefix)
+            && let Some(num_str) = rest.split(' ').next()
+            && let Ok(idx) = num_str.parse::<u64>()
+        {
+            return Ok(idx);
+        }
     }
     Err(format!("Cannot extract pointer index from: {ir_string}"))
 }
@@ -1384,6 +1397,13 @@ mod tests {
         let ir_string = "inttoptr (i64 7 to ptr)";
         let idx = get_idx_from_pointer_repr(ir_string);
         assert_eq!(idx, Ok(7));
+    }
+
+    #[test]
+    fn test_get_index_from_instruction_style_inttoptr() {
+        let ir_string = "  %q0 = inttoptr i64 1 to ptr";
+        let idx = get_idx_from_pointer_repr(ir_string);
+        assert_eq!(idx, Ok(1));
     }
 
     #[test]
