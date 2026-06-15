@@ -870,6 +870,8 @@ mod aux {
     fn note_static_qubit_pointer(
         value: BasicValueEnum<'_>,
         required_num_qubits: u64,
+        saw_static_qubit_pointer: &mut bool,
+        saw_out_of_bounds_static_qubit: &mut bool,
         saw_zero_based: &mut bool,
         saw_one_based_upper_bound: &mut bool,
     ) {
@@ -879,6 +881,10 @@ mod aux {
         let Ok(index) = get_index(ptr) else {
             return;
         };
+        *saw_static_qubit_pointer = true;
+        if index > required_num_qubits {
+            *saw_out_of_bounds_static_qubit = true;
+        }
         if index == 0 {
             *saw_zero_based = true;
         }
@@ -889,15 +895,22 @@ mod aux {
 
     fn note_static_qubit_pointers_for_call(
         fn_name: &str,
-        call_args: &[BasicValueEnum<'_>],
+        call_operands: &[BasicValueEnum<'_>],
         required_num_qubits: u64,
+        saw_static_qubit_pointer: &mut bool,
+        saw_out_of_bounds_static_qubit: &mut bool,
         saw_zero_based: &mut bool,
         saw_one_based_upper_bound: &mut bool,
     ) {
+        let Some((_, call_args)) = call_operands.split_last() else {
+            return;
+        };
         let mut note_arg = |arg: BasicValueEnum<'_>| {
             note_static_qubit_pointer(
                 arg,
                 required_num_qubits,
+                saw_static_qubit_pointer,
+                saw_out_of_bounds_static_qubit,
                 saw_zero_based,
                 saw_one_based_upper_bound,
             );
@@ -952,11 +965,15 @@ mod aux {
         }
     }
 
-    fn infer_static_qubit_index_mode(entry_fn: FunctionValue<'_>) -> StaticQubitIndexMode {
+    fn infer_static_qubit_index_mode(
+        entry_fn: FunctionValue<'_>,
+    ) -> Result<StaticQubitIndexMode, String> {
         let Some(required_num_qubits) = get_required_num_qubits(entry_fn).map(u64::from) else {
-            return StaticQubitIndexMode::ZeroBased;
+            return Ok(StaticQubitIndexMode::ZeroBased);
         };
 
+        let mut saw_static_qubit_pointer = false;
+        let mut saw_out_of_bounds_static_qubit = false;
         let mut saw_zero_based = false;
         let mut saw_one_based_upper_bound = false;
 
@@ -981,16 +998,27 @@ mod aux {
                     fn_name.as_str(),
                     &call_args,
                     required_num_qubits,
+                    &mut saw_static_qubit_pointer,
+                    &mut saw_out_of_bounds_static_qubit,
                     &mut saw_zero_based,
                     &mut saw_one_based_upper_bound,
                 );
             }
         }
 
-        if !saw_zero_based && saw_one_based_upper_bound {
-            StaticQubitIndexMode::OneBased
+        if saw_zero_based {
+            Ok(StaticQubitIndexMode::ZeroBased)
+        } else if saw_one_based_upper_bound {
+            Ok(StaticQubitIndexMode::OneBased)
+        } else if saw_out_of_bounds_static_qubit {
+            Ok(StaticQubitIndexMode::ZeroBased)
+        } else if saw_static_qubit_pointer {
+            Err(
+                "Ambiguous static qubit indexing: observed only positive qubit ids without 0 or required_num_qubits"
+                    .to_string(),
+            )
         } else {
-            StaticQubitIndexMode::ZeroBased
+            Ok(StaticQubitIndexMode::ZeroBased)
         }
     }
 
@@ -1024,7 +1052,7 @@ mod aux {
         let static_qubit_index_mode = if capability_flags.dynamic_qubit_management {
             StaticQubitIndexMode::ZeroBased
         } else {
-            infer_static_qubit_index_mode(entry_fn)
+            infer_static_qubit_index_mode(entry_fn)?
         };
 
         for bb in entry_fn.get_basic_blocks() {
@@ -5094,6 +5122,68 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             .expect("one-based static barrier operands should translate successfully");
         verify_bitcode_module(&output_bc, "one_based_two_qubit_barrier")
             .expect("translated QIS should remain LLVM-verifiable");
+    }
+
+    #[test]
+    fn test_qir_to_qis_accepts_one_based_single_qubit_rz() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__rz__body(double, %Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 1 to %Qubit*
+  call void @__quantum__qis__rz__body(double 5.000000e-1, %Qubit* %q0)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let output_bc = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect("one-based single-qubit rotations should translate successfully");
+        verify_bitcode_module(&output_bc, "one_based_single_qubit_rz")
+            .expect("translated QIS should remain LLVM-verifiable");
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_ambiguous_static_qubit_indexing() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__x__body(%Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 1 to %Qubit*
+  call void @__quantum__qis__x__body(%Qubit* %q0)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="3" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("ambiguous static qubit ids should fail cleanly");
+        assert_eq!(
+            err,
+            "Ambiguous static qubit indexing: observed only positive qubit ids without 0 or required_num_qubits"
+        );
     }
 
     #[test]
