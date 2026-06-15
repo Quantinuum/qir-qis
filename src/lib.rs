@@ -724,19 +724,13 @@ mod aux {
                             continue;
                         }
                     };
-                    let backing_ptr = match call_args[1] {
-                        BasicValueEnum::PointerValue(ptr) => ptr,
-                        _ => {
-                            errors.push(format!(
-                                "{fn_name} requires a fixed-size backing array allocated as [N x ptr]"
-                            ));
-                            continue;
-                        }
+                    let BasicValueEnum::PointerValue(backing_ptr) = call_args[1] else {
+                        errors.push(format!(
+                            "{fn_name} requires a fixed-size backing array allocated as [N x ptr]"
+                        ));
+                        continue;
                     };
-                    let backing_len = match get_fixed_pointer_array_len(
-                        backing_ptr,
-                        fn_name,
-                    ) {
+                    let backing_len = match get_fixed_pointer_array_len(backing_ptr, fn_name) {
                         Ok(len) => len,
                         Err(err) => {
                             errors.push(err);
