@@ -1173,6 +1173,7 @@ mod aux {
             qubit_array_type.ok_or("Missing static qubit array type for qubit lookup")?;
         let i64_type = ctx.i64_type();
         let index = get_index(qubit_ptr)?;
+        let index = checked_qubit_index(index, qubit_array_type.len())?;
         let index_val = i64_type.const_int(index, false);
         let elem_ptr = unsafe {
             builder.build_gep(
@@ -2970,6 +2971,15 @@ mod aux {
             ));
         }
         Ok(result_idx_usize)
+    }
+
+    pub fn checked_qubit_index(qubit_idx: u64, required_num_qubits: u32) -> Result<u64, String> {
+        if qubit_idx >= u64::from(required_num_qubits) {
+            return Err(format!(
+                "Qubit index {qubit_idx} exceeds required_num_qubits ({required_num_qubits})"
+            ));
+        }
+        Ok(qubit_idx)
     }
 
     fn handle_classical_record_output(args: &mut ProcessCallArgs<'_>) -> Result<(), String> {
@@ -4864,6 +4874,13 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let err = crate::aux::checked_result_index(5, 1)
             .expect_err("out-of-bounds result indices should fail cleanly");
         assert_eq!(err, "Result index 5 exceeds required_num_results (1)");
+    }
+
+    #[test]
+    fn test_checked_qubit_index_rejects_out_of_bounds_values() {
+        let err = crate::aux::checked_qubit_index(2, 1)
+            .expect_err("out-of-bounds qubit indices should fail cleanly");
+        assert_eq!(err, "Qubit index 2 exceeds required_num_qubits (1)");
     }
 
     #[test]
