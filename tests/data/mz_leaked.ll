@@ -4,8 +4,7 @@
 
 define i64 @Entry_Point_Name() #0 {
 entry:
-  %q0 = inttoptr i64 1 to %Qubit*
-  %0 = call i64 @__quantum__qis__mz_leaked__body(%Qubit* %q0)
+  %0 = call i64 @__quantum__qis__mz_leaked__body(%Qubit* null)
   call void @__quantum__rt__int_record_output(i64 %0, i8* getelementptr inbounds ([7 x i8], [7 x i8]* @0, i64 0, i64 0))
   ret i64 0
 }

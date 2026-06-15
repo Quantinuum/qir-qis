@@ -4892,7 +4892,7 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
 
 @0 = private constant [7 x i8] c"leaked\00"
 "#,
-            r"  %q0 = inttoptr i64 1 to %Qubit*
+            r"  %q0 = inttoptr i64 0 to %Qubit*
   %0 = call i64 @__quantum__qis__mz_leaked__body(%Qubit* %q0)
   call void @__quantum__rt__int_record_output(i64 %0, i8* getelementptr inbounds ([7 x i8], [7 x i8]* @0, i64 0, i64 0))",
         );

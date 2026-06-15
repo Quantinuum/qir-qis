@@ -38,15 +38,28 @@ pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
 
+/// Normalize static qubit IDs to the backing array slot used by translation.
+///
+/// This translator accepts the historical zero-based fixtures in the repo
+/// (`null`, `inttoptr i64 1`, ...) while also accepting the single-qubit
+/// one-based form (`inttoptr i64 1` with `required_num_qubits="1"`).
+///
+/// # Errors
+/// Returns an error when the encoded qubit ID falls outside the module's
+/// declared static qubit range.
 pub fn checked_qubit_index(qubit_idx: u64, required_num_qubits: u32) -> Result<u64, String> {
-    if qubit_idx == 0 || qubit_idx > u64::from(required_num_qubits) {
-        return Err(format!(
-            "Qubit index {qubit_idx} exceeds required_num_qubits ({required_num_qubits})"
-        ));
+    let required_num_qubits = u64::from(required_num_qubits);
+    if qubit_idx < required_num_qubits {
+        return Ok(qubit_idx);
     }
-    qubit_idx
-        .checked_sub(1)
-        .ok_or_else(|| "Qubit index underflow during static qubit normalization".to_string())
+    if qubit_idx == required_num_qubits {
+        return qubit_idx
+            .checked_sub(1)
+            .ok_or_else(|| "Qubit index underflow during static qubit normalization".to_string());
+    }
+    Err(format!(
+        "Qubit index {qubit_idx} exceeds required_num_qubits ({required_num_qubits})"
+    ))
 }
 
 /// Checks if the given type is an i8 array type.
@@ -377,16 +390,12 @@ fn add_load_qubit_fn<'ctx>(
     let index_val = builder
         .build_ptr_to_int(qubit_ptr, i64_type, "idx")
         .map_err(|e| format!("Failed to build ptr_to_int: {e}"))?;
-    let slot_val = builder
-        .build_int_sub(index_val, i64_type.const_int(1, false), "slot")
-        .map_err(|e| format!("Failed to normalize static qubit index: {e}"))?;
-
     let elem_ptr = unsafe {
         builder
             .build_gep(
                 qubit_array_type,
                 global_ptr,
-                &[i64_type.const_zero(), slot_val],
+                &[i64_type.const_zero(), index_val],
                 "qbit_ptr",
             )
             .map_err(|e| format!("Failed to build GEP: {e}"))?
