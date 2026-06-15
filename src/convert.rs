@@ -337,6 +337,7 @@ pub fn create_qubit_array<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
     entry_fn: FunctionValue,
+    static_qubit_index_mode: StaticQubitIndexMode,
 ) -> Result<PointerValue<'ctx>, String> {
     // 1. Extract `required_num_qubits` from function attributes
     let num_qubits = get_required_num_qubits_strict(entry_fn)?;
@@ -374,7 +375,13 @@ pub fn create_qubit_array<'ctx>(
             .map_err(|e| format!("Failed to build call to {INIT_QARRAY_FN}: {e}"))?;
     }
 
-    let _ = add_load_qubit_fn(ctx, module, global_ptr, array_type);
+    let _ = add_load_qubit_fn(
+        ctx,
+        module,
+        global_ptr,
+        array_type,
+        static_qubit_index_mode,
+    );
 
     Ok(global_ptr)
 }
@@ -388,6 +395,7 @@ fn add_load_qubit_fn<'ctx>(
     module: &Module<'ctx>,
     global_ptr: PointerValue<'_>,
     qubit_array_type: inkwell::types::ArrayType<'ctx>,
+    static_qubit_index_mode: StaticQubitIndexMode,
 ) -> Result<(), String> {
     let i64_type = ctx.i64_type();
     let qubit_ptr_type = ctx.ptr_type(AddressSpace::default());
@@ -407,12 +415,66 @@ fn add_load_qubit_fn<'ctx>(
     let index_val = builder
         .build_ptr_to_int(qubit_ptr, i64_type, "idx")
         .map_err(|e| format!("Failed to build ptr_to_int: {e}"))?;
+    let required_num_qubits = i64_type.const_int(u64::from(qubit_array_type.len()), false);
+    let valid_index = match static_qubit_index_mode {
+        StaticQubitIndexMode::ZeroBased => builder
+            .build_int_compare(
+                inkwell::IntPredicate::ULT,
+                index_val,
+                required_num_qubits,
+                "valid_static_qubit_index",
+            )
+            .map_err(|e| format!("Failed to build static qubit bounds check: {e}"))?,
+        StaticQubitIndexMode::OneBased => {
+            let nonzero = builder
+                .build_int_compare(
+                    inkwell::IntPredicate::NE,
+                    index_val,
+                    i64_type.const_zero(),
+                    "nonzero_static_qubit_index",
+                )
+                .map_err(|e| format!("Failed to build static qubit lower-bound check: {e}"))?;
+            let within_upper_bound = builder
+                .build_int_compare(
+                    inkwell::IntPredicate::ULE,
+                    index_val,
+                    required_num_qubits,
+                    "within_one_based_static_qubit_upper_bound",
+                )
+                .map_err(|e| format!("Failed to build static qubit upper-bound check: {e}"))?;
+            builder
+                .build_and(nonzero, within_upper_bound, "valid_one_based_static_qubit_index")
+                .map_err(|e| format!("Failed to combine static qubit bounds checks: {e}"))?
+        }
+    };
+    let valid_block = ctx.append_basic_block(function, "load_qubit_valid");
+    let invalid_block = ctx.append_basic_block(function, "load_qubit_invalid");
+    builder
+        .build_conditional_branch(valid_index, valid_block, invalid_block)
+        .map_err(|e| format!("Failed to build static qubit bounds branch: {e}"))?;
+
+    builder.position_at_end(invalid_block);
+    build_panic_with_message(
+        ctx,
+        module,
+        &builder,
+        "e_load_qubit_oob",
+        "Invalid static qubit handle.",
+    )?;
+
+    builder.position_at_end(valid_block);
+    let normalized_index = match static_qubit_index_mode {
+        StaticQubitIndexMode::ZeroBased => index_val,
+        StaticQubitIndexMode::OneBased => builder
+            .build_int_sub(index_val, i64_type.const_int(1, false), "normalized_static_qubit_idx")
+            .map_err(|e| format!("Failed to normalize one-based static qubit index: {e}"))?,
+    };
     let elem_ptr = unsafe {
         builder
             .build_gep(
                 qubit_array_type,
                 global_ptr,
-                &[i64_type.const_zero(), index_val],
+                &[i64_type.const_zero(), normalized_index],
                 "qbit_ptr",
             )
             .map_err(|e| format!("Failed to build GEP: {e}"))?
@@ -560,6 +622,59 @@ fn process_allocation_error<'ctx>(
         .build_unreachable()
         .map_err(|e| format!("Failed to build unreachable: {e}"))?;
     builder.position_at_end(cont_block);
+    Ok(())
+}
+
+fn build_panic_with_message<'ctx>(
+    ctx: &'ctx Context,
+    module: &Module<'ctx>,
+    builder: &Builder<'ctx>,
+    global_name: &str,
+    message: &str,
+) -> Result<(), String> {
+    let msg_bytes = create_cl_str("EXIT", "INT", message)?;
+    let arr_ty = ctx.i8_type().array_type(
+        u32::try_from(msg_bytes.len()).map_err(|e| format!("Failed to create array type: {e}"))?,
+    );
+    let msg_const = ctx.const_string(&msg_bytes, false);
+    let err_global = module.get_global(global_name).unwrap_or_else(|| {
+        let g = module.add_global(arr_ty, None, global_name);
+        g.set_initializer(&msg_const);
+        g.set_linkage(Linkage::Private);
+        g.set_constant(true);
+        g
+    });
+    let gep = unsafe {
+        builder
+            .build_gep(
+                arr_ty,
+                err_global.as_pointer_value(),
+                &[ctx.i64_type().const_zero(), ctx.i64_type().const_zero()],
+                "err_gep",
+            )
+            .map_err(|e| format!("Failed to build GEP for panic message: {e}"))?
+    };
+    let fn_type = ctx.void_type().fn_type(
+        &[
+            ctx.i32_type().into(),
+            ctx.ptr_type(AddressSpace::default()).into(),
+        ],
+        false,
+    );
+    let panic_fn = get_or_create_function(module, "panic", fn_type);
+    let _ = builder
+        .build_call(
+            panic_fn,
+            &[
+                ctx.i32_type().const_int(EXIT_CODE, false).into(),
+                gep.into(),
+            ],
+            "",
+        )
+        .map_err(|e| format!("Failed to build panic call: {e}"))?;
+    builder
+        .build_unreachable()
+        .map_err(|e| format!("Failed to build unreachable: {e}"))?;
     Ok(())
 }
 
@@ -793,6 +908,8 @@ pub fn replace_rxy_call<'a>(
     module: &Module<'a>,
     old_call: InstructionValue<'a>,
     dynamic_qubit_management: bool,
+    static_qubit_index_mode: StaticQubitIndexMode,
+    required_num_qubits: u32,
 ) -> Result<(), String> {
     replace_native_call(
         ctx,
@@ -820,6 +937,8 @@ pub fn replace_rxy_call<'a>(
                 builder,
                 qubit_ptr.into_pointer_value(),
                 dynamic_qubit_management,
+                static_qubit_index_mode,
+                required_num_qubits,
                 "qbit",
             )?;
             Ok(vec![handle, angle1, angle2])
@@ -837,6 +956,8 @@ pub fn replace_rz_call<'a>(
     module: &Module<'a>,
     old_call: InstructionValue<'a>,
     dynamic_qubit_management: bool,
+    static_qubit_index_mode: StaticQubitIndexMode,
+    required_num_qubits: u32,
 ) -> Result<(), String> {
     replace_native_call(
         ctx,
@@ -857,6 +978,8 @@ pub fn replace_rz_call<'a>(
                 builder,
                 qubit_ptr.into_pointer_value(),
                 dynamic_qubit_management,
+                static_qubit_index_mode,
+                required_num_qubits,
                 "qbit",
             )?;
             Ok(vec![handle, angle])
@@ -874,6 +997,8 @@ pub fn replace_rzz_call<'a>(
     module: &Module<'a>,
     old_call: InstructionValue<'a>,
     dynamic_qubit_management: bool,
+    static_qubit_index_mode: StaticQubitIndexMode,
+    required_num_qubits: u32,
 ) -> Result<(), String> {
     replace_native_call(
         ctx,
@@ -901,6 +1026,8 @@ pub fn replace_rzz_call<'a>(
                 builder,
                 q1_ptr.into_pointer_value(),
                 dynamic_qubit_management,
+                static_qubit_index_mode,
+                required_num_qubits,
                 "qbit1",
             )?;
             let q2 = get_native_qubit_handle(
@@ -909,6 +1036,8 @@ pub fn replace_rzz_call<'a>(
                 builder,
                 q2_ptr.into_pointer_value(),
                 dynamic_qubit_management,
+                static_qubit_index_mode,
+                required_num_qubits,
                 "qbit2",
             )?;
             Ok(vec![q1, q2, angle])
@@ -917,12 +1046,18 @@ pub fn replace_rzz_call<'a>(
     .map_err(|e| e.to_string())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "native gate lowering needs both dynamic/static qubit context and builder state"
+)]
 fn get_native_qubit_handle<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
     builder: &inkwell::builder::Builder<'ctx>,
     qubit_ptr: inkwell::values::PointerValue<'ctx>,
     dynamic_qubit_management: bool,
+    static_qubit_index_mode: StaticQubitIndexMode,
+    required_num_qubits: u32,
     name: &str,
 ) -> Result<BasicValueEnum<'ctx>, String> {
     if dynamic_qubit_management {
@@ -930,6 +1065,12 @@ fn get_native_qubit_handle<'ctx>(
             .build_ptr_to_int(qubit_ptr, ctx.i64_type(), name)
             .map(BasicValueEnum::from)
             .map_err(|e| format!("Failed to convert qubit pointer to handle: {e}"));
+    }
+
+    if let Ok(qubit_idx) = get_index(qubit_ptr) {
+        let normalized_idx =
+            checked_qubit_index(qubit_idx, required_num_qubits, static_qubit_index_mode)?;
+        return Ok(ctx.i64_type().const_int(normalized_idx, false).into());
     }
 
     let get_idx_fn = module
@@ -1171,7 +1312,13 @@ pub fn process_ir_defined_q_fns<'a>(
     module: &Module<'a>,
     entry_fn: FunctionValue,
     dynamic_qubit_management: bool,
+    static_qubit_index_mode: StaticQubitIndexMode,
 ) -> Result<(), String> {
+    let required_num_qubits = if dynamic_qubit_management {
+        0
+    } else {
+        get_required_num_qubits_strict(entry_fn)?
+    };
     for defined_fn in module
         .get_functions()
         .filter(|f| *f != entry_fn && f.count_basic_blocks() > 0)
@@ -1191,6 +1338,8 @@ pub fn process_ir_defined_q_fns<'a>(
                         &fn_name,
                         defined_fn,
                         dynamic_qubit_management,
+                        static_qubit_index_mode,
+                        required_num_qubits,
                     )?;
                 }
             }
@@ -1236,6 +1385,10 @@ pub fn prune_unused_ir_qis_helpers(module: &Module<'_>) {
 }
 
 /// Replaces calls to native QIR functions with equivalent QIS calls.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "IR-defined helper lowering needs function identity plus qubit-lowering context"
+)]
 fn native_qir_to_qis_call<'a>(
     ctx: &'a Context,
     module: &Module<'a>,
@@ -1243,16 +1396,39 @@ fn native_qir_to_qis_call<'a>(
     fn_name: &str,
     defined_fn: FunctionValue,
     dynamic_qubit_management: bool,
+    static_qubit_index_mode: StaticQubitIndexMode,
+    required_num_qubits: u32,
 ) -> Result<(), String> {
     match fn_name {
         "__quantum__qis__rxy__body" => {
-            replace_rxy_call(ctx, module, instr, dynamic_qubit_management)?;
+            replace_rxy_call(
+                ctx,
+                module,
+                instr,
+                dynamic_qubit_management,
+                static_qubit_index_mode,
+                required_num_qubits,
+            )?;
         }
         "__quantum__qis__rzz__body" => {
-            replace_rzz_call(ctx, module, instr, dynamic_qubit_management)?;
+            replace_rzz_call(
+                ctx,
+                module,
+                instr,
+                dynamic_qubit_management,
+                static_qubit_index_mode,
+                required_num_qubits,
+            )?;
         }
         "__quantum__qis__rz__body" => {
-            replace_rz_call(ctx, module, instr, dynamic_qubit_management)?;
+            replace_rz_call(
+                ctx,
+                module,
+                instr,
+                dynamic_qubit_management,
+                static_qubit_index_mode,
+                required_num_qubits,
+            )?;
         }
         "___qalloc"
         | "___qfree"
@@ -1684,10 +1860,24 @@ mod tests {
             )
             .unwrap();
 
-        create_qubit_array(&context, &module, func).unwrap();
+        create_qubit_array(
+            &context,
+            &module,
+            func,
+            StaticQubitIndexMode::ZeroBased,
+        )
+        .unwrap();
 
         let instr = call.try_as_basic_value().unwrap_instruction();
-        replace_rz_call(&context, &module, instr, false).unwrap();
+        replace_rz_call(
+            &context,
+            &module,
+            instr,
+            false,
+            StaticQubitIndexMode::ZeroBased,
+            1,
+        )
+        .unwrap();
 
         let rz = module.get_function("___rz");
         assert!(rz.is_some());
@@ -1742,7 +1932,12 @@ mod tests {
         let entry_block = entry_fn.get_first_basic_block().unwrap();
         builder.position_at_end(entry_block);
         let _ = builder.build_call(initialize_fn, &[], "");
-        let _ = create_qubit_array(&context, &module, entry_fn);
+        let _ = create_qubit_array(
+            &context,
+            &module,
+            entry_fn,
+            StaticQubitIndexMode::ZeroBased,
+        );
         // If it doesn't panic, it's fine
     }
 
@@ -1762,7 +1957,13 @@ mod tests {
         let entry_block = entry_fn.get_first_basic_block().unwrap();
         builder.position_at_end(entry_block);
         let _ = builder.build_call(initialize_fn, &[], "");
-        let qubit_array = create_qubit_array(&context, &module, entry_fn).unwrap();
+        let qubit_array = create_qubit_array(
+            &context,
+            &module,
+            entry_fn,
+            StaticQubitIndexMode::ZeroBased,
+        )
+        .unwrap();
         free_all_qubits(&context, &module, entry_fn, qubit_array).unwrap();
         // If it doesn't panic, it's fine
     }
@@ -2312,6 +2513,8 @@ entry:
             "__quantum__qis__mystery__body",
             defined_fn,
             false,
+            StaticQubitIndexMode::ZeroBased,
+            0,
         )
         .expect_err("unknown external declaration should fail");
         assert!(err.contains("Unsupported function call"));
@@ -2339,6 +2542,8 @@ entry:
             "___qalloc",
             defined_fn,
             false,
+            StaticQubitIndexMode::ZeroBased,
+            0,
         )
         .expect_err("non-internal helper should not call compiler-internal functions");
         assert!(err.contains("Unexpected call to internal function"));
@@ -2353,6 +2558,8 @@ entry:
 
         let unknown_decl = module.add_function("__quantum__qis__mystery__body", fn_type, None);
         let entry_fn = module.add_function("Entry_Point_Name", fn_type, None);
+        let attr = context.create_string_attribute("required_num_qubits", "1");
+        entry_fn.add_attribute(AttributeLoc::Function, attr);
         let entry_block = context.append_basic_block(entry_fn, "entry");
         builder.position_at_end(entry_block);
         let _ = builder
@@ -2360,7 +2567,13 @@ entry:
             .expect("call should build");
         let _ = builder.build_return(None);
 
-        process_ir_defined_q_fns(&context, &module, entry_fn, false)
+        process_ir_defined_q_fns(
+            &context,
+            &module,
+            entry_fn,
+            false,
+            StaticQubitIndexMode::ZeroBased,
+        )
             .expect("entry function should be excluded from IR-defined helper processing");
     }
 

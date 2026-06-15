@@ -965,7 +965,7 @@ mod aux {
         }
     }
 
-    fn infer_static_qubit_index_mode(
+    pub(super) fn infer_static_qubit_index_mode(
         entry_fn: FunctionValue<'_>,
     ) -> Result<StaticQubitIndexMode, String> {
         let Some(required_num_qubits) = get_required_num_qubits(entry_fn).map(u64::from) else {
@@ -1147,6 +1147,7 @@ mod aux {
     }
 
     fn handle_qis_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
+        let required_num_qubits = args.qubit_array_type.map_or(0, |array_type| array_type.len());
         match args.fn_name.as_str() {
             "__quantum__qis__rxy__body" => {
                 replace_rxy_call(
@@ -1154,6 +1155,8 @@ mod aux {
                     module_ref(args),
                     args.instr,
                     args.capability_flags.dynamic_qubit_management,
+                    args.static_qubit_index_mode,
+                    required_num_qubits,
                 )?;
             }
             "__quantum__qis__rz__body" => {
@@ -1162,6 +1165,8 @@ mod aux {
                     module_ref(args),
                     args.instr,
                     args.capability_flags.dynamic_qubit_management,
+                    args.static_qubit_index_mode,
+                    required_num_qubits,
                 )?;
             }
             "__quantum__qis__rzz__body" => {
@@ -1170,6 +1175,8 @@ mod aux {
                     module_ref(args),
                     args.instr,
                     args.capability_flags.dynamic_qubit_management,
+                    args.static_qubit_index_mode,
+                    required_num_qubits,
                 )?;
             }
             "__quantum__qis__u1q__body" => {
@@ -1181,6 +1188,8 @@ mod aux {
                     module_ref(args),
                     args.instr,
                     args.capability_flags.dynamic_qubit_management,
+                    args.static_qubit_index_mode,
+                    required_num_qubits,
                 )?;
             }
             "__quantum__qis__mz__body"
@@ -3501,10 +3510,20 @@ pub fn qir_to_qis(
     let new_name = format!("___user_qir_{entry_fn_name}");
     entry_fn.as_global_value().set_name(&new_name);
     log::debug!("Renamed entry function to: {new_name}");
+    let static_qubit_index_mode = if capability_flags.dynamic_qubit_management {
+        crate::convert::StaticQubitIndexMode::ZeroBased
+    } else {
+        aux::infer_static_qubit_index_mode(entry_fn)?
+    };
     let qubit_array = if capability_flags.dynamic_qubit_management {
         None
     } else {
-        Some(create_qubit_array(&ctx, &module, entry_fn)?)
+        Some(create_qubit_array(
+            &ctx,
+            &module,
+            entry_fn,
+            static_qubit_index_mode,
+        )?)
     };
 
     let wasm_fns: BTreeMap<String, u64> = BTreeMap::new();
@@ -3523,6 +3542,7 @@ pub fn qir_to_qis(
         &module,
         entry_fn,
         capability_flags.dynamic_qubit_management,
+        static_qubit_index_mode,
     )?;
 
     if let Some(qubit_array) = qubit_array {

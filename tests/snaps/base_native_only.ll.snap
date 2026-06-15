@@ -1,6 +1,7 @@
 ---
 source: src/convert.rs
-expression: qis_text.unwrap().to_string()
+assertion_line: 2701
+expression: qis_text.to_string()
 ---
 ; ModuleID = 'qis_module'
 source_filename = "qir_base_profile_native_only.ll"
@@ -9,6 +10,7 @@ target triple = "aarch64-unknown-linux-gnu"
 
 @qis_qs = private unnamed_addr global [2 x i64] zeroinitializer
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
+@e_load_qubit_oob = private constant [38 x i8] c"%EXIT:INT:Invalid static qubit handle."
 @res_q0 = private constant [15 x i8] c"\0EUSER:RESULT:q0"
 @res_q1 = private constant [15 x i8] c"\0EUSER:RESULT:q1"
 @res_t0.1 = private constant [17 x i8] c"\10USER:QIRTUPLE:t0"
@@ -28,38 +30,35 @@ qalloc_fail.i:                                    ; preds = %entry
 qir_qis.init_qubit.exit:                          ; preds = %entry
   tail call void @___reset(i64 %qalloc.i)
   store i64 %qalloc.i, ptr @qis_qs, align 8
-  %qalloc.i10 = tail call i64 @___qalloc()
-  %is_fail.i11 = icmp eq i64 %qalloc.i10, -1
-  br i1 %is_fail.i11, label %qalloc_fail.i12, label %qir_qis.init_qubit.exit13
+  %qalloc.i6 = tail call i64 @___qalloc()
+  %is_fail.i7 = icmp eq i64 %qalloc.i6, -1
+  br i1 %is_fail.i7, label %qalloc_fail.i8, label %qir_qis.init_qubit.exit9
 
-qalloc_fail.i12:                                  ; preds = %qir_qis.init_qubit.exit
+qalloc_fail.i8:                                   ; preds = %qir_qis.init_qubit.exit
   tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
   unreachable
 
-qir_qis.init_qubit.exit13:                        ; preds = %qir_qis.init_qubit.exit
-  tail call void @___reset(i64 %qalloc.i10)
-  store i64 %qalloc.i10, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  %qbit.i = load i64, ptr @qis_qs, align 8
-  tail call void @___rzz(i64 %qbit.i, i64 %qalloc.i10, double 2.356200e+00)
-  %qbit.i15 = load i64, ptr @qis_qs, align 8
-  tail call void @___rxy(i64 %qbit.i15, double 1.570800e+00, double 7.854000e-01)
-  %qbit.i16 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rz(i64 %qbit.i16, double 3.141500e+00)
-  %qbit4 = load i64, ptr @qis_qs, align 8
-  %meas = tail call i64 @___lazy_measure(i64 %qbit4)
-  %qbit5 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  %meas6 = tail call i64 @___lazy_measure(i64 %qbit5)
+qir_qis.init_qubit.exit9:                         ; preds = %qir_qis.init_qubit.exit
+  tail call void @___reset(i64 %qalloc.i6)
+  store i64 %qalloc.i6, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rzz(i64 0, i64 1, double 2.356200e+00)
+  tail call void @___rxy(i64 0, double 1.570800e+00, double 7.854000e-01)
+  tail call void @___rz(i64 1, double 3.141500e+00)
+  %qbit = load i64, ptr @qis_qs, align 8
+  %meas = tail call i64 @___lazy_measure(i64 %qbit)
+  %qbit1 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %meas2 = tail call i64 @___lazy_measure(i64 %qbit1)
   tail call void @print_int(ptr nonnull @res_t0.1, i64 16, i64 2)
   %bool = tail call i1 @___read_future_bool(i64 %meas)
   tail call void @___dec_future_refcount(i64 %meas)
   tail call void @print_bool(ptr nonnull @res_q0, i64 14, i1 %bool)
-  %bool7 = tail call i1 @___read_future_bool(i64 %meas6)
-  tail call void @___dec_future_refcount(i64 %meas6)
-  tail call void @print_bool(ptr nonnull @res_q1, i64 14, i1 %bool7)
-  %qbit8 = load i64, ptr @qis_qs, align 8
-  tail call void @___qfree(i64 %qbit8)
-  %qbit9 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___qfree(i64 %qbit9)
+  %bool3 = tail call i1 @___read_future_bool(i64 %meas2)
+  tail call void @___dec_future_refcount(i64 %meas2)
+  tail call void @print_bool(ptr nonnull @res_q1, i64 14, i1 %bool3)
+  %qbit4 = load i64, ptr @qis_qs, align 8
+  tail call void @___qfree(i64 %qbit4)
+  %qbit5 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___qfree(i64 %qbit5)
   ret void
 }
 
@@ -69,13 +68,20 @@ declare void @panic(i32, ptr) local_unnamed_addr
 
 declare void @___reset(i64) local_unnamed_addr
 
-; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(read, argmem: none, inaccessiblemem: none)
-define i64 @qir_qis.load_qubit(ptr %0) local_unnamed_addr #0 {
+define i64 @qir_qis.load_qubit(ptr %0) local_unnamed_addr {
 entry:
+  %valid_static_qubit_index = icmp ult ptr %0, inttoptr (i64 2 to ptr)
+  br i1 %valid_static_qubit_index, label %load_qubit_valid, label %load_qubit_invalid
+
+load_qubit_valid:                                 ; preds = %entry
   %idx = ptrtoint ptr %0 to i64
   %qbit_ptr = getelementptr [2 x i64], ptr @qis_qs, i64 0, i64 %idx
   %qbit = load i64, ptr %qbit_ptr, align 8
   ret i64 %qbit
+
+load_qubit_invalid:                               ; preds = %entry
+  tail call void @panic(i32 1001, ptr nonnull @e_load_qubit_oob)
+  unreachable
 }
 
 declare void @___rzz(i64, i64, double) local_unnamed_addr
@@ -107,8 +113,6 @@ entry:
 declare void @setup(i64) local_unnamed_addr
 
 declare i64 @teardown() local_unnamed_addr
-
-attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(read, argmem: none, inaccessiblemem: none) }
 
 !llvm.module.flags = !{!0, !1, !2, !3}
 !name = !{!4}
