@@ -26,7 +26,6 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  actions: write
   contents: read
   pull-requests: read
 
@@ -51,6 +50,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install hugrenv LLVM
         uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
@@ -99,6 +100,8 @@ jobs:
       RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Detect stub-affecting changes
         id: stub_changes
         if: github.event_name == 'pull_request'
