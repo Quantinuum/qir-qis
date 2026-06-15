@@ -528,7 +528,13 @@ mod aux {
                 .get_string_value()
                 .and_then(decode_llvm_bytes)
                 .map(str::to_owned),
-            _ => None,
+            BasicMetadataValueEnum::ArrayValue(_)
+            | BasicMetadataValueEnum::IntValue(_)
+            | BasicMetadataValueEnum::FloatValue(_)
+            | BasicMetadataValueEnum::PointerValue(_)
+            | BasicMetadataValueEnum::StructValue(_)
+            | BasicMetadataValueEnum::VectorValue(_)
+            | BasicMetadataValueEnum::ScalableVectorValue(_) => None,
         }
     }
 
