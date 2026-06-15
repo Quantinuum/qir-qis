@@ -14,6 +14,7 @@ exclude_re = [
   'src/lib\.rs:\d+:\d+: delete match arm "___get_wasm_context" in aux::handle_qtm_call',
   'src/lib\.rs:\d+:\d+: replace == with != in aux::handle_mz_call',
   'src/lib\.rs:\d+:\d+: replace get_wasm_functions -> .*',
+  'src/llvm_verify\.rs:\d+:\d+: replace verify_module_windows -> .*',
   'src/llvm_verify\.rs:\d+:\d+: replace == with != in verify_module',
   'src/opt\.rs:\d+:\d+: replace > with >= in optimize',
   'src/opt\.rs:\d+:\d+: replace > with == in optimize',

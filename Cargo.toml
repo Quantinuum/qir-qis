@@ -11,7 +11,7 @@ repository = "https://github.com/quantinuum/qir-qis/"
 homepage = "https://github.com/quantinuum/qir-qis"
 documentation = "https://docs.rs/qir-qis"
 keywords = ["qir", "quantum", "compiler", "qis", "quantinuum"]
-categories = ["compilers", "science"]
+categories = ["compilers", "science", "science::quantum-computing"]
 default-run = "qir-qis"
 include = [
     "/src/**/*",
