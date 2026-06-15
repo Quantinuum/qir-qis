@@ -887,6 +887,71 @@ mod aux {
         }
     }
 
+    fn note_static_qubit_pointers_for_call(
+        fn_name: &str,
+        call_args: &[BasicValueEnum<'_>],
+        required_num_qubits: u64,
+        saw_zero_based: &mut bool,
+        saw_one_based_upper_bound: &mut bool,
+    ) {
+        let mut note_arg = |arg: BasicValueEnum<'_>| {
+            note_static_qubit_pointer(
+                arg,
+                required_num_qubits,
+                saw_zero_based,
+                saw_one_based_upper_bound,
+            );
+        };
+
+        match fn_name {
+            "__quantum__qis__m__body"
+            | "__quantum__qis__mresetz__body"
+            | "__quantum__qis__mz__body"
+            | "__quantum__qis__mz_leaked__body"
+            | "__quantum__qis__reset__body"
+            | "__quantum__qis__h__body"
+            | "__quantum__qis__x__body"
+            | "__quantum__qis__y__body"
+            | "__quantum__qis__z__body"
+            | "__quantum__qis__s__body"
+            | "__quantum__qis__s__adj"
+            | "__quantum__qis__t__body"
+            | "__quantum__qis__t__adj" => {
+                if let Some(arg) = call_args.first().copied() {
+                    note_arg(arg);
+                }
+            }
+            "__quantum__qis__rxy__body"
+            | "__quantum__qis__rx__body"
+            | "__quantum__qis__ry__body"
+            | "__quantum__qis__rz__body"
+            | "__quantum__qis__u1q__body" => {
+                if let Some(arg) = call_args.last().copied() {
+                    note_arg(arg);
+                }
+            }
+            "__quantum__qis__rzz__body" => {
+                for arg in call_args.iter().rev().take(2).copied() {
+                    note_arg(arg);
+                }
+            }
+            "__quantum__qis__cz__body"
+            | "__quantum__qis__cx__body"
+            | "__quantum__qis__cnot__body"
+            | "__quantum__qis__ccx__body" => {
+                for arg in call_args.iter().copied() {
+                    note_arg(arg);
+                }
+            }
+            _ if fn_name.starts_with("__quantum__qis__barrier") && fn_name.ends_with("__body") => {
+                for arg in call_args.iter().copied() {
+                    note_arg(arg);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn infer_static_qubit_index_mode(entry_fn: FunctionValue<'_>) -> StaticQubitIndexMode {
         let Some(required_num_qubits) = get_required_num_qubits(entry_fn).map(u64::from) else {
             return StaticQubitIndexMode::ZeroBased;
@@ -912,81 +977,13 @@ mod aux {
                 let Ok(call_args) = extract_operands(&instr) else {
                     continue;
                 };
-
-                match fn_name.as_str() {
-                    "__quantum__qis__m__body"
-                    | "__quantum__qis__mresetz__body"
-                    | "__quantum__qis__mz__body"
-                    | "__quantum__qis__mz_leaked__body"
-                    | "__quantum__qis__reset__body"
-                    | "__quantum__qis__h__body"
-                    | "__quantum__qis__x__body"
-                    | "__quantum__qis__y__body"
-                    | "__quantum__qis__z__body"
-                    | "__quantum__qis__s__body"
-                    | "__quantum__qis__s__adj"
-                    | "__quantum__qis__t__body"
-                    | "__quantum__qis__t__adj" => {
-                        if let Some(arg) = call_args.first().copied() {
-                            note_static_qubit_pointer(
-                                arg,
-                                required_num_qubits,
-                                &mut saw_zero_based,
-                                &mut saw_one_based_upper_bound,
-                            );
-                        }
-                    }
-                    "__quantum__qis__rxy__body"
-                    | "__quantum__qis__rx__body"
-                    | "__quantum__qis__ry__body"
-                    | "__quantum__qis__rz__body"
-                    | "__quantum__qis__u1q__body" => {
-                        if let Some(arg) = call_args.last().copied() {
-                            note_static_qubit_pointer(
-                                arg,
-                                required_num_qubits,
-                                &mut saw_zero_based,
-                                &mut saw_one_based_upper_bound,
-                            );
-                        }
-                    }
-                    "__quantum__qis__rzz__body" => {
-                        for arg in call_args.iter().rev().take(2).copied() {
-                            note_static_qubit_pointer(
-                                arg,
-                                required_num_qubits,
-                                &mut saw_zero_based,
-                                &mut saw_one_based_upper_bound,
-                            );
-                        }
-                    }
-                    "__quantum__qis__cz__body"
-                    | "__quantum__qis__cx__body"
-                    | "__quantum__qis__cnot__body"
-                    | "__quantum__qis__ccx__body" => {
-                        for arg in call_args.iter().copied() {
-                            note_static_qubit_pointer(
-                                arg,
-                                required_num_qubits,
-                                &mut saw_zero_based,
-                                &mut saw_one_based_upper_bound,
-                            );
-                        }
-                    }
-                    _ if fn_name.starts_with("__quantum__qis__barrier")
-                        && fn_name.ends_with("__body") =>
-                    {
-                        for arg in call_args.iter().copied() {
-                            note_static_qubit_pointer(
-                                arg,
-                                required_num_qubits,
-                                &mut saw_zero_based,
-                                &mut saw_one_based_upper_bound,
-                            );
-                        }
-                    }
-                    _ => {}
-                }
+                note_static_qubit_pointers_for_call(
+                    fn_name.as_str(),
+                    &call_args,
+                    required_num_qubits,
+                    &mut saw_zero_based,
+                    &mut saw_one_based_upper_bound,
+                );
             }
         }
 
