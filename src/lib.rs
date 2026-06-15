@@ -406,7 +406,9 @@ mod aux {
     pub fn validate_module_flags(module: &Module, errors: &mut Vec<String>) {
         let module_flags = collect_module_flags(module);
         if module_flags.has_malformed_name() {
-            errors.push("Malformed llvm.module.flags entry: expected metadata string name".to_string());
+            errors.push(
+                "Malformed llvm.module.flags entry: expected metadata string name".to_string(),
+            );
         }
         validate_qir_version_flags(&module_flags, errors);
         validate_exact_module_flag(
@@ -485,7 +487,7 @@ mod aux {
             self.values.get(flag_name).map(Vec::as_slice)
         }
 
-        fn has_malformed_name(&self) -> bool {
+        const fn has_malformed_name(&self) -> bool {
             self.has_malformed_name
         }
 
@@ -4448,8 +4450,9 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 "#;
 
         let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
-        let err = validate_qir(&bc_bytes, None)
-            .expect_err("Malformed module flag names should fail even with complete required flags");
+        let err = validate_qir(&bc_bytes, None).expect_err(
+            "Malformed module flag names should fail even with complete required flags",
+        );
         assert!(err.contains("Malformed llvm.module.flags entry: expected metadata string name"));
     }
 
