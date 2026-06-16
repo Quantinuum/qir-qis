@@ -51,8 +51,8 @@ mod aux {
         module::{Linkage, Module},
         types::{ArrayType, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
         values::{
-            AnyValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
-            FunctionValue, InstructionOpcode, PointerValue,
+            AnyValue, AsValueRef, BasicMetadataValueEnum, BasicValue, BasicValueEnum,
+            CallSiteValue, FunctionValue, InstructionOpcode, PointerValue,
         },
     };
 
@@ -395,6 +395,251 @@ mod aux {
                     };
                     if let Err(err) = checked_result_index(result_idx, required_num_results) {
                         errors.push(err);
+                    }
+                }
+            }
+        }
+    }
+
+    fn direct_qubit_operand_positions(fn_name: &str, arg_count: usize) -> Vec<usize> {
+        match fn_name {
+            "__quantum__qis__rxy__body" | "__quantum__qis__u1q__body" => vec![2],
+            "__quantum__qis__rz__body"
+            | "__quantum__qis__rx__body"
+            | "__quantum__qis__ry__body" => {
+                vec![1]
+            }
+            "__quantum__qis__rzz__body" => vec![1, 2],
+            "__quantum__qis__cz__body"
+            | "__quantum__qis__cx__body"
+            | "__quantum__qis__cnot__body" => vec![0, 1],
+            "__quantum__qis__ccx__body" => vec![0, 1, 2],
+            "__quantum__qis__h__body"
+            | "__quantum__qis__x__body"
+            | "__quantum__qis__y__body"
+            | "__quantum__qis__z__body"
+            | "__quantum__qis__s__body"
+            | "__quantum__qis__s__adj"
+            | "__quantum__qis__t__body"
+            | "__quantum__qis__t__adj"
+            | "__quantum__qis__mz__body"
+            | "__quantum__qis__m__body"
+            | "__quantum__qis__mz_leaked__body"
+            | "__quantum__qis__reset__body"
+            | "__quantum__qis__mresetz__body" => vec![0],
+            name if name.starts_with("__quantum__qis__barrier") && name.ends_with("__body") => {
+                (0..arg_count).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn is_user_ir_defined_helper_name(name: &str) -> bool {
+        !name.starts_with("__quantum__qis__")
+            && !name.starts_with("__quantum__rt__")
+            && !name.starts_with("qir_qis.")
+            && !name.starts_with("___")
+            && !name.starts_with("print_")
+            && name != "panic"
+    }
+
+    fn find_pointer_param_index(
+        function: FunctionValue<'_>,
+        ptr: PointerValue<'_>,
+    ) -> Option<usize> {
+        function
+            .get_param_iter()
+            .enumerate()
+            .find_map(|(idx, param)| {
+                let BasicValueEnum::PointerValue(param_ptr) = param else {
+                    return None;
+                };
+                (param_ptr.as_value_ref() == ptr.as_value_ref()).then_some(idx)
+            })
+    }
+
+    fn infer_ir_defined_helper_qubit_params(
+        module: &Module,
+        errors: &mut Vec<String>,
+    ) -> HashMap<String, BTreeSet<usize>> {
+        let mut helper_qubit_params: HashMap<String, BTreeSet<usize>> = module
+            .get_functions()
+            .filter(|function| function.count_basic_blocks() > 0)
+            .filter_map(|function| {
+                function
+                    .get_name()
+                    .to_str()
+                    .ok()
+                    .filter(|name| is_user_ir_defined_helper_name(name))
+                    .map(|name| (name.to_string(), BTreeSet::new()))
+            })
+            .collect();
+
+        loop {
+            let mut changed = false;
+            for function in module
+                .get_functions()
+                .filter(|function| function.count_basic_blocks() > 0)
+            {
+                let Ok(function_name) = function.get_name().to_str() else {
+                    continue;
+                };
+                if !is_user_ir_defined_helper_name(function_name) {
+                    continue;
+                }
+                let mut discovered = helper_qubit_params
+                    .get(function_name)
+                    .cloned()
+                    .unwrap_or_default();
+
+                for bb in function.get_basic_blocks() {
+                    for instr in bb.get_instructions() {
+                        let Ok(call) = CallSiteValue::try_from(instr) else {
+                            continue;
+                        };
+                        let Some(callee_name) = call.get_called_fn_value().and_then(|f| {
+                            f.as_global_value()
+                                .get_name()
+                                .to_str()
+                                .ok()
+                                .map(ToOwned::to_owned)
+                        }) else {
+                            continue;
+                        };
+
+                        let call_args = match extract_operands(&instr) {
+                            Ok(args) => args,
+                            Err(err) => {
+                                errors.push(format!(
+                                    "Failed to inspect `{callee_name}` call in `{function_name}`: {err}"
+                                ));
+                                continue;
+                            }
+                        };
+
+                        let qubit_positions = {
+                            let direct_positions =
+                                direct_qubit_operand_positions(&callee_name, call_args.len());
+                            if direct_positions.is_empty() {
+                                helper_qubit_params
+                                    .get(&callee_name)
+                                    .map(|positions| positions.iter().copied().collect())
+                                    .unwrap_or_default()
+                            } else {
+                                direct_positions
+                            }
+                        };
+
+                        for pos in qubit_positions {
+                            let Some(BasicValueEnum::PointerValue(ptr)) =
+                                call_args.get(pos).copied()
+                            else {
+                                continue;
+                            };
+                            if let Some(param_idx) = find_pointer_param_index(function, ptr) {
+                                discovered.insert(param_idx);
+                            }
+                        }
+                    }
+                }
+
+                if helper_qubit_params
+                    .get(function_name)
+                    .is_none_or(|known| discovered.len() > known.len())
+                {
+                    helper_qubit_params.insert(function_name.to_string(), discovered);
+                    changed = true;
+                }
+            }
+
+            if !changed {
+                return helper_qubit_params;
+            }
+        }
+    }
+
+    pub fn validate_static_qubit_helper_usage(
+        module: &Module,
+        entry_fn: FunctionValue,
+        errors: &mut Vec<String>,
+    ) {
+        if get_capability_flags(module).dynamic_qubit_management {
+            return;
+        }
+        if entry_fn
+            .get_string_attribute(AttributeLoc::Function, "required_num_qubits")
+            .is_none()
+        {
+            return;
+        }
+
+        let Some(required_num_qubits) = get_required_num_qubits(entry_fn) else {
+            errors.push("Missing required attribute: `required_num_qubits`".to_string());
+            return;
+        };
+
+        let helper_qubit_params = infer_ir_defined_helper_qubit_params(module, errors);
+        if !errors.is_empty() {
+            return;
+        }
+
+        for function in module.get_functions() {
+            for bb in function.get_basic_blocks() {
+                for instr in bb.get_instructions() {
+                    let Ok(call) = CallSiteValue::try_from(instr) else {
+                        continue;
+                    };
+                    let Some(callee_name) = call.get_called_fn_value().and_then(|f| {
+                        f.as_global_value()
+                            .get_name()
+                            .to_str()
+                            .ok()
+                            .map(ToOwned::to_owned)
+                    }) else {
+                        continue;
+                    };
+                    let Some(qubit_positions) = helper_qubit_params.get(&callee_name) else {
+                        continue;
+                    };
+                    if qubit_positions.is_empty() {
+                        continue;
+                    }
+
+                    let call_args = match extract_operands(&instr) {
+                        Ok(args) => args,
+                        Err(err) => {
+                            errors.push(format!("Failed to inspect `{callee_name}` call: {err}"));
+                            continue;
+                        }
+                    };
+
+                    for pos in qubit_positions {
+                        let Some(arg) = call_args.get(*pos).copied() else {
+                            errors.push(format!(
+                                "Call to helper `{callee_name}` is missing qubit operand {pos}"
+                            ));
+                            continue;
+                        };
+                        let BasicValueEnum::PointerValue(qubit_ptr) = arg else {
+                            errors.push(format!(
+                                "Call to helper `{callee_name}` has a non-pointer qubit operand"
+                            ));
+                            continue;
+                        };
+                        let qubit_idx = match get_index(qubit_ptr) {
+                            Ok(idx) => idx,
+                            Err(err) => {
+                                errors.push(format!(
+                                    "Failed to inspect qubit operand passed to helper `{callee_name}`: {err}"
+                                ));
+                                continue;
+                            }
+                        };
+                        if let Err(err) = checked_qubit_index(qubit_idx, required_num_qubits) {
+                            errors.push(format!(
+                                "Invalid static qubit handle passed to helper `{callee_name}`: {err}"
+                            ));
+                        }
                     }
                 }
             }
@@ -3351,7 +3596,7 @@ pub fn qir_to_qis(
     _wasm_bytes: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     use crate::{
-        aux::{get_capability_flags, process_entry_function},
+        aux::{get_capability_flags, process_entry_function, validate_static_qubit_helper_usage},
         convert::{
             add_qmain_wrapper, create_qubit_array, find_entry_function, free_all_qubits,
             get_string_attrs, process_ir_defined_q_fns, prune_unused_ir_qis_helpers,
@@ -3377,6 +3622,11 @@ pub fn qir_to_qis(
         .to_str()
         .map_err(|e| format!("Invalid UTF-8 in entry function name: {e}"))?;
     let capability_flags = get_capability_flags(&module);
+    let mut validation_errors = Vec::new();
+    validate_static_qubit_helper_usage(&module, entry_fn, &mut validation_errors);
+    if !validation_errors.is_empty() {
+        return Err(validation_errors.join("; "));
+    }
 
     log::trace!("Entry function: {entry_fn_name}");
     let new_name = format!("___user_qir_{entry_fn_name}");
@@ -3539,6 +3789,7 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
 
     validate_functions(&module, entry_fn, &wasm_fns, &mut errors);
     validate_result_slot_usage(&module, entry_fn, &mut errors);
+    aux::validate_static_qubit_helper_usage(&module, entry_fn, &mut errors);
     validate_dynamic_result_allocation_placement(&module, entry_fn, &mut errors);
     validate_dynamic_array_allocation_backing(&module, &mut errors);
 
@@ -5195,6 +5446,42 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_validate_qir_rejects_out_of_range_static_handle_passed_to_ir_defined_helper() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+define internal void @helper(%Qubit* %qubit) {
+entry:
+  call void @__quantum__qis__h__body(%Qubit* %qubit)
+  ret void
+}
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q1 = inttoptr i64 1 to %Qubit*
+  call void @helper(%Qubit* %q1)
+  ret i64 0
+}
+
+declare void @__quantum__qis__h__body(%Qubit*)
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("helper calls with out-of-range static handles should fail validation");
+        assert!(err.contains("Invalid static qubit handle passed to helper `helper`"));
+        assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
+    }
+
+    #[test]
     fn test_validate_qir_rejects_zero_required_num_results_for_result_measurement() {
         let ll_text = minimal_qir_with_body(
             "1",
@@ -5348,6 +5635,43 @@ declare void @__quantum__rt__result_record_output(%Result*, i8*)
             "static mz_leaked qubit id 1 should be rejected in a single-qubit zero-based program",
         );
         assert_eq!(err, "Qubit index 1 exceeds required_num_qubits (1)");
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_out_of_range_static_handle_passed_to_ir_defined_helper() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+define internal void @helper(%Qubit* %qubit) {
+entry:
+  call void @__quantum__qis__h__body(%Qubit* %qubit)
+  ret void
+}
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q1 = inttoptr i64 1 to %Qubit*
+  call void @helper(%Qubit* %q1)
+  ret i64 0
+}
+
+declare void @__quantum__qis__h__body(%Qubit*)
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = qir_to_qis(&bc_bytes, 0, "native", None).expect_err(
+            "helper calls with out-of-range static handles should fail before runtime helper generation",
+        );
+        assert!(err.contains("Invalid static qubit handle passed to helper `helper`"));
+        assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
     }
 
     #[test]
