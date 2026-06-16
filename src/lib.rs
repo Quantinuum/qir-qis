@@ -33,12 +33,11 @@ mod aux {
 
     use crate::{
         convert::{
-            INIT_QARRAY_FN, StaticQubitIndexMode, add_print_call, build_result_global,
-            checked_qubit_index, convert_globals, create_reset_call, get_index,
-            get_or_create_function, get_required_num_qubits, get_required_num_qubits_strict,
-            get_required_num_results, get_result_vars, get_string_label,
-            handle_tuple_or_array_output, parse_gep, record_classical_output, replace_rxy_call,
-            replace_rz_call, replace_rzz_call,
+            INIT_QARRAY_FN, add_print_call, build_result_global, checked_qubit_index,
+            convert_globals, create_reset_call, get_index, get_or_create_function,
+            get_required_num_qubits, get_required_num_qubits_strict, get_required_num_results,
+            get_result_vars, get_string_label, handle_tuple_or_array_output, parse_gep,
+            record_classical_output, replace_rxy_call, replace_rz_call, replace_rzz_call,
         },
         decode_llvm_bytes,
         utils::extract_operands,
@@ -899,7 +898,6 @@ mod aux {
         wasm_fns: *const BTreeMap<String, u64>,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
-        static_qubit_index_mode: StaticQubitIndexMode,
         capability_flags: CapabilityFlags,
         global_mapping: *mut HashMap<String, inkwell::values::GlobalValue<'ctx>>,
         result_ssa: *mut Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>,
@@ -912,7 +910,6 @@ mod aux {
         entry_fn: FunctionValue<'ctx>,
         wasm_fns: &BTreeMap<String, u64>,
         qubit_array: Option<PointerValue<'ctx>>,
-        static_qubit_index_mode: StaticQubitIndexMode,
         capability_flags: CapabilityFlags,
     ) -> Result<(), String> {
         let mut global_mapping = convert_globals(ctx, module)?;
@@ -957,7 +954,6 @@ mod aux {
                         wasm_fns: std::ptr::from_ref(wasm_fns),
                         qubit_array,
                         qubit_array_type,
-                        static_qubit_index_mode,
                         capability_flags,
                         global_mapping: &raw mut global_mapping,
                         result_ssa: &raw mut result_ssa,
@@ -1036,7 +1032,6 @@ mod aux {
                     module_ref(args),
                     args.instr,
                     args.capability_flags.dynamic_qubit_management,
-                    args.static_qubit_index_mode,
                     required_num_qubits,
                 )?;
             }
@@ -1046,7 +1041,6 @@ mod aux {
                     module_ref(args),
                     args.instr,
                     args.capability_flags.dynamic_qubit_management,
-                    args.static_qubit_index_mode,
                     required_num_qubits,
                 )?;
             }
@@ -1056,7 +1050,6 @@ mod aux {
                     module_ref(args),
                     args.instr,
                     args.capability_flags.dynamic_qubit_management,
-                    args.static_qubit_index_mode,
                     required_num_qubits,
                 )?;
             }
@@ -1069,7 +1062,6 @@ mod aux {
                     module_ref(args),
                     args.instr,
                     args.capability_flags.dynamic_qubit_management,
-                    args.static_qubit_index_mode,
                     required_num_qubits,
                 )?;
             }
@@ -1084,7 +1076,6 @@ mod aux {
                     args.capability_flags,
                     args.qubit_array,
                     args.qubit_array_type,
-                    args.static_qubit_index_mode,
                     args.result_ssa.cast::<()>(),
                 )?;
             }
@@ -1215,7 +1206,6 @@ mod aux {
         capability_flags: CapabilityFlags,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
-        static_qubit_index_mode: StaticQubitIndexMode,
         builder: &inkwell::builder::Builder<'ctx>,
         qubit_ptr: PointerValue<'ctx>,
     ) -> Result<BasicValueEnum<'ctx>, String> {
@@ -1231,7 +1221,7 @@ mod aux {
             qubit_array_type.ok_or("Missing static qubit array type for qubit lookup")?;
         let i64_type = ctx.i64_type();
         let index = get_index(qubit_ptr)?;
-        let index = checked_qubit_index(index, qubit_array_type.len(), static_qubit_index_mode)?;
+        let index = checked_qubit_index(index, qubit_array_type.len())?;
         let index_val = i64_type.const_int(index, false);
         let elem_ptr = unsafe {
             builder.build_gep(
@@ -2625,7 +2615,6 @@ mod aux {
         capability_flags: CapabilityFlags,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
-        static_qubit_index_mode: StaticQubitIndexMode,
         result_ssa: *mut (),
     ) -> Result<(), String> {
         let module = unsafe { &*module.cast::<Module<'ctx>>() };
@@ -2647,7 +2636,6 @@ mod aux {
             capability_flags,
             qubit_array,
             qubit_array_type,
-            static_qubit_index_mode,
             &builder,
             qubit_ptr,
         )?;
@@ -2727,7 +2715,6 @@ mod aux {
             args.capability_flags,
             args.qubit_array,
             args.qubit_array_type,
-            args.static_qubit_index_mode,
             &builder,
             qubit_ptr,
         )?;
@@ -2815,7 +2802,6 @@ mod aux {
             args.capability_flags,
             args.qubit_array,
             args.qubit_array_type,
-            args.static_qubit_index_mode,
             &builder,
             qubit_ptr,
         )?;
@@ -2884,7 +2870,6 @@ mod aux {
                 args.capability_flags,
                 args.qubit_array,
                 args.qubit_array_type,
-                args.static_qubit_index_mode,
                 &builder,
                 qubit_ptr,
             )?;
@@ -3397,16 +3382,10 @@ pub fn qir_to_qis(
     let new_name = format!("___user_qir_{entry_fn_name}");
     entry_fn.as_global_value().set_name(&new_name);
     log::debug!("Renamed entry function to: {new_name}");
-    let static_qubit_index_mode = crate::convert::StaticQubitIndexMode::ZeroBased;
     let qubit_array = if capability_flags.dynamic_qubit_management {
         None
     } else {
-        Some(create_qubit_array(
-            &ctx,
-            &module,
-            entry_fn,
-            static_qubit_index_mode,
-        )?)
+        Some(create_qubit_array(&ctx, &module, entry_fn)?)
     };
 
     let wasm_fns: BTreeMap<String, u64> = BTreeMap::new();
@@ -3416,7 +3395,6 @@ pub fn qir_to_qis(
         entry_fn,
         &wasm_fns,
         qubit_array,
-        static_qubit_index_mode,
         capability_flags,
     )?;
 
@@ -3426,7 +3404,6 @@ pub fn qir_to_qis(
         &module,
         entry_fn,
         capability_flags.dynamic_qubit_management,
-        static_qubit_index_mode,
     )?;
 
     if let Some(qubit_array) = qubit_array {
@@ -5041,33 +5018,21 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     #[test]
     fn test_checked_qubit_index_accepts_zero_based_static_ids() {
         assert_eq!(
-            crate::convert::checked_qubit_index(
-                0,
-                2,
-                crate::convert::StaticQubitIndexMode::ZeroBased
-            )
-            .expect("zero-based first qubit id should map to slot 0"),
+            crate::convert::checked_qubit_index(0, 2)
+                .expect("zero-based first qubit id should map to slot 0"),
             0
         );
         assert_eq!(
-            crate::convert::checked_qubit_index(
-                1,
-                2,
-                crate::convert::StaticQubitIndexMode::ZeroBased
-            )
-            .expect("zero-based second qubit id should map to slot 1"),
+            crate::convert::checked_qubit_index(1, 2)
+                .expect("zero-based second qubit id should map to slot 1"),
             1
         );
     }
 
     #[test]
     fn test_checked_qubit_index_rejects_out_of_bounds_values() {
-        let err = crate::convert::checked_qubit_index(
-            2,
-            2,
-            crate::convert::StaticQubitIndexMode::ZeroBased,
-        )
-        .expect_err("out-of-bounds zero-based qubit ids should fail cleanly");
+        let err = crate::convert::checked_qubit_index(2, 2)
+            .expect_err("out-of-bounds zero-based qubit ids should fail cleanly");
         assert_eq!(err, "Qubit index 2 exceeds required_num_qubits (2)");
     }
 
