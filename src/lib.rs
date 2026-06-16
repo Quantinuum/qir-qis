@@ -1239,6 +1239,7 @@ mod aux {
         entry_fn: FunctionValue<'ctx>,
         wasm_fns: &BTreeMap<String, u64>,
         qubit_array: Option<PointerValue<'ctx>>,
+        static_qubit_index_mode: StaticQubitIndexMode,
         capability_flags: CapabilityFlags,
     ) -> Result<(), String> {
         let mut global_mapping = convert_globals(ctx, module)?;
@@ -1258,11 +1259,6 @@ mod aux {
                 ctx.i64_type()
                     .array_type(get_required_num_qubits_strict(entry_fn)?),
             )
-        };
-        let static_qubit_index_mode = if capability_flags.dynamic_qubit_management {
-            StaticQubitIndexMode::ZeroBased
-        } else {
-            infer_static_qubit_index_mode(entry_fn)?
         };
 
         for bb in entry_fn.get_basic_blocks() {
@@ -3751,6 +3747,7 @@ pub fn qir_to_qis(
         entry_fn,
         &wasm_fns,
         qubit_array,
+        static_qubit_index_mode,
         capability_flags,
     )?;
 

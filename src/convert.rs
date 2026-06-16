@@ -377,15 +377,16 @@ pub fn create_qubit_array<'ctx>(
             .map_err(|e| format!("Failed to build call to {INIT_QARRAY_FN}: {e}"))?;
     }
 
-    let _ = add_load_qubit_fn(ctx, module, global_ptr, array_type, static_qubit_index_mode);
+    add_load_qubit_fn(ctx, module, global_ptr, array_type, static_qubit_index_mode)?;
 
     Ok(global_ptr)
 }
 
 /// Builds a function to load a qubit from the global qubit array.
 ///
-/// It derives the index at runtime by subtracting the null pointer from the given pointer,
-/// then converting the difference to an integer.
+/// It derives the index at runtime by converting the incoming static qubit handle pointer
+/// to an integer, validating it against the configured indexing mode, and normalizing
+/// one-based handles before indexing into the global array.
 fn add_load_qubit_fn<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
