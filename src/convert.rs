@@ -494,7 +494,7 @@ fn add_init_qubit_fn<'ctx>(
 fn process_allocation_error<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
-    builder: &Builder<'_>,
+    builder: &Builder<'ctx>,
     qid: BasicValueEnum<'_>,
 ) -> Result<(), String> {
     let fail_val = ctx.i64_type().const_int(u64::MAX, false);
@@ -516,50 +516,13 @@ fn process_allocation_error<'ctx>(
         .build_conditional_branch(is_fail, fail_block, cont_block)
         .map_err(|e| format!("Failed to build conditional branch: {e}"))?;
     builder.position_at_end(fail_block);
-    let msg_bytes = create_cl_str("EXIT", "INT", "No more qubits available to allocate.")?;
-    let arr_ty = ctx.i8_type().array_type(
-        u32::try_from(msg_bytes.len()).map_err(|e| format!("Failed to create array type: {e}"))?,
-    );
-    let msg_const = ctx.const_string(&msg_bytes, false);
-    let global_name = "e_qalloc_fail";
-    let err_global = module.get_global(global_name).unwrap_or_else(|| {
-        let g = module.add_global(arr_ty, None, global_name);
-        g.set_initializer(&msg_const);
-        g.set_linkage(Linkage::Private);
-        g.set_constant(true);
-        g
-    });
-    let gep = unsafe {
-        builder
-            .build_gep(
-                arr_ty,
-                err_global.as_pointer_value(),
-                &[ctx.i64_type().const_zero(), ctx.i64_type().const_zero()],
-                "err_gep",
-            )
-            .map_err(|e| format!("Failed to build GEP for panic message: {e}"))?
-    };
-    let fn_type = ctx.void_type().fn_type(
-        &[
-            ctx.i32_type().into(),
-            ctx.ptr_type(AddressSpace::default()).into(),
-        ],
-        false,
-    );
-    let panic_fn = get_or_create_function(module, "panic", fn_type);
-    let _ = builder
-        .build_call(
-            panic_fn,
-            &[
-                ctx.i32_type().const_int(EXIT_CODE, false).into(),
-                gep.into(),
-            ],
-            "",
-        )
-        .map_err(|e| format!("Failed to build panic call: {e}"))?;
-    builder
-        .build_unreachable()
-        .map_err(|e| format!("Failed to build unreachable: {e}"))?;
+    build_panic_with_message(
+        ctx,
+        module,
+        builder,
+        "e_qalloc_fail",
+        "No more qubits available to allocate.",
+    )?;
     builder.position_at_end(cont_block);
     Ok(())
 }

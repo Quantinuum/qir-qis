@@ -543,10 +543,7 @@ mod aux {
                     }
                 }
 
-                if helper_qubit_params
-                    .get(function_name)
-                    .is_none_or(|known| discovered.len() > known.len())
-                {
+                if helper_qubit_params.get(function_name) != Some(&discovered) {
                     helper_qubit_params.insert(function_name.to_string(), discovered);
                     changed = true;
                 }
@@ -566,16 +563,12 @@ mod aux {
         if get_capability_flags(module).dynamic_qubit_management {
             return;
         }
-        if entry_fn
-            .get_string_attribute(AttributeLoc::Function, "required_num_qubits")
-            .is_none()
-        {
-            return;
-        }
-
-        let Some(required_num_qubits) = get_required_num_qubits(entry_fn) else {
-            errors.push("Missing required attribute: `required_num_qubits`".to_string());
-            return;
+        let required_num_qubits = match get_required_num_qubits_strict(entry_fn) {
+            Ok(required_num_qubits) => required_num_qubits,
+            Err(err) => {
+                errors.push(err);
+                return;
+            }
         };
 
         let helper_qubit_params = infer_ir_defined_helper_qubit_params(module, errors);
