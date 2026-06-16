@@ -66,9 +66,11 @@ pub fn checked_qubit_index(
             }
         }
         StaticQubitIndexMode::OneBased => {
-            if (1..=required_num_qubits).contains(&qubit_idx) {
+            if qubit_idx == 0 {
+                Err("Qubit index 0 is invalid for one-based static qubit numbering".to_string())
+            } else if qubit_idx <= required_num_qubits {
                 qubit_idx.checked_sub(1).ok_or_else(|| {
-                    "Qubit index underflow during one-based static qubit normalization".to_string()
+                    "Qubit index 0 is invalid for one-based static qubit numbering".to_string()
                 })
             } else {
                 Err(format!(

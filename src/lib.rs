@@ -5120,6 +5120,20 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_checked_qubit_index_rejects_zero_for_one_based_static_ids() {
+        let err = crate::convert::checked_qubit_index(
+            0,
+            2,
+            crate::convert::StaticQubitIndexMode::OneBased,
+        )
+        .expect_err("one-based qubit id 0 should fail the lower-bound check");
+        assert_eq!(
+            err,
+            "Qubit index 0 is invalid for one-based static qubit numbering"
+        );
+    }
+
+    #[test]
     fn test_qir_to_qis_accepts_one_based_two_qubit_barrier() {
         let ll_text = r#"
 %Qubit = type opaque
