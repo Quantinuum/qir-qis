@@ -1072,9 +1072,7 @@ fn get_native_qubit_handle<'ctx>(
     }
 
     if let Ok(qubit_idx) = get_index(qubit_ptr) {
-        let normalized_idx =
-            checked_qubit_index(qubit_idx, required_num_qubits, static_qubit_index_mode)?;
-        return Ok(ctx.i64_type().const_int(normalized_idx, false).into());
+        let _ = checked_qubit_index(qubit_idx, required_num_qubits, static_qubit_index_mode)?;
     }
 
     let get_idx_fn = module

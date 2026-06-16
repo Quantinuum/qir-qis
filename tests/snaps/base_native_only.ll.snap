@@ -30,35 +30,38 @@ qalloc_fail.i:                                    ; preds = %entry
 qir_qis.init_qubit.exit:                          ; preds = %entry
   tail call void @___reset(i64 %qalloc.i)
   store i64 %qalloc.i, ptr @qis_qs, align 8
-  %qalloc.i6 = tail call i64 @___qalloc()
-  %is_fail.i7 = icmp eq i64 %qalloc.i6, -1
-  br i1 %is_fail.i7, label %qalloc_fail.i8, label %qir_qis.init_qubit.exit9
+  %qalloc.i10 = tail call i64 @___qalloc()
+  %is_fail.i11 = icmp eq i64 %qalloc.i10, -1
+  br i1 %is_fail.i11, label %qalloc_fail.i12, label %qir_qis.init_qubit.exit13
 
-qalloc_fail.i8:                                   ; preds = %qir_qis.init_qubit.exit
+qalloc_fail.i12:                                  ; preds = %qir_qis.init_qubit.exit
   tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
   unreachable
 
-qir_qis.init_qubit.exit9:                         ; preds = %qir_qis.init_qubit.exit
-  tail call void @___reset(i64 %qalloc.i6)
-  store i64 %qalloc.i6, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rzz(i64 0, i64 1, double 2.356200e+00)
-  tail call void @___rxy(i64 0, double 1.570800e+00, double 7.854000e-01)
-  tail call void @___rz(i64 1, double 3.141500e+00)
-  %qbit = load i64, ptr @qis_qs, align 8
-  %meas = tail call i64 @___lazy_measure(i64 %qbit)
-  %qbit1 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  %meas2 = tail call i64 @___lazy_measure(i64 %qbit1)
+qir_qis.init_qubit.exit13:                        ; preds = %qir_qis.init_qubit.exit
+  tail call void @___reset(i64 %qalloc.i10)
+  store i64 %qalloc.i10, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %qbit.i = load i64, ptr @qis_qs, align 8
+  tail call void @___rzz(i64 %qbit.i, i64 %qalloc.i10, double 2.356200e+00)
+  %qbit.i15 = load i64, ptr @qis_qs, align 8
+  tail call void @___rxy(i64 %qbit.i15, double 1.570800e+00, double 7.854000e-01)
+  %qbit.i16 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rz(i64 %qbit.i16, double 3.141500e+00)
+  %qbit4 = load i64, ptr @qis_qs, align 8
+  %meas = tail call i64 @___lazy_measure(i64 %qbit4)
+  %qbit5 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %meas6 = tail call i64 @___lazy_measure(i64 %qbit5)
   tail call void @print_int(ptr nonnull @res_t0.1, i64 16, i64 2)
   %bool = tail call i1 @___read_future_bool(i64 %meas)
   tail call void @___dec_future_refcount(i64 %meas)
   tail call void @print_bool(ptr nonnull @res_q0, i64 14, i1 %bool)
-  %bool3 = tail call i1 @___read_future_bool(i64 %meas2)
-  tail call void @___dec_future_refcount(i64 %meas2)
-  tail call void @print_bool(ptr nonnull @res_q1, i64 14, i1 %bool3)
-  %qbit4 = load i64, ptr @qis_qs, align 8
-  tail call void @___qfree(i64 %qbit4)
-  %qbit5 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___qfree(i64 %qbit5)
+  %bool7 = tail call i1 @___read_future_bool(i64 %meas6)
+  tail call void @___dec_future_refcount(i64 %meas6)
+  tail call void @print_bool(ptr nonnull @res_q1, i64 14, i1 %bool7)
+  %qbit8 = load i64, ptr @qis_qs, align 8
+  tail call void @___qfree(i64 %qbit8)
+  %qbit9 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___qfree(i64 %qbit9)
   ret void
 }
 
