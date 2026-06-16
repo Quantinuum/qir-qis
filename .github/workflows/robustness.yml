@@ -34,8 +34,8 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
   actions: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -47,17 +47,11 @@ jobs:
     outputs:
       targets: ${{ steps.collect.outputs.targets }}
     steps:
-      - uses: actions/checkout@v6
       - name: Collect fuzz targets
         id: collect
         run: |
-          targets=$(
-            find fuzz/fuzz_targets -maxdepth 1 -name '*.rs' -print |
-              sort |
-              sed 's#.*/##; s#\.rs$##' |
-              jq -R . |
-              jq -sc .
-          )
+          # Keep this list in sync with `FUZZ_ALL_TARGETS` in `Makefile`.
+          targets='["declared_qis_calls","entry_contracts","get_entry_attributes","mutated_fixture_bitcode","mutated_fixture_contracts","parse_wasm_functions","qir_ll_to_bc","qir_to_qis","result_index_contracts","validate_fixture_with_wasm","validate_qir"]'
           echo "targets=${targets}" >>"$GITHUB_OUTPUT"
 
   fuzz-smoke:
@@ -70,6 +64,8 @@ jobs:
         target: ${{ fromJson(needs.fuzz-targets.outputs.targets) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install hugrenv LLVM
         uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
@@ -96,9 +92,13 @@ jobs:
           cache-workspace-crates: true
           cache-targets: true
       - name: Fuzz check
-        run: cargo +nightly fuzz check --target "${RUST_HOST_TARGET}" ${{ matrix.target }}
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: cargo +nightly fuzz check --target "${RUST_HOST_TARGET}" "${FUZZ_TARGET}"
       - name: Fuzz smoke
-        run: cargo +nightly fuzz run --target "${RUST_HOST_TARGET}" ${{ matrix.target }} -- -max_total_time=20
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: cargo +nightly fuzz run --target "${RUST_HOST_TARGET}" "${FUZZ_TARGET}" -- -max_total_time=20
 
   fuzz-long:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
@@ -110,6 +110,8 @@ jobs:
         target: ${{ fromJson(needs.fuzz-targets.outputs.targets) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install hugrenv LLVM
         uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
@@ -136,11 +138,15 @@ jobs:
           cache-workspace-crates: true
           cache-targets: true
       - name: Fuzz check
-        run: cargo +nightly fuzz check --target "${RUST_HOST_TARGET}" ${{ matrix.target }}
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: cargo +nightly fuzz check --target "${RUST_HOST_TARGET}" "${FUZZ_TARGET}"
       - name: Fuzz campaign
         id: fuzz_run
         continue-on-error: true
-        run: cargo +nightly fuzz run --target "${RUST_HOST_TARGET}" ${{ matrix.target }} -- -max_total_time=300
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: cargo +nightly fuzz run --target "${RUST_HOST_TARGET}" "${FUZZ_TARGET}" -- -max_total_time=300
       - name: Upload fuzz artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -159,6 +165,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install hugrenv LLVM
         uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
