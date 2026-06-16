@@ -34,6 +34,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: write
   contents: read
 
 env:
@@ -56,9 +57,6 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     needs: fuzz-targets
     runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -105,9 +103,6 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     needs: fuzz-targets
     runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -167,9 +162,6 @@ jobs:
   mutants:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
