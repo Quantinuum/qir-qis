@@ -2,7 +2,8 @@ PYTHON = uv run -- python
 RUST_HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 FUZZ_TARGET ?= validate_qir
 FUZZ_RUN_ARGS ?= -max_total_time=30
-FUZZ_ALL_TARGETS := $(basename $(notdir $(wildcard fuzz/fuzz_targets/*.rs)))
+# Keep this list in sync with `.github/workflows/robustness.yml` `jobs.fuzz-targets`.
+FUZZ_ALL_TARGETS := declared_qis_calls entry_contracts get_entry_attributes mutated_fixture_bitcode mutated_fixture_contracts parse_wasm_functions qir_ll_to_bc qir_to_qis result_index_contracts validate_fixture_with_wasm validate_qir
 
 .PHONY: compile
 # Usage:

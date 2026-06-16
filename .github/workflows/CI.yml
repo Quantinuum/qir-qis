@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  actions: write
+  actions: read
   contents: read
   pull-requests: read
 
@@ -51,6 +51,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install hugrenv LLVM
         uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
         with:
@@ -72,6 +74,7 @@ jobs:
           cache-on-failure: true
           cache-workspace-crates: true
           cache-targets: true
+          save-if: "false"
       - name: Test (Windows suite)
         if: runner.os == 'Windows'
         run: cargo nextest run --lib --all-features --test-threads=1 -E "not test(test_get_entry_attributes)"
@@ -99,6 +102,8 @@ jobs:
       RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Detect stub-affecting changes
         id: stub_changes
         if: github.event_name == 'pull_request'
@@ -128,8 +133,8 @@ jobs:
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             cargo binstall --no-confirm --force cargo-msrv
           fi
-      - name: Cache sccache
-        uses: actions/cache@v5
+      - name: Restore sccache
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/sccache
           key: sccache-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
@@ -141,6 +146,7 @@ jobs:
           cache-on-failure: true
           cache-workspace-crates: true
           cache-targets: true
+          save-if: "false"
       - name: Run pre-commit lint
         env:
           SKIP: no-commit-to-branch
