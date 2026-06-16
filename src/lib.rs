@@ -1113,18 +1113,17 @@ mod aux {
                             continue;
                         };
 
-                        let relevant_args =
-                            if let Some(qubit_args) =
-                                get_qubit_argument_indices(callee_name.as_str(), call_args.len())
-                            {
-                                qubit_args
-                            } else if let Some(helper_args) =
-                                helper_qubit_params.get(callee_name.as_str())
-                            {
-                                helper_args.iter().copied().collect()
-                            } else {
-                                continue;
-                            };
+                        let relevant_args = if let Some(qubit_args) =
+                            get_qubit_argument_indices(callee_name.as_str(), call_args.len())
+                        {
+                            qubit_args
+                        } else if let Some(helper_args) =
+                            helper_qubit_params.get(callee_name.as_str())
+                        {
+                            helper_args.iter().copied().collect()
+                        } else {
+                            continue;
+                        };
 
                         for arg_index in relevant_args {
                             let Some(arg) = call_args.get(arg_index).copied() else {
@@ -4155,9 +4154,9 @@ mod test {
         reason = "tests inspect fixed positions in small generated arrays"
     )]
     use crate::{
-        aux, convert::get_string_label, create_memory_buffer_from_bytes, create_module_from_ir_text,
-        get_entry_attributes, memory_buffer_to_owned_bytes, parse_bitcode_module, qir_ll_to_bc,
-        qir_to_qis, validate_qir,
+        aux, convert::get_string_label, create_memory_buffer_from_bytes,
+        create_module_from_ir_text, get_entry_attributes, memory_buffer_to_owned_bytes,
+        parse_bitcode_module, qir_ll_to_bc, qir_to_qis, validate_qir,
     };
     use inkwell::{
         context::Context,
