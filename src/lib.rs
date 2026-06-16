@@ -5594,7 +5594,12 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     fn test_qir_to_qis_loads_runtime_handles_for_static_native_calls() {
         let ll_path = Path::new("tests/data/base_native_only.ll");
         let qir_bytes = get_qir_bytes(ll_path);
-        let output_bc = qir_to_qis(&qir_bytes, 2, "aarch64", None)
+        let (opt_level, target) = if cfg!(windows) {
+            (0, "native")
+        } else {
+            (2, "aarch64")
+        };
+        let output_bc = qir_to_qis(&qir_bytes, opt_level, target, None)
             .expect("base_native_only should translate successfully");
 
         let context = Context::create();
