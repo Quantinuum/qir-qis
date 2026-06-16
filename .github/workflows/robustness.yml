@@ -50,6 +50,7 @@ jobs:
       - name: Collect fuzz targets
         id: collect
         run: |
+          # Keep this list in sync with `FUZZ_ALL_TARGETS` in `Makefile`.
           targets='["declared_qis_calls","entry_contracts","get_entry_attributes","mutated_fixture_bitcode","mutated_fixture_contracts","parse_wasm_functions","qir_ll_to_bc","qir_to_qis","result_index_contracts","validate_fixture_with_wasm","validate_qir"]'
           echo "targets=${targets}" >>"$GITHUB_OUTPUT"
 
