@@ -37,6 +37,10 @@ env:
 
 jobs:
   test:
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix:
@@ -95,6 +99,10 @@ jobs:
         run: uv run -- python tests/test_main.py
 
   lint:
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: sccache
