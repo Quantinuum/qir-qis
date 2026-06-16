@@ -41,7 +41,6 @@ const RESULT_TAG: &str = "USER";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StaticQubitIndexMode {
     ZeroBased,
-    OneBased,
 }
 
 /// Normalize static qubit IDs to the backing array slot used by translation.
@@ -59,19 +58,6 @@ pub fn checked_qubit_index(
         StaticQubitIndexMode::ZeroBased => {
             if qubit_idx < required_num_qubits {
                 Ok(qubit_idx)
-            } else {
-                Err(format!(
-                    "Qubit index {qubit_idx} exceeds required_num_qubits ({required_num_qubits})"
-                ))
-            }
-        }
-        StaticQubitIndexMode::OneBased => {
-            if qubit_idx == 0 {
-                Err("Qubit index 0 is invalid for one-based static qubit numbering".to_string())
-            } else if qubit_idx <= required_num_qubits {
-                qubit_idx.checked_sub(1).ok_or_else(|| {
-                    "Qubit index 0 is invalid for one-based static qubit numbering".to_string()
-                })
             } else {
                 Err(format!(
                     "Qubit index {qubit_idx} exceeds required_num_qubits ({required_num_qubits})"
@@ -385,8 +371,8 @@ pub fn create_qubit_array<'ctx>(
 /// Builds a function to load a qubit from the global qubit array.
 ///
 /// It derives the index at runtime by converting the incoming static qubit handle pointer
-/// to an integer, validating it against the configured indexing mode, and normalizing
-/// one-based handles before indexing into the global array.
+/// to an integer and validating it against the module's zero-based static qubit range
+/// before indexing into the global array.
 fn add_load_qubit_fn<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
@@ -422,31 +408,6 @@ fn add_load_qubit_fn<'ctx>(
                 "valid_static_qubit_index",
             )
             .map_err(|e| format!("Failed to build static qubit bounds check: {e}"))?,
-        StaticQubitIndexMode::OneBased => {
-            let nonzero = builder
-                .build_int_compare(
-                    inkwell::IntPredicate::NE,
-                    index_val,
-                    i64_type.const_zero(),
-                    "nonzero_static_qubit_index",
-                )
-                .map_err(|e| format!("Failed to build static qubit lower-bound check: {e}"))?;
-            let within_upper_bound = builder
-                .build_int_compare(
-                    inkwell::IntPredicate::ULE,
-                    index_val,
-                    required_num_qubits,
-                    "within_one_based_static_qubit_upper_bound",
-                )
-                .map_err(|e| format!("Failed to build static qubit upper-bound check: {e}"))?;
-            builder
-                .build_and(
-                    nonzero,
-                    within_upper_bound,
-                    "valid_one_based_static_qubit_index",
-                )
-                .map_err(|e| format!("Failed to combine static qubit bounds checks: {e}"))?
-        }
     };
     let valid_block = ctx.append_basic_block(function, "load_qubit_valid");
     let invalid_block = ctx.append_basic_block(function, "load_qubit_invalid");
@@ -466,13 +427,6 @@ fn add_load_qubit_fn<'ctx>(
     builder.position_at_end(valid_block);
     let normalized_index = match static_qubit_index_mode {
         StaticQubitIndexMode::ZeroBased => index_val,
-        StaticQubitIndexMode::OneBased => builder
-            .build_int_sub(
-                index_val,
-                i64_type.const_int(1, false),
-                "normalized_static_qubit_idx",
-            )
-            .map_err(|e| format!("Failed to normalize one-based static qubit index: {e}"))?,
     };
     let elem_ptr = unsafe {
         builder
