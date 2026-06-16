@@ -102,6 +102,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     needs: fuzz-targets
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
