@@ -5339,15 +5339,15 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             "expected translated output to keep the static-handle loader: {qis_text}"
         );
         assert!(
-            !qis_text.contains("tail call void @___rzz(i64 0, i64 1,"),
+            !qis_text.contains("@___rzz(i64 0, i64 1,"),
             "native gates should use loaded runtime handles rather than slot indices: {qis_text}"
         );
         assert!(
-            !qis_text.contains("tail call void @___rxy(i64 0,"),
+            !qis_text.contains("@___rxy(i64 0,"),
             "single-qubit native gates should use loaded runtime handles rather than slot indices: {qis_text}"
         );
         assert!(
-            !qis_text.contains("tail call void @___rz(i64 1,"),
+            !qis_text.contains("@___rz(i64 1,"),
             "single-qubit native gates should use loaded runtime handles rather than slot indices: {qis_text}"
         );
     }

@@ -38,7 +38,7 @@ pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
 
-/// Normalize static qubit IDs to the backing array slot used by translation.
+/// Validate that a static qubit ID is within the module's zero-based range.
 ///
 /// # Errors
 /// Returns an error when the encoded qubit ID falls outside the module's
