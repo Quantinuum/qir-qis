@@ -428,7 +428,7 @@ mod aux {
             | "__quantum__qis__reset__body"
             | "__quantum__qis__mresetz__body" => vec![0],
             name if name.starts_with("__quantum__qis__barrier") && name.ends_with("__body") => {
-                (0..arg_count).collect()
+                (0..arg_count.saturating_sub(1)).collect()
             }
             _ => Vec::new(),
         }
@@ -555,6 +555,47 @@ mod aux {
         }
     }
 
+    fn validate_static_qubit_call_operands(
+        function: FunctionValue<'_>,
+        callee_name: &str,
+        qubit_positions: impl IntoIterator<Item = usize>,
+        call_args: &[BasicValueEnum<'_>],
+        required_num_qubits: u32,
+        report_shape_errors: bool,
+        errors: &mut Vec<String>,
+    ) {
+        for pos in qubit_positions {
+            let Some(arg) = call_args.get(pos).copied() else {
+                if report_shape_errors {
+                    errors.push(format!(
+                        "Call to `{callee_name}` is missing qubit operand {pos}"
+                    ));
+                }
+                continue;
+            };
+            let BasicValueEnum::PointerValue(qubit_ptr) = arg else {
+                if report_shape_errors {
+                    errors.push(format!(
+                        "Call to `{callee_name}` has a non-pointer qubit operand"
+                    ));
+                }
+                continue;
+            };
+            if find_pointer_param_index(function, qubit_ptr).is_some() {
+                continue;
+            }
+
+            let Ok(qubit_idx) = get_index(qubit_ptr) else {
+                continue;
+            };
+            if let Err(err) = checked_qubit_index(qubit_idx, required_num_qubits) {
+                errors.push(format!(
+                    "Invalid static qubit handle passed to `{callee_name}`: {err}"
+                ));
+            }
+        }
+    }
+
     pub fn validate_static_qubit_helper_usage(
         module: &Module,
         entry_fn: FunctionValue,
@@ -591,13 +632,6 @@ mod aux {
                     }) else {
                         continue;
                     };
-                    let Some(qubit_positions) = helper_qubit_params.get(&callee_name) else {
-                        continue;
-                    };
-                    if qubit_positions.is_empty() {
-                        continue;
-                    }
-
                     let call_args = match extract_operands(&instr) {
                         Ok(args) => args,
                         Err(err) => {
@@ -606,33 +640,32 @@ mod aux {
                         }
                     };
 
-                    for pos in qubit_positions {
-                        let Some(arg) = call_args.get(*pos).copied() else {
-                            errors.push(format!(
-                                "Call to helper `{callee_name}` is missing qubit operand {pos}"
-                            ));
-                            continue;
-                        };
-                        let BasicValueEnum::PointerValue(qubit_ptr) = arg else {
-                            errors.push(format!(
-                                "Call to helper `{callee_name}` has a non-pointer qubit operand"
-                            ));
-                            continue;
-                        };
-                        let qubit_idx = match get_index(qubit_ptr) {
-                            Ok(idx) => idx,
-                            Err(err) => {
-                                errors.push(format!(
-                                    "Failed to inspect qubit operand passed to helper `{callee_name}`: {err}"
-                                ));
-                                continue;
-                            }
-                        };
-                        if let Err(err) = checked_qubit_index(qubit_idx, required_num_qubits) {
-                            errors.push(format!(
-                                "Invalid static qubit handle passed to helper `{callee_name}`: {err}"
-                            ));
-                        }
+                    let direct_positions =
+                        direct_qubit_operand_positions(&callee_name, call_args.len());
+                    if !direct_positions.is_empty() {
+                        validate_static_qubit_call_operands(
+                            function,
+                            &callee_name,
+                            direct_positions,
+                            &call_args,
+                            required_num_qubits,
+                            false,
+                            errors,
+                        );
+                    }
+
+                    if let Some(qubit_positions) = helper_qubit_params.get(&callee_name)
+                        && !qubit_positions.is_empty()
+                    {
+                        validate_static_qubit_call_operands(
+                            function,
+                            &callee_name,
+                            qubit_positions.iter().copied(),
+                            &call_args,
+                            required_num_qubits,
+                            true,
+                            errors,
+                        );
                     }
                 }
             }
@@ -5307,7 +5340,38 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let err = qir_to_qis(&bc_bytes, 0, "native", None).expect_err(
             "static qubit id 1 should be rejected in a single-qubit zero-based program",
         );
-        assert_eq!(err, "Qubit index 1 exceeds required_num_qubits (1)");
+        assert!(err.contains("Invalid static qubit handle passed to `__quantum__qis__rz__body`"));
+        assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_nonzero_single_qubit_decomposed_handle() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__h__body(%Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 1 to %Qubit*
+  call void @__quantum__qis__h__body(%Qubit* %q0)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("decomposed QIS gates should reject out-of-range static qubit handles");
+        assert!(err.contains("Invalid static qubit handle passed to `__quantum__qis__h__body`"));
+        assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
     }
 
     #[test]
@@ -5470,7 +5534,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
         let err = validate_qir(&bc_bytes, None)
             .expect_err("helper calls with out-of-range static handles should fail validation");
-        assert!(err.contains("Invalid static qubit handle passed to helper `helper`"));
+        assert!(err.contains("Invalid static qubit handle passed to `helper`"));
         assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
     }
 
@@ -5627,7 +5691,10 @@ declare void @__quantum__rt__result_record_output(%Result*, i8*)
         let err = qir_to_qis(&bc_bytes, 0, "native", None).expect_err(
             "static mz_leaked qubit id 1 should be rejected in a single-qubit zero-based program",
         );
-        assert_eq!(err, "Qubit index 1 exceeds required_num_qubits (1)");
+        assert!(
+            err.contains("Invalid static qubit handle passed to `__quantum__qis__mz_leaked__body`")
+        );
+        assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
     }
 
     #[test]
@@ -5663,7 +5730,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let err = qir_to_qis(&bc_bytes, 0, "native", None).expect_err(
             "helper calls with out-of-range static handles should fail before runtime helper generation",
         );
-        assert!(err.contains("Invalid static qubit handle passed to helper `helper`"));
+        assert!(err.contains("Invalid static qubit handle passed to `helper`"));
         assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
     }
 
@@ -5865,10 +5932,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
                     .join(", ")
             );
             let body = (0..barrier_arity)
-                .map(|idx| {
-                    let one_based_idx = idx.saturating_add(1);
-                    format!("  %q{idx} = inttoptr i64 {one_based_idx} to %Qubit*")
-                })
+                .map(|idx| format!("  %q{idx} = inttoptr i64 {idx} to %Qubit*"))
                 .chain(std::iter::once(format!("  call void @{barrier_name}({barrier_args})")))
                 .collect::<Vec<_>>()
                 .join("\n");
