@@ -3881,7 +3881,7 @@ mod test {
         let module = create_module_from_ir_text(&ctx, ll_text, "qir")
             .expect("inline IR should parse for dynamic array backing validation");
         let mut errors = Vec::new();
-        aux::validate_dynamic_array_allocation_backing(&module, &mut errors);
+        crate::aux::validate_dynamic_array_allocation_backing(&module, &mut errors);
         errors
     }
 
@@ -6268,7 +6268,7 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
 
     #[test]
     fn test_validate_dynamic_qubit_array_release_matching_backing_succeeds() {
-        let ll_text = r#"
+        let ll_text = r"
 define i64 @Entry_Point_Name() {
 entry:
   %qubits = alloca [2 x ptr], align 8
@@ -6277,7 +6277,7 @@ entry:
 }
 
 declare void @__quantum__rt__qubit_array_release(i64, ptr)
-"#;
+";
 
         let errors = validate_dynamic_array_backing_errors(ll_text);
         assert!(
@@ -6288,7 +6288,7 @@ declare void @__quantum__rt__qubit_array_release(i64, ptr)
 
     #[test]
     fn test_validate_dynamic_qubit_array_release_missing_backing_fails_without_panic() {
-        let ll_text = r#"
+        let ll_text = r"
 define i64 @Entry_Point_Name() {
 entry:
   call void @__quantum__rt__qubit_array_release(i64 2)
@@ -6296,7 +6296,7 @@ entry:
 }
 
 declare void @__quantum__rt__qubit_array_release(i64)
-"#;
+";
 
         let errors = validate_dynamic_array_backing_errors(ll_text);
         assert_eq!(
