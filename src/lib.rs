@@ -3876,6 +3876,15 @@ mod test {
             .map_err(|e| format!("Failed to parse bitcode: {e}"))
     }
 
+    fn validate_dynamic_array_backing_errors(ll_text: &str) -> Vec<String> {
+        let ctx = Context::create();
+        let module = create_module_from_ir_text(&ctx, ll_text, "qir")
+            .expect("inline IR should parse for dynamic array backing validation");
+        let mut errors = Vec::new();
+        crate::aux::validate_dynamic_array_allocation_backing(&module, &mut errors);
+        errors
+    }
+
     fn assert_public_bitcode_round_trips_from_file(bitcode: &[u8], name: &str) {
         let ctx = Context::create();
         let module = parse_bitcode_module(&ctx, bitcode, name)
@@ -6255,6 +6264,48 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
             err.contains("__quantum__rt__result_array_release requires a fixed-size backing array")
         );
         assert!(err.contains("requested length 2 does not match backing array length 1"));
+    }
+
+    #[test]
+    fn test_validate_dynamic_qubit_array_release_matching_backing_succeeds() {
+        let ll_text = r"
+define i64 @Entry_Point_Name() {
+entry:
+  %qubits = alloca [2 x ptr], align 8
+  call void @__quantum__rt__qubit_array_release(i64 2, ptr %qubits)
+  ret i64 0
+}
+
+declare void @__quantum__rt__qubit_array_release(i64, ptr)
+";
+
+        let errors = validate_dynamic_array_backing_errors(ll_text);
+        assert!(
+            errors.is_empty(),
+            "matching two-argument array release should not report backing errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_dynamic_qubit_array_release_missing_backing_fails_without_panic() {
+        let ll_text = r"
+define i64 @Entry_Point_Name() {
+entry:
+  call void @__quantum__rt__qubit_array_release(i64 2)
+  ret i64 0
+}
+
+declare void @__quantum__rt__qubit_array_release(i64)
+";
+
+        let errors = validate_dynamic_array_backing_errors(ll_text);
+        assert_eq!(
+            errors,
+            vec![
+                "__quantum__rt__qubit_array_release requires a fixed-size backing array allocated as [N x ptr]"
+                    .to_string()
+            ]
+        );
     }
 
     #[test]
