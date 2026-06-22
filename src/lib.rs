@@ -6302,7 +6302,7 @@ declare void @__quantum__rt__qubit_array_release(i64)
         assert_eq!(
             errors,
             vec![
-                "__quantum__rt__qubit_array_release requires a constant array length and backing array pointer"
+                "__quantum__rt__qubit_array_release requires a fixed-size backing array allocated as [N x ptr]"
                     .to_string()
             ]
         );
