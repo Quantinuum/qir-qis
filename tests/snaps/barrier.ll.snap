@@ -1,5 +1,6 @@
 ---
 source: src/convert.rs
+assertion_line: 2701
 expression: qis_text.to_string()
 ---
 ; ModuleID = 'qis_module'
@@ -9,6 +10,7 @@ target triple = "aarch64-unknown-linux-gnu"
 
 @qis_qs = private unnamed_addr global [2 x i64] zeroinitializer, align 16
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
+@e_load_qubit_oob = private constant [38 x i8] c"%EXIT:INT:Invalid static qubit handle."
 @res_r1 = private constant [15 x i8] c"\0EUSER:RESULT:r1"
 @res_r2 = private constant [15 x i8] c"\0EUSER:RESULT:r2"
 @res_t0.1 = private constant [17 x i8] c"\10USER:QIRTUPLE:t0"
@@ -41,8 +43,8 @@ qir_qis.init_qubit.exit14:                        ; preds = %qir_qis.init_qubit.
   store i64 %qalloc.i11, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   %qbit.i.i = load i64, ptr @qis_qs, align 16
   tail call void @___rxy(i64 %qbit.i.i, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i4.i = load i64, ptr @qis_qs, align 16
-  tail call void @___rz(i64 %qbit.i4.i, double 0x400921FB54442D18)
+  %qbit.i6.i = load i64, ptr @qis_qs, align 16
+  tail call void @___rz(i64 %qbit.i6.i, double 0x400921FB54442D18)
   %qbit.i.i15 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   tail call void @___rxy(i64 %qbit.i.i15, double 0x400921FB54442D18, double 0.000000e+00)
   %barrier_qubits = alloca [2 x i64], align 16
@@ -51,15 +53,15 @@ qir_qis.init_qubit.exit14:                        ; preds = %qir_qis.init_qubit.
   call void @___barrier(ptr nonnull %barrier_qubits, i64 2)
   %qbit.i.i16 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   call void @___rxy(i64 %qbit.i.i16, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i8.i = load i64, ptr @qis_qs, align 16
-  %qbit.i11.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  call void @___rzz(i64 %qbit.i8.i, i64 %qbit.i11.i, double 0x3FF921FB54442D18)
-  %qbit.i14.i = load i64, ptr @qis_qs, align 16
-  call void @___rz(i64 %qbit.i14.i, double 0xBFF921FB54442D18)
-  %qbit.i17.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  call void @___rxy(i64 %qbit.i17.i, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i20.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  call void @___rz(i64 %qbit.i20.i, double 0xBFF921FB54442D18)
+  %qbit.i10.i = load i64, ptr @qis_qs, align 16
+  %qbit.i16.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  call void @___rzz(i64 %qbit.i10.i, i64 %qbit.i16.i, double 0x3FF921FB54442D18)
+  %qbit.i22.i = load i64, ptr @qis_qs, align 16
+  call void @___rz(i64 %qbit.i22.i, double 0xBFF921FB54442D18)
+  %qbit.i28.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  call void @___rxy(i64 %qbit.i28.i, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  %qbit.i34.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  call void @___rz(i64 %qbit.i34.i, double 0xBFF921FB54442D18)
   %barrier_qubits2 = alloca [1 x i64], align 8
   %qbit3 = load i64, ptr @qis_qs, align 16
   store i64 %qbit3, ptr %barrier_qubits2, align 8
@@ -88,13 +90,20 @@ declare void @panic(i32, ptr) local_unnamed_addr
 
 declare void @___reset(i64) local_unnamed_addr
 
-; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(read, argmem: none, inaccessiblemem: none)
-define i64 @qir_qis.load_qubit(ptr %0) local_unnamed_addr #0 {
+define i64 @qir_qis.load_qubit(ptr %0) local_unnamed_addr {
 entry:
+  %valid_static_qubit_index = icmp ult ptr %0, inttoptr (i64 2 to ptr)
+  br i1 %valid_static_qubit_index, label %load_qubit_valid, label %load_qubit_invalid
+
+load_qubit_valid:                                 ; preds = %entry
   %idx = ptrtoint ptr %0 to i64
   %qbit_ptr = getelementptr [2 x i64], ptr @qis_qs, i64 0, i64 %idx
   %qbit = load i64, ptr %qbit_ptr, align 8
   ret i64 %qbit
+
+load_qubit_invalid:                               ; preds = %entry
+  tail call void @panic(i32 1001, ptr nonnull @e_load_qubit_oob)
+  unreachable
 }
 
 declare void @___barrier(ptr, i64) local_unnamed_addr
@@ -128,8 +137,6 @@ entry:
 declare void @setup(i64) local_unnamed_addr
 
 declare i64 @teardown() local_unnamed_addr
-
-attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(read, argmem: none, inaccessiblemem: none) }
 
 !llvm.module.flags = !{!0, !1, !2, !3}
 !name = !{!4}

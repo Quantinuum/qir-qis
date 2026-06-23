@@ -1,5 +1,6 @@
 ---
 source: src/convert.rs
+assertion_line: 2701
 expression: qis_text.to_string()
 ---
 ; ModuleID = 'qis_module'
@@ -9,6 +10,7 @@ target triple = "aarch64-unknown-linux-gnu"
 
 @qis_qs = private unnamed_addr global [6 x i64] zeroinitializer
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
+@e_load_qubit_oob = private constant [38 x i8] c"%EXIT:INT:Invalid static qubit handle."
 @res_0_t0 = private constant [17 x i8] c"\10USER:RESULT:0_t0"
 @res_0_t1 = private constant [17 x i8] c"\10USER:RESULT:0_t1"
 @gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
@@ -84,64 +86,64 @@ qir_qis.init_qubit.exit47:                        ; preds = %qir_qis.init_qubit.
   store i64 %qalloc.i44, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
   %qbit.i.i = load i64, ptr @qis_qs, align 16
   tail call void @___rxy(i64 %qbit.i.i, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i4.i = load i64, ptr @qis_qs, align 16
-  tail call void @___rz(i64 %qbit.i4.i, double 0x400921FB54442D18)
+  %qbit.i6.i = load i64, ptr @qis_qs, align 16
+  tail call void @___rz(i64 %qbit.i6.i, double 0x400921FB54442D18)
   %qbit.i.i48 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   tail call void @___rxy(i64 %qbit.i.i48, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i8.i = load i64, ptr @qis_qs, align 16
-  %qbit.i11.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rzz(i64 %qbit.i8.i, i64 %qbit.i11.i, double 0x3FF921FB54442D18)
-  %qbit.i14.i = load i64, ptr @qis_qs, align 16
-  tail call void @___rz(i64 %qbit.i14.i, double 0xBFF921FB54442D18)
-  %qbit.i17.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rxy(i64 %qbit.i17.i, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i20.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rz(i64 %qbit.i20.i, double 0xBFF921FB54442D18)
+  %qbit.i10.i = load i64, ptr @qis_qs, align 16
+  %qbit.i16.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rzz(i64 %qbit.i10.i, i64 %qbit.i16.i, double 0x3FF921FB54442D18)
+  %qbit.i22.i = load i64, ptr @qis_qs, align 16
+  tail call void @___rz(i64 %qbit.i22.i, double 0xBFF921FB54442D18)
+  %qbit.i28.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rxy(i64 %qbit.i28.i, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  %qbit.i34.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rz(i64 %qbit.i34.i, double 0xBFF921FB54442D18)
   %qbit.i.i49 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
   tail call void @___rxy(i64 %qbit.i.i49, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i4.i50 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___rz(i64 %qbit.i4.i50, double 0x400921FB54442D18)
+  %qbit.i6.i50 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rz(i64 %qbit.i6.i50, double 0x400921FB54442D18)
   %qbit.i.i51 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
   tail call void @___rxy(i64 %qbit.i.i51, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i8.i52 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  %qbit.i11.i53 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rzz(i64 %qbit.i8.i52, i64 %qbit.i11.i53, double 0x3FF921FB54442D18)
-  %qbit.i14.i54 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___rz(i64 %qbit.i14.i54, double 0xBFF921FB54442D18)
-  %qbit.i17.i55 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rxy(i64 %qbit.i17.i55, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i20.i56 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rz(i64 %qbit.i20.i56, double 0xBFF921FB54442D18)
+  %qbit.i10.i52 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  %qbit.i16.i53 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rzz(i64 %qbit.i10.i52, i64 %qbit.i16.i53, double 0x3FF921FB54442D18)
+  %qbit.i22.i54 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rz(i64 %qbit.i22.i54, double 0xBFF921FB54442D18)
+  %qbit.i28.i55 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rxy(i64 %qbit.i28.i55, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  %qbit.i34.i56 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rz(i64 %qbit.i34.i56, double 0xBFF921FB54442D18)
   %qbit.i.i57 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
   tail call void @___rxy(i64 %qbit.i.i57, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i4.i58 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rz(i64 %qbit.i4.i58, double 0x400921FB54442D18)
+  %qbit.i6.i58 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rz(i64 %qbit.i6.i58, double 0x400921FB54442D18)
   %qbit.i.i59 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
   tail call void @___rxy(i64 %qbit.i.i59, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i8.i60 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  %qbit.i11.i61 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___rzz(i64 %qbit.i8.i60, i64 %qbit.i11.i61, double 0x3FF921FB54442D18)
-  %qbit.i14.i62 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rz(i64 %qbit.i14.i62, double 0xBFF921FB54442D18)
-  %qbit.i17.i63 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___rxy(i64 %qbit.i17.i63, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i20.i64 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___rz(i64 %qbit.i20.i64, double 0xBFF921FB54442D18)
+  %qbit.i10.i60 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  %qbit.i16.i61 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
+  tail call void @___rzz(i64 %qbit.i10.i60, i64 %qbit.i16.i61, double 0x3FF921FB54442D18)
+  %qbit.i22.i62 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rz(i64 %qbit.i22.i62, double 0xBFF921FB54442D18)
+  %qbit.i28.i63 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
+  tail call void @___rxy(i64 %qbit.i28.i63, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  %qbit.i34.i64 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
+  tail call void @___rz(i64 %qbit.i34.i64, double 0xBFF921FB54442D18)
   %qbit.i.i65 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
   tail call void @___rxy(i64 %qbit.i.i65, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i8.i66 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  %qbit.i11.i67 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___rzz(i64 %qbit.i8.i66, i64 %qbit.i11.i67, double 0x3FF921FB54442D18)
-  %qbit.i14.i68 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rz(i64 %qbit.i14.i68, double 0xBFF921FB54442D18)
-  %qbit.i17.i69 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___rxy(i64 %qbit.i17.i69, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i20.i70 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___rz(i64 %qbit.i20.i70, double 0xBFF921FB54442D18)
+  %qbit.i10.i66 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %qbit.i16.i67 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rzz(i64 %qbit.i10.i66, i64 %qbit.i16.i67, double 0x3FF921FB54442D18)
+  %qbit.i22.i68 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rz(i64 %qbit.i22.i68, double 0xBFF921FB54442D18)
+  %qbit.i28.i69 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rxy(i64 %qbit.i28.i69, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  %qbit.i34.i70 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rz(i64 %qbit.i34.i70, double 0xBFF921FB54442D18)
   %qbit.i.i71 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   tail call void @___rxy(i64 %qbit.i.i71, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i4.i72 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rz(i64 %qbit.i4.i72, double 0x400921FB54442D18)
+  %qbit.i6.i72 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rz(i64 %qbit.i6.i72, double 0x400921FB54442D18)
   %qbit = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   %meas = tail call i64 @___lazy_measure(i64 %qbit)
   %qbit1 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
@@ -172,19 +174,19 @@ then__2:                                          ; preds = %continue__1
 continue__2:                                      ; preds = %then__2, %continue__1
   %qbit.i.i75 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
   tail call void @___rxy(i64 %qbit.i.i75, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i8.i76 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  %qbit.i11.i77 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rzz(i64 %qbit.i8.i76, i64 %qbit.i11.i77, double 0x3FF921FB54442D18)
-  %qbit.i14.i78 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rz(i64 %qbit.i14.i78, double 0xBFF921FB54442D18)
-  %qbit.i17.i79 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rxy(i64 %qbit.i17.i79, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i20.i80 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rz(i64 %qbit.i20.i80, double 0xBFF921FB54442D18)
+  %qbit.i10.i76 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  %qbit.i16.i77 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rzz(i64 %qbit.i10.i76, i64 %qbit.i16.i77, double 0x3FF921FB54442D18)
+  %qbit.i22.i78 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rz(i64 %qbit.i22.i78, double 0xBFF921FB54442D18)
+  %qbit.i28.i79 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rxy(i64 %qbit.i28.i79, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  %qbit.i34.i80 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rz(i64 %qbit.i34.i80, double 0xBFF921FB54442D18)
   %qbit.i.i81 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
   tail call void @___rxy(i64 %qbit.i.i81, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i4.i82 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rz(i64 %qbit.i4.i82, double 0x400921FB54442D18)
+  %qbit.i6.i82 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rz(i64 %qbit.i6.i82, double 0x400921FB54442D18)
   %qbit6 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
   %meas7 = tail call i64 @___lazy_measure(i64 %qbit6)
   %qbit8 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
@@ -248,13 +250,20 @@ declare void @panic(i32, ptr) local_unnamed_addr
 
 declare void @___reset(i64) local_unnamed_addr
 
-; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(read, argmem: none, inaccessiblemem: none)
-define i64 @qir_qis.load_qubit(ptr %0) local_unnamed_addr #0 {
+define i64 @qir_qis.load_qubit(ptr %0) local_unnamed_addr {
 entry:
+  %valid_static_qubit_index = icmp ult ptr %0, inttoptr (i64 6 to ptr)
+  br i1 %valid_static_qubit_index, label %load_qubit_valid, label %load_qubit_invalid
+
+load_qubit_valid:                                 ; preds = %entry
   %idx = ptrtoint ptr %0 to i64
   %qbit_ptr = getelementptr [6 x i64], ptr @qis_qs, i64 0, i64 %idx
   %qbit = load i64, ptr %qbit_ptr, align 8
   ret i64 %qbit
+
+load_qubit_invalid:                               ; preds = %entry
+  tail call void @panic(i32 1001, ptr nonnull @e_load_qubit_oob)
+  unreachable
 }
 
 declare i64 @___lazy_measure(i64) local_unnamed_addr
@@ -284,8 +293,6 @@ entry:
 declare void @setup(i64) local_unnamed_addr
 
 declare i64 @teardown() local_unnamed_addr
-
-attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(read, argmem: none, inaccessiblemem: none) }
 
 !llvm.module.flags = !{!0, !1, !2, !3, !4, !6, !8, !9, !10, !11}
 !name = !{!12}
