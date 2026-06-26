@@ -1162,12 +1162,9 @@ mod aux {
         module: *const Module<'ctx>,
         instr: inkwell::values::InstructionValue<'ctx>,
         fn_name: String,
-        // Reserved for downstream passthrough compatibility.
-        #[allow(
-            dead_code,
-            reason = "reserved field keeps downstream passthrough API shape stable"
-        )]
+        #[allow(dead_code, reason = "reserved field keeps WASM API shape stable")]
         wasm_fns: *const BTreeMap<String, u64>,
+        passthrough_calls: *const BTreeSet<String>,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
         capability_flags: CapabilityFlags,
@@ -1181,6 +1178,7 @@ mod aux {
         module: &Module<'ctx>,
         entry_fn: FunctionValue<'ctx>,
         wasm_fns: &BTreeMap<String, u64>,
+        passthrough_calls: &BTreeSet<String>,
         qubit_array: Option<PointerValue<'ctx>>,
         capability_flags: CapabilityFlags,
     ) -> Result<(), String> {
@@ -1224,6 +1222,7 @@ mod aux {
                         instr,
                         fn_name,
                         wasm_fns: std::ptr::from_ref(wasm_fns),
+                        passthrough_calls: std::ptr::from_ref(passthrough_calls),
                         qubit_array,
                         qubit_array_type,
                         capability_flags,
@@ -1247,8 +1246,16 @@ mod aux {
             name if name.starts_with("___") => handle_qtm_call(&args),
             _ => {
                 if let Some(f) = call.get_called_fn_value() {
+                    let passthrough_calls = passthrough_calls_ref(&args);
+                    let is_passthrough = passthrough_calls.contains(args.fn_name.as_str());
                     // IR defined function calls
                     if f.count_basic_blocks() > 0 {
+                        if is_passthrough {
+                            return Err(format!(
+                                "Pass-through function `{}` must be an external declaration",
+                                args.fn_name
+                            ));
+                        }
                         // INIT_QARRAY_FN is a frequently invoked helper for array initialization;
                         // skipping debug logs for it avoids excessive log noise while preserving
                         // useful debug information for other IR-defined functions.
@@ -1258,6 +1265,14 @@ mod aux {
                         if args.fn_name == "main" {
                             return Err("IR defined function cannot be called `main`".to_string());
                         }
+                        return Ok(());
+                    }
+
+                    if is_passthrough {
+                        log::debug!(
+                            "Pass-through function `{}` found, leaving as-is for downstream processing",
+                            args.fn_name
+                        );
                         return Ok(());
                     }
 
@@ -1513,6 +1528,12 @@ mod aux {
         // SAFETY: `args.module` points to the borrowed module passed into
         // `process_entry_function`, which outlives all handler calls.
         unsafe { &*args.module }
+    }
+
+    fn passthrough_calls_ref<'ctx>(args: &ProcessCallArgs<'ctx>) -> &'ctx BTreeSet<String> {
+        // SAFETY: `args.passthrough_calls` points to the borrowed set passed into
+        // `process_entry_function`, which outlives all handler calls.
+        unsafe { &*args.passthrough_calls }
     }
 
     fn get_or_create_qalloc_fail_global<'ctx>(
@@ -3620,7 +3641,33 @@ pub fn qir_to_qis(
     bc_bytes: &[u8],
     opt_level: u32,
     target: &str,
+    wasm_bytes: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
+    qir_to_qis_with_passthrough_calls(bc_bytes, opt_level, target, wasm_bytes, &[])
+}
+
+/// QIR to QIS translation logic with an explicit downstream external-call pass-through allow-list.
+///
+/// Pass-through calls must name external declarations. IR-defined functions with pass-through names
+/// are rejected instead of being silently treated as downstream calls.
+///
+/// # Arguments
+/// - `bc_bytes` - The QIR bytes to translate.
+/// - `opt_level` - The optimization level to use (0-3). Platform defaults are
+///   exposed via [`DEFAULT_OPT_LEVEL`].
+/// - `target` - Target architecture ("aarch64", "x86-64", "native"). Platform
+///   defaults are exposed via [`DEFAULT_TARGET`].
+/// - `wasm_bytes` - Optional WASM bytes for Wasm codegen.
+/// - `passthrough_calls` - External call names to preserve for downstream processing.
+///
+/// # Errors
+/// Returns an error string if the translation fails.
+pub fn qir_to_qis_with_passthrough_calls(
+    bc_bytes: &[u8],
+    opt_level: u32,
+    target: &str,
     _wasm_bytes: Option<&[u8]>,
+    passthrough_calls: &[&str],
 ) -> Result<Vec<u8>, String> {
     use crate::{
         aux::{get_capability_flags, process_entry_function, validate_static_qubit_helper_usage},
@@ -3633,7 +3680,10 @@ pub fn qir_to_qis(
         utils::add_generator_metadata,
     };
     use inkwell::{attributes::AttributeLoc, context::Context};
-    use std::{collections::BTreeMap, env};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        env,
+    };
 
     let ctx = Context::create();
     let module = parse_bitcode_module(&ctx, bc_bytes, "bitcode")?;
@@ -3666,11 +3716,17 @@ pub fn qir_to_qis(
     };
 
     let wasm_fns: BTreeMap<String, u64> = BTreeMap::new();
+    let passthrough_calls: BTreeSet<String> = passthrough_calls
+        .iter()
+        .copied()
+        .map(ToOwned::to_owned)
+        .collect();
     process_entry_function(
         &ctx,
         &module,
         entry_fn,
         &wasm_fns,
+        &passthrough_calls,
         qubit_array,
         capability_flags,
     )?;
@@ -3681,6 +3737,7 @@ pub fn qir_to_qis(
         &module,
         entry_fn,
         capability_flags.dynamic_qubit_management,
+        &passthrough_calls,
     )?;
 
     if let Some(qubit_array) = qubit_array {
@@ -4077,7 +4134,7 @@ mod test {
     use crate::{
         convert::get_string_label, create_memory_buffer_from_bytes, create_module_from_ir_text,
         get_entry_attributes, memory_buffer_to_owned_bytes, parse_bitcode_module, qir_ll_to_bc,
-        qir_to_qis, validate_qir,
+        qir_to_qis, qir_to_qis_with_passthrough_calls, validate_qir,
     };
     use inkwell::{
         context::Context,
@@ -4470,6 +4527,103 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             entry_fn
                 .get_string_attribute(inkwell::attributes::AttributeLoc::Function, "custom_attr")
                 .is_none()
+        );
+    }
+
+    fn passthrough_fixture() -> Vec<u8> {
+        let ll_text = r#"
+declare i64 @external_counter()
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %value = call i64 @external_counter()
+  ret i64 %value
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        qir_ll_to_bc(ll_text).expect("Failed to convert pass-through fixture to bitcode")
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_unknown_external_call_by_default() {
+        let bc_bytes = passthrough_fixture();
+
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("default API should reject unknown external call");
+
+        assert!(err.contains("Unsupported function: external_counter"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_preserves_listed_external_call() {
+        let bc_bytes = passthrough_fixture();
+
+        let qis_bytes =
+            qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &["external_counter"])
+                .expect("listed external call should pass through");
+
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &qis_bytes, "qis").unwrap();
+        assert!(module.get_function("external_counter").is_some());
+        assert!(
+            module
+                .print_to_string()
+                .to_string()
+                .contains("call i64 @external_counter()")
+        );
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_rejects_unlisted_external_call() {
+        let bc_bytes = passthrough_fixture();
+
+        let err =
+            qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &["other_external"])
+                .expect_err("unlisted external call should fail");
+
+        assert!(err.contains("Unsupported function: external_counter"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_rejects_ir_defined_passthrough_name() {
+        let ll_text = r#"
+define i64 @external_counter() {
+entry:
+  ret i64 7
+}
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %value = call i64 @external_counter()
+  ret i64 %value
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes =
+            qir_ll_to_bc(ll_text).expect("Failed to convert IR-defined fixture to bitcode");
+
+        let err =
+            qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &["external_counter"])
+                .expect_err("IR-defined pass-through names should fail");
+
+        assert!(
+            err.contains(
+                "Pass-through function `external_counter` must be an external declaration"
+            )
         );
     }
 

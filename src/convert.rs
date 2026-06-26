@@ -1,5 +1,5 @@
 use ::std::hash::BuildHasher;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::convert::Into;
 use std::error::Error;
 
@@ -1204,6 +1204,7 @@ pub fn process_ir_defined_q_fns<'a>(
     module: &Module<'a>,
     entry_fn: FunctionValue,
     dynamic_qubit_management: bool,
+    passthrough_calls: &BTreeSet<String>,
 ) -> Result<(), String> {
     let required_num_qubits = if dynamic_qubit_management {
         0
@@ -1230,6 +1231,7 @@ pub fn process_ir_defined_q_fns<'a>(
                         defined_fn,
                         dynamic_qubit_management,
                         required_num_qubits,
+                        passthrough_calls,
                     )?;
                 }
             }
@@ -1287,6 +1289,7 @@ fn native_qir_to_qis_call<'a>(
     defined_fn: FunctionValue,
     dynamic_qubit_management: bool,
     required_num_qubits: u32,
+    passthrough_calls: &BTreeSet<String>,
 ) -> Result<(), String> {
     match fn_name {
         "__quantum__qis__rxy__body" => {
@@ -1341,8 +1344,16 @@ fn native_qir_to_qis_call<'a>(
                 .get_function(fn_name)
                 .is_some_and(|f| f.count_basic_blocks() > 0)
             {
+                if passthrough_calls.contains(fn_name) {
+                    return Err(format!(
+                        "Pass-through function `{fn_name}` must be an external declaration"
+                    ));
+                }
                 // Keep IR-defined QIS helpers (e.g. decomposition functions)
                 // and process their bodies in subsequent iterations.
+                return Ok(());
+            }
+            if passthrough_calls.contains(fn_name) {
                 return Ok(());
             }
             let defined_fn_name = defined_fn.get_name().to_str().unwrap_or("unknown");
@@ -2375,6 +2386,7 @@ entry:
             defined_fn,
             false,
             0,
+            &BTreeSet::new(),
         )
         .expect_err("unknown external declaration should fail");
         assert!(err.contains("Unsupported function call"));
@@ -2403,6 +2415,7 @@ entry:
             defined_fn,
             false,
             0,
+            &BTreeSet::new(),
         )
         .expect_err("non-internal helper should not call compiler-internal functions");
         assert!(err.contains("Unexpected call to internal function"));
@@ -2426,7 +2439,7 @@ entry:
             .expect("call should build");
         let _ = builder.build_return(None);
 
-        process_ir_defined_q_fns(&context, &module, entry_fn, false)
+        process_ir_defined_q_fns(&context, &module, entry_fn, false, &BTreeSet::new())
             .expect("entry function should be excluded from IR-defined helper processing");
     }
 
