@@ -1530,7 +1530,7 @@ mod aux {
         unsafe { &*args.module }
     }
 
-    fn passthrough_calls_ref<'ctx>(args: &ProcessCallArgs<'ctx>) -> &'ctx BTreeSet<String> {
+    const fn passthrough_calls_ref<'ctx>(args: &ProcessCallArgs<'ctx>) -> &'ctx BTreeSet<String> {
         // SAFETY: `args.passthrough_calls` points to the borrowed set passed into
         // `process_entry_function`, which outlives all handler calls.
         unsafe { &*args.passthrough_calls }
