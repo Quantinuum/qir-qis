@@ -1244,14 +1244,19 @@ mod aux {
         if let Some(f) = call.get_called_fn_value() {
             let passthrough_calls = passthrough_calls_ref(&args);
             let is_passthrough = passthrough_calls.contains(args.fn_name.as_str());
-            let is_ir_defined = f.count_basic_blocks() > 0;
+            let is_ir_defined = module_ref(&args)
+                .get_function(args.fn_name.as_str())
+                .is_some_and(|function| function.count_basic_blocks() > 0);
             match args.fn_name.as_str() {
                 name if name.starts_with("__quantum__qis__") => {
                     return handle_qis_call(&args).or_else(|err| {
-                        if is_passthrough
-                            && !is_ir_defined
-                            && err.starts_with("Unsupported QIR QIS function:")
-                        {
+                        if is_passthrough && err.starts_with("Unsupported QIR QIS function:") {
+                            if is_ir_defined {
+                                return Err(format!(
+                                    "Pass-through function `{}` must be an external declaration",
+                                    args.fn_name
+                                ));
+                            }
                             return passthrough_external_call(&args);
                         }
                         Err(err)
@@ -1259,10 +1264,13 @@ mod aux {
                 }
                 name if name.starts_with("__quantum__rt__") => {
                     return handle_rt_call(&mut args).or_else(|err| {
-                        if is_passthrough
-                            && !is_ir_defined
-                            && err.starts_with("Unsupported QIR RT function:")
-                        {
+                        if is_passthrough && err.starts_with("Unsupported QIR RT function:") {
+                            if is_ir_defined {
+                                return Err(format!(
+                                    "Pass-through function `{}` must be an external declaration",
+                                    args.fn_name
+                                ));
+                            }
                             return passthrough_external_call(&args);
                         }
                         Err(err)
@@ -1274,12 +1282,6 @@ mod aux {
 
             // IR defined function calls
             if is_ir_defined {
-                if is_passthrough {
-                    return Err(format!(
-                        "Pass-through function `{}` must be an external declaration",
-                        args.fn_name
-                    ));
-                }
                 // INIT_QARRAY_FN is a frequently invoked helper for array initialization;
                 // skipping debug logs for it avoids excessive log noise while preserving
                 // useful debug information for other IR-defined functions.
@@ -3697,10 +3699,12 @@ pub fn qir_to_qis(
 /// `teardown`. Built-in `__quantum__*` and `___*` functions continue to use the normal lowering
 /// paths unless the listed external is otherwise unknown to qir-qis.
 ///
+/// As an extension beyond the original issue scope, this API also supports explicitly allow-listed
+/// unknown external declarations in the `__quantum__qis__*` and `__quantum__rt__*` namespaces.
 /// The separate [`validate_qir`] API does not accept this pass-through allow-list and still rejects
-/// unknown qir-qis-owned namespaces such as `__quantum__qis__*`, `__quantum__rt__*`, and `___*`.
-/// Callers that need those names to pass validation should either perform allow-list validation
-/// themselves or call this translation API without a separate `validate_qir` preflight.
+/// those unknown qir-qis-owned declarations, along with `___*` names. Callers that need them to
+/// pass validation should either perform allow-list validation themselves or call this translation
+/// API without a separate `validate_qir` preflight.
 ///
 /// # Arguments
 /// - `bc_bytes` - The QIR bytes to translate.
@@ -3739,6 +3743,21 @@ pub fn qir_to_qis_with_passthrough_calls(
     let ctx = Context::create();
     let module = parse_bitcode_module(&ctx, bc_bytes, "bitcode")?;
     crate::llvm_verify::verify_module(&module, "LLVM module verification failed after parse")?;
+    let passthrough_calls: BTreeSet<String> = passthrough_calls
+        .iter()
+        .copied()
+        .map(ToOwned::to_owned)
+        .collect();
+    for name in &passthrough_calls {
+        if module
+            .get_function(name)
+            .is_some_and(|function| function.count_basic_blocks() > 0)
+        {
+            return Err(format!(
+                "Pass-through function `{name}` must be an external declaration"
+            ));
+        }
+    }
 
     add_decompositions(&ctx, &module)
         .map_err(|e| format!("Failed to add QIR decompositions: {e}"))?;
@@ -3767,11 +3786,6 @@ pub fn qir_to_qis_with_passthrough_calls(
     };
 
     let wasm_fns: BTreeMap<String, u64> = BTreeMap::new();
-    let passthrough_calls: BTreeSet<String> = passthrough_calls
-        .iter()
-        .copied()
-        .map(ToOwned::to_owned)
-        .collect();
     process_entry_function(
         &ctx,
         &module,
@@ -4708,6 +4722,45 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let module = parse_bitcode_module(&ctx, &qis_bytes, "qis").unwrap();
         let vendor = module.get_function("__quantum__qis__vendor__body").unwrap();
         assert!(module_contains_direct_call(&module, vendor));
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_rejects_ir_defined_prefixed_call() {
+        let ll_text = r#"
+define void @__quantum__qis__vendor__body() {
+entry:
+  ret void
+}
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  call void @__quantum__qis__vendor__body()
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes =
+            qir_ll_to_bc(ll_text).expect("Failed to convert prefixed fixture to bitcode");
+
+        let err = qir_to_qis_with_passthrough_calls(
+            &bc_bytes,
+            0,
+            "native",
+            None,
+            &["__quantum__qis__vendor__body"],
+        )
+        .expect_err("IR-defined prefixed pass-through name should be rejected");
+
+        assert!(err.contains(
+            "Pass-through function `__quantum__qis__vendor__body` must be an external declaration"
+        ));
     }
 
     #[test]
