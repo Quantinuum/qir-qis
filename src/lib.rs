@@ -36,8 +36,9 @@ mod aux {
             INIT_QARRAY_FN, add_print_call, build_result_global, checked_qubit_index,
             convert_globals, create_reset_call, get_index, get_or_create_function,
             get_required_num_qubits, get_required_num_qubits_strict, get_required_num_results,
-            get_result_vars, get_string_label, handle_tuple_or_array_output, parse_gep,
-            record_classical_output, replace_rxy_call, replace_rz_call, replace_rzz_call,
+            get_result_vars, get_string_label, handle_tuple_or_array_output,
+            is_reserved_passthrough_name, parse_gep, record_classical_output, replace_rxy_call,
+            replace_rz_call, replace_rzz_call,
         },
         decode_llvm_bytes,
         utils::extract_operands,
@@ -1319,12 +1320,6 @@ mod aux {
                 Err(format!("Unsupported function: {}", args.fn_name))
             }
         }
-    }
-
-    fn is_reserved_passthrough_name(name: &str) -> bool {
-        matches!(name, "qmain" | "setup" | "teardown")
-            || name.starts_with("qir_qis.")
-            || name.starts_with("res_")
     }
 
     fn handle_qis_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {

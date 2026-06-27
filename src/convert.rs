@@ -38,6 +38,12 @@ pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
 
+pub(crate) fn is_reserved_passthrough_name(name: &str) -> bool {
+    matches!(name, "qmain" | "setup" | "teardown")
+        || name.starts_with("qir_qis.")
+        || name.starts_with("res_")
+}
+
 /// Validate that a static qubit ID is within the module's zero-based range.
 ///
 /// # Errors
@@ -1354,6 +1360,11 @@ fn native_qir_to_qis_call<'a>(
                 return Ok(());
             }
             if passthrough_calls.contains(fn_name) {
+                if is_reserved_passthrough_name(fn_name) {
+                    return Err(format!(
+                        "Pass-through function `{fn_name}` uses a reserved converter output name"
+                    ));
+                }
                 return Ok(());
             }
             let defined_fn_name = defined_fn.get_name().to_str().unwrap_or("unknown");
@@ -2419,6 +2430,39 @@ entry:
         )
         .expect_err("non-internal helper should not call compiler-internal functions");
         assert!(err.contains("Unexpected call to internal function"));
+    }
+
+    #[test]
+    fn test_native_qir_to_qis_call_rejects_reserved_passthrough_name() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+        let fn_type = context.void_type().fn_type(&[], false);
+        let defined_fn = module.add_function("defined_fn", fn_type, None);
+        let entry = context.append_basic_block(defined_fn, "entry");
+        builder.position_at_end(entry);
+
+        let reserved_decl = module.add_function("qmain", fn_type, None);
+        let call = builder
+            .build_call(reserved_decl, &[], "reserved_call")
+            .expect("call should build");
+        let passthrough_calls = BTreeSet::from(["qmain".to_string()]);
+
+        let err = native_qir_to_qis_call(
+            &context,
+            &module,
+            call.try_as_basic_value().unwrap_instruction(),
+            "qmain",
+            defined_fn,
+            false,
+            0,
+            &passthrough_calls,
+        )
+        .expect_err("reserved pass-through names should fail in helper bodies");
+
+        assert!(
+            err.contains("Pass-through function `qmain` uses a reserved converter output name")
+        );
     }
 
     #[test]
