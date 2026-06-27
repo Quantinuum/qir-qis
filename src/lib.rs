@@ -3697,6 +3697,11 @@ pub fn qir_to_qis(
 /// `teardown`. Built-in `__quantum__*` and `___*` functions continue to use the normal lowering
 /// paths unless the listed external is otherwise unknown to qir-qis.
 ///
+/// The separate [`validate_qir`] API does not accept this pass-through allow-list and still rejects
+/// unknown qir-qis-owned namespaces such as `__quantum__qis__*`, `__quantum__rt__*`, and `___*`.
+/// Callers that need those names to pass validation should either perform allow-list validation
+/// themselves or call this translation API without a separate `validate_qir` preflight.
+///
 /// # Arguments
 /// - `bc_bytes` - The QIR bytes to translate.
 /// - `opt_level` - The optimization level to use (0-3). Platform defaults are
