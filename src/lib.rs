@@ -3695,9 +3695,10 @@ pub fn qir_to_qis(
 ///
 /// Pass-through applies only to explicitly listed unknown external declarations that should remain
 /// available for downstream processing. It does not allow IR-defined functions to bypass
-/// conversion, and it does not override converter-owned output names such as `qmain`, `setup`, or
-/// `teardown`. Built-in `__quantum__*` and `___*` functions continue to use the normal lowering
-/// paths unless the listed external is otherwise unknown to qir-qis.
+/// conversion, and it does not override converter-owned output names such as `qmain`, `setup`,
+/// `teardown`, `qis_qs`, or `e_qalloc_fail`. Built-in `__quantum__*` and `___*` functions
+/// continue to use the normal lowering paths unless the listed external is otherwise unknown to
+/// qir-qis.
 ///
 /// As an extension beyond the original issue scope, this API also supports explicitly allow-listed
 /// unknown external declarations in the `__quantum__qis__*` and `__quantum__rt__*` namespaces.
@@ -4803,33 +4804,42 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
-    fn test_qir_to_qis_with_passthrough_calls_rejects_reserved_output_name() {
-        let ll_text = r#"
-declare i64 @qmain()
+    fn test_qir_to_qis_with_passthrough_calls_rejects_reserved_output_names() {
+        for (reserved_name, return_type) in [
+            ("qmain", "i64"),
+            ("qis_qs", "ptr"),
+            ("e_qalloc_fail", "ptr"),
+        ] {
+            let ll_text = format!(
+                r#"
+declare {return_type} @{reserved_name}()
 
-define i64 @Entry_Point_Name() #0 {
+define {return_type} @Entry_Point_Name() #0 {{
 entry:
-  %value = call i64 @qmain()
-  ret i64 %value
-}
+  %value = call {return_type} @{reserved_name}()
+  ret {return_type} %value
+}}
 
-attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
+attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }}
 
-!llvm.module.flags = !{!0, !1, !2, !3}
-!0 = !{i32 1, !"qir_major_version", i32 2}
-!1 = !{i32 7, !"qir_minor_version", i32 0}
-!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
-!3 = !{i32 1, !"dynamic_result_management", i1 false}
-"#;
-        let bc_bytes =
-            qir_ll_to_bc(ll_text).expect("Failed to convert reserved-name fixture to bitcode");
+!llvm.module.flags = !{{!0, !1, !2, !3}}
+!0 = !{{i32 1, !"qir_major_version", i32 2}}
+!1 = !{{i32 7, !"qir_minor_version", i32 0}}
+!2 = !{{i32 1, !"dynamic_qubit_management", i1 false}}
+!3 = !{{i32 1, !"dynamic_result_management", i1 false}}
+"#
+            );
+            let bc_bytes = qir_ll_to_bc(ll_text.as_str())
+                .expect("Failed to convert reserved-name fixture to bitcode");
 
-        let err = qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &["qmain"])
-            .expect_err("reserved pass-through names should fail");
+            let err =
+                qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &[reserved_name])
+                    .expect_err("reserved pass-through names should fail");
 
-        assert!(
-            err.contains("Pass-through function `qmain` uses a reserved converter output name")
-        );
+            assert!(err.contains(&format!(
+                "Pass-through function `{reserved_name}` uses a reserved converter output name"
+            )));
+        }
     }
 
     fn module_contains_direct_call(module: &Module<'_>, callee: FunctionValue<'_>) -> bool {
