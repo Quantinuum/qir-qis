@@ -1240,42 +1240,48 @@ mod aux {
     fn process_call_instruction(mut args: ProcessCallArgs<'_>) -> Result<(), String> {
         let call = CallSiteValue::try_from(args.instr)
             .map_err(|()| "Instruction is not a call site".to_string())?;
-        match args.fn_name.as_str() {
-            name if name.starts_with("__quantum__qis__") => handle_qis_call(&args),
-            name if name.starts_with("__quantum__rt__") => handle_rt_call(&mut args),
-            name if name.starts_with("___") => handle_qtm_call(&args),
-            _ => {
-                if let Some(f) = call.get_called_fn_value() {
-                    let passthrough_calls = passthrough_calls_ref(&args);
-                    let is_passthrough = passthrough_calls.contains(args.fn_name.as_str());
-                    // IR defined function calls
-                    if f.count_basic_blocks() > 0 {
-                        if is_passthrough {
-                            return Err(format!(
-                                "Pass-through function `{}` must be an external declaration",
-                                args.fn_name
-                            ));
-                        }
-                        // INIT_QARRAY_FN is a frequently invoked helper for array initialization;
-                        // skipping debug logs for it avoids excessive log noise while preserving
-                        // useful debug information for other IR-defined functions.
-                        if args.fn_name != INIT_QARRAY_FN {
-                            log::debug!("IR defined function `{}`: {}", args.fn_name, f.get_type());
-                        }
-                        if args.fn_name == "main" {
-                            return Err("IR defined function cannot be called `main`".to_string());
-                        }
-                        return Ok(());
-                    }
+        if let Some(f) = call.get_called_fn_value() {
+            let passthrough_calls = passthrough_calls_ref(&args);
+            let is_passthrough = passthrough_calls.contains(args.fn_name.as_str());
+            // IR defined function calls
+            if f.count_basic_blocks() > 0 {
+                if is_passthrough {
+                    return Err(format!(
+                        "Pass-through function `{}` must be an external declaration",
+                        args.fn_name
+                    ));
+                }
+                // INIT_QARRAY_FN is a frequently invoked helper for array initialization;
+                // skipping debug logs for it avoids excessive log noise while preserving
+                // useful debug information for other IR-defined functions.
+                if args.fn_name != INIT_QARRAY_FN {
+                    log::debug!("IR defined function `{}`: {}", args.fn_name, f.get_type());
+                }
+                if args.fn_name == "main" {
+                    return Err("IR defined function cannot be called `main`".to_string());
+                }
+                return Ok(());
+            }
 
-                    if is_passthrough {
-                        log::debug!(
-                            "Pass-through function `{}` found, leaving as-is for downstream processing",
-                            args.fn_name
-                        );
-                        return Ok(());
-                    }
+            if is_passthrough {
+                if is_reserved_passthrough_name(args.fn_name.as_str()) {
+                    return Err(format!(
+                        "Pass-through function `{}` uses a reserved converter output name",
+                        args.fn_name
+                    ));
+                }
+                log::debug!(
+                    "Pass-through function `{}` found, leaving as-is for downstream processing",
+                    args.fn_name
+                );
+                return Ok(());
+            }
 
+            return match args.fn_name.as_str() {
+                name if name.starts_with("__quantum__qis__") => handle_qis_call(&args),
+                name if name.starts_with("__quantum__rt__") => handle_rt_call(&mut args),
+                name if name.starts_with("___") => handle_qtm_call(&args),
+                _ => {
                     // Check if this is a GPU function (has cudaq-fnid attribute)
                     if f.get_string_attribute(AttributeLoc::Function, "cudaq-fnid")
                         .is_some()
@@ -1299,13 +1305,26 @@ mod aux {
                     }
 
                     log::error!("Unknown external function: {}", args.fn_name);
-                    return Err(format!("Unsupported function: {}", args.fn_name));
+                    Err(format!("Unsupported function: {}", args.fn_name))
                 }
+            };
+        }
 
+        match args.fn_name.as_str() {
+            name if name.starts_with("__quantum__qis__") => handle_qis_call(&args),
+            name if name.starts_with("__quantum__rt__") => handle_rt_call(&mut args),
+            name if name.starts_with("___") => handle_qtm_call(&args),
+            _ => {
                 log::error!("Unsupported function: {}", args.fn_name);
                 Err(format!("Unsupported function: {}", args.fn_name))
             }
         }
+    }
+
+    fn is_reserved_passthrough_name(name: &str) -> bool {
+        matches!(name, "qmain" | "setup" | "teardown")
+            || name.starts_with("qir_qis.")
+            || name.starts_with("res_")
     }
 
     fn handle_qis_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
@@ -1530,7 +1549,11 @@ mod aux {
         unsafe { &*args.module }
     }
 
-    const fn passthrough_calls_ref<'ctx>(args: &ProcessCallArgs<'ctx>) -> &'ctx BTreeSet<String> {
+    #[allow(
+        clippy::missing_const_for_fn,
+        reason = "non-const keeps the borrow tied to this synchronous processing helper"
+    )]
+    fn passthrough_calls_ref<'a>(args: &'a ProcessCallArgs<'_>) -> &'a BTreeSet<String> {
         // SAFETY: `args.passthrough_calls` points to the borrowed set passed into
         // `process_entry_function`, which outlives all handler calls.
         unsafe { &*args.passthrough_calls }
@@ -3648,8 +3671,11 @@ pub fn qir_to_qis(
 
 /// QIR to QIS translation logic with an explicit downstream external-call pass-through allow-list.
 ///
-/// Pass-through calls must name external declarations. IR-defined functions with pass-through names
-/// are rejected instead of being silently treated as downstream calls.
+/// Pass-through applies only to explicitly listed unknown external declarations that should remain
+/// available for downstream processing. It does not allow IR-defined functions to bypass
+/// conversion, and it does not override converter-owned output names such as `qmain`, `setup`, or
+/// `teardown`. Built-in `__quantum__*` and `___*` functions continue to use the normal lowering
+/// paths unless the listed external is otherwise unknown to qir-qis.
 ///
 /// # Arguments
 /// - `bc_bytes` - The QIR bytes to translate.
@@ -4571,13 +4597,8 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 
         let ctx = Context::create();
         let module = parse_bitcode_module(&ctx, &qis_bytes, "qis").unwrap();
-        assert!(module.get_function("external_counter").is_some());
-        assert!(
-            module
-                .print_to_string()
-                .to_string()
-                .contains("call i64 @external_counter()")
-        );
+        let external_counter = module.get_function("external_counter").unwrap();
+        assert!(module_contains_direct_call(&module, external_counter));
     }
 
     #[test]
@@ -4625,6 +4646,86 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
                 "Pass-through function `external_counter` must be an external declaration"
             )
         );
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_preserves_listed_prefixed_external_call() {
+        let ll_text = r#"
+declare void @__quantum__qis__vendor__body()
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  call void @__quantum__qis__vendor__body()
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes =
+            qir_ll_to_bc(ll_text).expect("Failed to convert prefixed fixture to bitcode");
+
+        let qis_bytes = qir_to_qis_with_passthrough_calls(
+            &bc_bytes,
+            0,
+            "native",
+            None,
+            &["__quantum__qis__vendor__body"],
+        )
+        .expect("listed prefixed external call should pass through");
+
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &qis_bytes, "qis").unwrap();
+        let vendor = module.get_function("__quantum__qis__vendor__body").unwrap();
+        assert!(module_contains_direct_call(&module, vendor));
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_rejects_reserved_output_name() {
+        let ll_text = r#"
+declare i64 @qmain()
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %value = call i64 @qmain()
+  ret i64 %value
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes =
+            qir_ll_to_bc(ll_text).expect("Failed to convert reserved-name fixture to bitcode");
+
+        let err = qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &["qmain"])
+            .expect_err("reserved pass-through names should fail");
+
+        assert!(
+            err.contains("Pass-through function `qmain` uses a reserved converter output name")
+        );
+    }
+
+    fn module_contains_direct_call(module: &Module<'_>, callee: FunctionValue<'_>) -> bool {
+        module.get_functions().any(|function| {
+            function.get_basic_blocks().iter().any(|bb| {
+                bb.get_instructions().any(|instr| {
+                    CallSiteValue::try_from(instr)
+                        .ok()
+                        .and_then(CallSiteValue::get_called_fn_value)
+                        == Some(callee)
+                })
+            })
+        })
     }
 
     #[test]
