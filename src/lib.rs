@@ -1244,8 +1244,36 @@ mod aux {
         if let Some(f) = call.get_called_fn_value() {
             let passthrough_calls = passthrough_calls_ref(&args);
             let is_passthrough = passthrough_calls.contains(args.fn_name.as_str());
+            let is_ir_defined = f.count_basic_blocks() > 0;
+            match args.fn_name.as_str() {
+                name if name.starts_with("__quantum__qis__") => {
+                    return handle_qis_call(&args).or_else(|err| {
+                        if is_passthrough
+                            && !is_ir_defined
+                            && err.starts_with("Unsupported QIR QIS function:")
+                        {
+                            return passthrough_external_call(&args);
+                        }
+                        Err(err)
+                    });
+                }
+                name if name.starts_with("__quantum__rt__") => {
+                    return handle_rt_call(&mut args).or_else(|err| {
+                        if is_passthrough
+                            && !is_ir_defined
+                            && err.starts_with("Unsupported QIR RT function:")
+                        {
+                            return passthrough_external_call(&args);
+                        }
+                        Err(err)
+                    });
+                }
+                name if name.starts_with("___") => return handle_qtm_call(&args),
+                _ => {}
+            }
+
             // IR defined function calls
-            if f.count_basic_blocks() > 0 {
+            if is_ir_defined {
                 if is_passthrough {
                     return Err(format!(
                         "Pass-through function `{}` must be an external declaration",
@@ -1265,50 +1293,33 @@ mod aux {
             }
 
             if is_passthrough {
-                if is_reserved_passthrough_name(args.fn_name.as_str()) {
-                    return Err(format!(
-                        "Pass-through function `{}` uses a reserved converter output name",
-                        args.fn_name
-                    ));
-                }
+                return passthrough_external_call(&args);
+            }
+
+            // Check if this is a GPU function (has cudaq-fnid attribute)
+            if f.get_string_attribute(AttributeLoc::Function, "cudaq-fnid")
+                .is_some()
+            {
                 log::debug!(
-                    "Pass-through function `{}` found, leaving as-is for downstream processing",
+                    "GPU function `{}` found, leaving as-is for downstream processing",
                     args.fn_name
                 );
                 return Ok(());
             }
 
-            return match args.fn_name.as_str() {
-                name if name.starts_with("__quantum__qis__") => handle_qis_call(&args),
-                name if name.starts_with("__quantum__rt__") => handle_rt_call(&mut args),
-                name if name.starts_with("___") => handle_qtm_call(&args),
-                _ => {
-                    // Check if this is a GPU function (has cudaq-fnid attribute)
-                    if f.get_string_attribute(AttributeLoc::Function, "cudaq-fnid")
-                        .is_some()
-                    {
-                        log::debug!(
-                            "GPU function `{}` found, leaving as-is for downstream processing",
-                            args.fn_name
-                        );
-                        return Ok(());
-                    }
+            // Check if this is a WASM function (has wasm attribute)
+            if f.get_string_attribute(AttributeLoc::Function, "wasm")
+                .is_some()
+            {
+                log::debug!(
+                    "WASM function `{}` found, leaving as-is for downstream processing",
+                    args.fn_name
+                );
+                return Ok(());
+            }
 
-                    // Check if this is a WASM function (has wasm attribute)
-                    if f.get_string_attribute(AttributeLoc::Function, "wasm")
-                        .is_some()
-                    {
-                        log::debug!(
-                            "WASM function `{}` found, leaving as-is for downstream processing",
-                            args.fn_name
-                        );
-                        return Ok(());
-                    }
-
-                    log::error!("Unknown external function: {}", args.fn_name);
-                    Err(format!("Unsupported function: {}", args.fn_name))
-                }
-            };
+            log::error!("Unknown external function: {}", args.fn_name);
+            return Err(format!("Unsupported function: {}", args.fn_name));
         }
 
         match args.fn_name.as_str() {
@@ -1320,6 +1331,20 @@ mod aux {
                 Err(format!("Unsupported function: {}", args.fn_name))
             }
         }
+    }
+
+    fn passthrough_external_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
+        if is_reserved_passthrough_name(args.fn_name.as_str()) {
+            return Err(format!(
+                "Pass-through function `{}` uses a reserved converter output name",
+                args.fn_name
+            ));
+        }
+        log::debug!(
+            "Pass-through function `{}` found, leaving as-is for downstream processing",
+            args.fn_name
+        );
+        Ok(())
     }
 
     fn handle_qis_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
@@ -4681,6 +4706,45 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_qir_to_qis_with_passthrough_calls_lowers_listed_builtin_qis_call() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__h__body(%Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 0 to %Qubit*
+  call void @__quantum__qis__h__body(%Qubit* %q0)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes =
+            qir_ll_to_bc(ll_text).expect("Failed to convert built-in fixture to bitcode");
+
+        let default_qis_bytes =
+            qir_to_qis(&bc_bytes, 0, "native", None).expect("built-in QIS call should lower");
+        let passthrough_qis_bytes = qir_to_qis_with_passthrough_calls(
+            &bc_bytes,
+            0,
+            "native",
+            None,
+            &["__quantum__qis__h__body"],
+        )
+        .expect("listed built-in QIS call should still lower");
+
+        assert_eq!(passthrough_qis_bytes, default_qis_bytes);
+    }
+
+    #[test]
     fn test_qir_to_qis_with_passthrough_calls_rejects_reserved_output_name() {
         let ll_text = r#"
 declare i64 @qmain()
@@ -4713,12 +4777,11 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     fn module_contains_direct_call(module: &Module<'_>, callee: FunctionValue<'_>) -> bool {
         module.get_functions().any(|function| {
             function.get_basic_blocks().iter().any(|bb| {
-                bb.get_instructions().any(|instr| {
-                    CallSiteValue::try_from(instr)
-                        .ok()
-                        .and_then(CallSiteValue::get_called_fn_value)
-                        == Some(callee)
-                })
+                bb.get_instructions()
+                    .any(|instr| match CallSiteValue::try_from(instr) {
+                        Ok(call) => call.get_called_fn_value() == Some(callee),
+                        Err(()) => false,
+                    })
             })
         })
     }
