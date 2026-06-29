@@ -1352,6 +1352,7 @@ fn native_qir_to_qis_call<'a>(
         | "___dec_future_refcount"
         | "print_int"
         | "print_bool"
+        | "print_float"
         | "print_bool_arr" => {
             let defined_name = defined_fn.get_name().to_str().ok();
             if defined_name != Some(INIT_QARRAY_FN)
@@ -1495,9 +1496,13 @@ mod tests {
 
     // Subset of `RESERVED_PASSTHROUGH_EXACT_NAMES` that is rejected by the
     // explicit internal-helper guard in `native_qir_to_qis_call`.
-    // `print_float` is intentionally excluded because it is not part of that guard.
-    const RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS: [&str; 4] =
-        ["panic", "print_int", "print_bool", "print_bool_arr"];
+    const RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS: [&str; 5] = [
+        "panic",
+        "print_int",
+        "print_bool",
+        "print_float",
+        "print_bool_arr",
+    ];
 
     #[test]
     fn test_is_i8_array_type_true() {
