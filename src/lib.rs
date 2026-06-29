@@ -3714,19 +3714,10 @@ pub fn qir_to_qis(
 
 /// QIR to QIS translation logic with an explicit downstream external-call pass-through allow-list.
 ///
-/// Pass-through applies only to explicitly listed unknown external declarations that should remain
-/// available for downstream processing. It does not allow IR-defined functions to bypass
-/// conversion, and it does not override converter-owned output/runtime names such as `qmain`,
-/// `setup`, `teardown`, `qis_qs`, `panic`, `print_*`, or `random_*`. Built-in `__quantum__*` and
-/// `___*` functions continue to use the normal lowering paths unless the listed external is
-/// otherwise unknown to qir-qis.
-///
-/// As an intentional extension beyond issue #115's original scope, this API also supports explicitly allow-listed
-/// unknown external declarations in the `__quantum__qis__*` and `__quantum__rt__*` namespaces.
-/// The separate [`validate_qir`] API does not accept this pass-through allow-list and still rejects
-/// those unknown qir-qis-owned declarations, along with `___*` names. Callers that need them to
-/// pass validation should either perform allow-list validation themselves or call this translation
-/// API without a separate `validate_qir` preflight.
+/// Preserves only explicitly allow-listed unknown externals.
+/// IR-defined functions and converter/runtime-reserved names are not pass-through eligible.
+/// Also supports allow-listed unknown `__quantum__qis__*` / `__quantum__rt__*` externals;
+/// [`validate_qir`] still rejects those names (and `___*`).
 ///
 /// # Arguments
 /// - `bc_bytes` - The QIR bytes to translate.
@@ -4824,27 +4815,11 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 
     #[test]
     fn test_qir_to_qis_with_passthrough_calls_rejects_reserved_output_names() {
-        for reserved_name in [
-            "qmain",
-            "setup",
-            "teardown",
-            "qis_qs",
-            "e_qalloc_fail",
-            "e_load_qubit_oob",
-            "panic",
-            "print_int",
-            "print_bool",
-            "print_float",
-            "print_bool_arr",
-            "get_current_shot",
-            "random_seed",
-            "random_int",
-            "random_float",
-            "random_rng",
-            "random_advance",
-            "qir_qis.helper",
-            "res_result_slot",
-        ] {
+        for reserved_name in crate::convert::RESERVED_PASSTHROUGH_EXACT_NAMES
+            .iter()
+            .copied()
+            .chain(["qir_qis.helper", "res_result_slot"])
+        {
             let ll_text = format!(
                 r#"
 declare void @{reserved_name}()

@@ -40,7 +40,7 @@ const RESULT_TAG: &str = "USER";
 #[cfg(test)]
 const RESERVED_INTERNAL_RUNTIME_PASSTHROUGH_NAMES: [&str; 4] =
     ["panic", "print_int", "print_bool", "print_bool_arr"];
-const RESERVED_PASSTHROUGH_EXACT_NAMES: [&str; 17] = [
+pub(crate) const RESERVED_PASSTHROUGH_EXACT_NAMES: [&str; 17] = [
     "qmain",
     "setup",
     "teardown",
