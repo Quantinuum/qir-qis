@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9](https://github.com/Quantinuum/qir-qis/compare/v0.1.8...v0.1.9) (2026-06-29)
+
+
+### Features
+
+* **api:** add external call passthrough hook ([#116](https://github.com/Quantinuum/qir-qis/issues/116)) ([2aa742d](https://github.com/Quantinuum/qir-qis/commit/2aa742d70ce099d5fce43e386b9245b56df82512))
+
+
+### Bug Fixes
+
+* avoid panic on malformed dynamic array RT calls ([#109](https://github.com/Quantinuum/qir-qis/issues/109)) ([8da6284](https://github.com/Quantinuum/qir-qis/commit/8da628421c80772d388dbafac132986af9798891))
+* avoid panic on malformed module flag names ([#107](https://github.com/Quantinuum/qir-qis/issues/107)) ([1219fc1](https://github.com/Quantinuum/qir-qis/commit/1219fc11f77a1c82c5e08f8c830ef7b669960f1b))
+* **ci:** pin release hugrenv action and trim workflow permissions ([#108](https://github.com/Quantinuum/qir-qis/issues/108)) ([fc06374](https://github.com/Quantinuum/qir-qis/commit/fc063740b4a64b73cedf812b3613d06f7eef80b0))
+* eliminate code scanning false positives ([#98](https://github.com/Quantinuum/qir-qis/issues/98)) ([4fdfaae](https://github.com/Quantinuum/qir-qis/commit/4fdfaae15886d6537bf2ea1c391feb4d77a9e824))
+* reduce workflow token permissions ([#110](https://github.com/Quantinuum/qir-qis/issues/110)) ([57a7924](https://github.com/Quantinuum/qir-qis/commit/57a7924c1bf2d412db3971a9f44b01ee1e949e20))
+* reject raw ___barrier QTM declarations during validation ([#106](https://github.com/Quantinuum/qir-qis/issues/106)) ([d546577](https://github.com/Quantinuum/qir-qis/commit/d546577cf28fb4c9aad1cb856148ad5fd767da9c))
+* static qubit index bounds check during QIR lowering ([#104](https://github.com/Quantinuum/qir-qis/issues/104)) ([beaf49a](https://github.com/Quantinuum/qir-qis/commit/beaf49a341cb596a6502a65cd0a15b4c004b80c0))
+
 ## [0.1.8](https://github.com/Quantinuum/qir-qis/compare/v0.1.7...v0.1.8) (2026-05-04)
 
 
