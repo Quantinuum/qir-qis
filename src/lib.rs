@@ -5555,6 +5555,40 @@ attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_
     }
 
     #[test]
+    fn test_validate_qir_does_not_treat_non_barrier_helpers_ending_in_body_as_barriers() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+define internal void @helper__body(%Qubit* %qubit) {
+entry:
+  ret void
+}
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q1 = inttoptr i64 1 to %Qubit*
+  call void @helper__body(%Qubit* %q1)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let result = validate_qir(&bc_bytes, None);
+        assert!(
+            result.is_ok(),
+            "non-barrier helpers ending in `__body` should not be treated as barriers: {result:?}"
+        );
+    }
+
+    #[test]
     fn test_qir_to_qis_loads_runtime_handles_for_static_native_calls() {
         let ll_path = Path::new("tests/data/base_native_only.ll");
         let qir_bytes = get_qir_bytes(ll_path);
