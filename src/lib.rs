@@ -1247,22 +1247,28 @@ mod aux {
             let is_ir_defined = f.count_basic_blocks() > 0;
             match args.fn_name.as_str() {
                 name if name.starts_with("__quantum__qis__") => {
-                    if is_passthrough
-                        && !is_ir_defined
-                        && !is_supported_builtin_qis_call(args.fn_name.as_str())
-                    {
+                    if matches!(try_handle_qis_call(&args)?, BuiltinCallHandling::Handled) {
+                        return Ok(());
+                    }
+                    if is_ir_defined {
+                        // Under LLVM 21, decomposition functions may remain as IR-defined calls
+                        // rather than being fully inlined at this stage. Allow these calls to
+                        // pass through; their bodies are lowered by process_ir_defined_q_fns.
+                        return Ok(());
+                    }
+                    if is_passthrough {
                         return passthrough_external_call(&args);
                     }
-                    return handle_qis_call(&args);
+                    return Err(format!("Unsupported QIR QIS function: {}", args.fn_name));
                 }
                 name if name.starts_with("__quantum__rt__") => {
-                    if is_passthrough
-                        && !is_ir_defined
-                        && !is_supported_builtin_rt_call(args.fn_name.as_str())
-                    {
+                    if matches!(try_handle_rt_call(&mut args)?, BuiltinCallHandling::Handled) {
+                        return Ok(());
+                    }
+                    if is_passthrough && !is_ir_defined {
                         return passthrough_external_call(&args);
                     }
-                    return handle_rt_call(&mut args);
+                    return Err(format!("Unsupported QIR RT function: {}", args.fn_name));
                 }
                 name if name.starts_with("___") => return handle_qtm_call(&args),
                 _ => {}
@@ -1313,8 +1319,18 @@ mod aux {
         }
 
         match args.fn_name.as_str() {
-            name if name.starts_with("__quantum__qis__") => handle_qis_call(&args),
-            name if name.starts_with("__quantum__rt__") => handle_rt_call(&mut args),
+            name if name.starts_with("__quantum__qis__") => {
+                if matches!(try_handle_qis_call(&args)?, BuiltinCallHandling::Handled) {
+                    return Ok(());
+                }
+                Err(format!("Unsupported QIR QIS function: {}", args.fn_name))
+            }
+            name if name.starts_with("__quantum__rt__") => {
+                if matches!(try_handle_rt_call(&mut args)?, BuiltinCallHandling::Handled) {
+                    return Ok(());
+                }
+                Err(format!("Unsupported QIR RT function: {}", args.fn_name))
+            }
             name if name.starts_with("___") => handle_qtm_call(&args),
             _ => {
                 log::error!("Unsupported function: {}", args.fn_name);
@@ -1337,45 +1353,12 @@ mod aux {
         Ok(())
     }
 
-    fn is_supported_builtin_qis_call(name: &str) -> bool {
-        matches!(
-            name,
-            "__quantum__qis__rxy__body"
-                | "__quantum__qis__rz__body"
-                | "__quantum__qis__rzz__body"
-                | "__quantum__qis__u1q__body"
-                | "__quantum__qis__mz__body"
-                | "__quantum__qis__m__body"
-                | "__quantum__qis__mresetz__body"
-                | "__quantum__qis__mz_leaked__body"
-                | "__quantum__qis__reset__body"
-        ) || (name.starts_with("__quantum__qis__barrier") && name.ends_with("__body"))
+    enum BuiltinCallHandling {
+        Handled,
+        Unsupported,
     }
 
-    fn is_supported_builtin_rt_call(name: &str) -> bool {
-        matches!(
-            name,
-            "__quantum__rt__initialize"
-                | "__quantum__rt__qubit_allocate"
-                | "__quantum__rt__qubit_release"
-                | "__quantum__rt__qubit_array_allocate"
-                | "__quantum__rt__qubit_array_release"
-                | "__quantum__rt__result_allocate"
-                | "__quantum__rt__result_release"
-                | "__quantum__rt__result_array_allocate"
-                | "__quantum__rt__result_array_release"
-                | "__quantum__rt__result_array_record_output"
-                | "__quantum__rt__read_result"
-                | "__quantum__rt__result_record_output"
-                | "__quantum__rt__tuple_record_output"
-                | "__quantum__rt__array_record_output"
-                | "__quantum__rt__bool_record_output"
-                | "__quantum__rt__int_record_output"
-                | "__quantum__rt__double_record_output"
-        )
-    }
-
-    fn handle_qis_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
+    fn try_handle_qis_call(args: &ProcessCallArgs<'_>) -> Result<BuiltinCallHandling, String> {
         let required_num_qubits = args
             .qubit_array_type
             .map_or(0, inkwell::types::ArrayType::len);
@@ -1388,6 +1371,7 @@ mod aux {
                     args.capability_flags.dynamic_qubit_management,
                     required_num_qubits,
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__rz__body" => {
                 replace_rz_call(
@@ -1397,6 +1381,7 @@ mod aux {
                     args.capability_flags.dynamic_qubit_management,
                     required_num_qubits,
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__rzz__body" => {
                 replace_rzz_call(
@@ -1406,6 +1391,7 @@ mod aux {
                     args.capability_flags.dynamic_qubit_management,
                     required_num_qubits,
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__u1q__body" => {
                 log::info!(
@@ -1418,6 +1404,7 @@ mod aux {
                     args.capability_flags.dynamic_qubit_management,
                     required_num_qubits,
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__mz__body"
             | "__quantum__qis__m__body"
@@ -1432,62 +1419,65 @@ mod aux {
                     args.qubit_array_type,
                     args.result_ssa.cast::<()>(),
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__mz_leaked__body" => {
                 handle_mz_leaked_call(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__reset__body" => {
                 handle_reset_call(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             name if name.starts_with("__quantum__qis__barrier") && name.ends_with("__body") => {
                 handle_barrier_call(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
-            _ => {
-                // Under LLVM 21, decomposition functions may remain as IR-defined calls
-                // rather than being fully inlined at this stage. Allow these calls to
-                // pass through; their bodies are lowered by process_ir_defined_q_fns.
-                let is_ir_defined = module_ref(args)
-                    .get_function(args.fn_name.as_str())
-                    .is_some_and(|f| f.count_basic_blocks() > 0);
-                if !is_ir_defined {
-                    return Err(format!("Unsupported QIR QIS function: {}", args.fn_name));
-                }
-            }
+            _ => Ok(BuiltinCallHandling::Unsupported),
         }
-        Ok(())
     }
 
-    fn handle_rt_call(args: &mut ProcessCallArgs<'_>) -> Result<(), String> {
+    fn try_handle_rt_call(args: &mut ProcessCallArgs<'_>) -> Result<BuiltinCallHandling, String> {
         match args.fn_name.as_str() {
             "__quantum__rt__initialize" => {
                 args.instr.erase_from_basic_block();
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__qubit_allocate" => {
                 lower_dynamic_qubit_allocate(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__qubit_release" => {
                 lower_dynamic_qubit_release(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__qubit_array_allocate" => {
                 lower_dynamic_qubit_array_allocate(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__qubit_array_release" => {
                 lower_dynamic_qubit_array_release(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__result_allocate" => {
                 lower_dynamic_result_allocate(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__result_release" => {
                 lower_dynamic_result_release(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__result_array_allocate" => {
                 lower_dynamic_result_array_allocate(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__result_array_release" => {
                 lower_dynamic_result_array_release(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__result_array_record_output" => {
                 lower_dynamic_result_array_record_output(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => {
                 handle_read_result_call(
@@ -1499,6 +1489,7 @@ mod aux {
                     args.global_mapping.cast::<()>(),
                     args.result_ssa.cast::<()>(),
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__tuple_record_output" | "__quantum__rt__array_record_output" => {
                 let fn_name = args.fn_name.clone();
@@ -1509,15 +1500,16 @@ mod aux {
                     unsafe { &mut *args.global_mapping },
                     fn_name.as_str(),
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__bool_record_output"
             | "__quantum__rt__int_record_output"
             | "__quantum__rt__double_record_output" => {
                 handle_classical_record_output(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
-            _ => return Err(format!("Unsupported QIR RT function: {}", args.fn_name)),
+            _ => Ok(BuiltinCallHandling::Unsupported),
         }
-        Ok(())
     }
 
     fn handle_qtm_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
@@ -3700,7 +3692,8 @@ pub fn parse_bitcode_module<'ctx>(
 ///   exposed via [`DEFAULT_OPT_LEVEL`].
 /// - `target` - Target architecture ("aarch64", "x86-64", "native"). Platform
 ///   defaults are exposed via [`DEFAULT_TARGET`].
-/// - `wasm_bytes` - Optional WASM bytes for Wasm codegen.
+/// - `wasm_bytes` - Optional WASM bytes for Wasm codegen. When the `wasm` feature is enabled,
+///   invalid WASM bytes are rejected during translation.
 ///
 /// # Errors
 /// Returns an error string if the translation fails.
@@ -3722,7 +3715,7 @@ pub fn qir_to_qis(
 /// `___*` functions continue to use the normal lowering paths unless the listed external is
 /// otherwise unknown to qir-qis.
 ///
-/// As an extension beyond the original issue scope, this API also supports explicitly allow-listed
+/// As an intentional extension beyond issue #115's original scope, this API also supports explicitly allow-listed
 /// unknown external declarations in the `__quantum__qis__*` and `__quantum__rt__*` namespaces.
 /// The separate [`validate_qir`] API does not accept this pass-through allow-list and still rejects
 /// those unknown qir-qis-owned declarations, along with `___*` names. Callers that need them to
@@ -3735,7 +3728,8 @@ pub fn qir_to_qis(
 ///   exposed via [`DEFAULT_OPT_LEVEL`].
 /// - `target` - Target architecture ("aarch64", "x86-64", "native"). Platform
 ///   defaults are exposed via [`DEFAULT_TARGET`].
-/// - `wasm_bytes` - Optional WASM bytes for Wasm codegen.
+/// - `wasm_bytes` - Optional WASM bytes for Wasm codegen. When the `wasm` feature is enabled,
+///   invalid WASM bytes are rejected during translation.
 /// - `passthrough_calls` - External call names to preserve for downstream processing.
 ///
 /// # Errors
