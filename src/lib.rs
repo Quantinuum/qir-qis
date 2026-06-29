@@ -3714,7 +3714,8 @@ pub fn qir_to_qis(
 
 /// QIR to QIS translation logic with an explicit downstream external-call pass-through allow-list.
 ///
-/// Preserves only explicitly allow-listed unknown externals.
+/// Preserves unknown externals that are either explicitly allow-listed or tagged for downstream
+/// handling via `cudaq-fnid` / `wasm` attributes.
 /// IR-defined functions and converter/runtime-reserved names are not pass-through eligible.
 /// Also supports allow-listed unknown `__quantum__qis__*` / `__quantum__rt__*` externals;
 /// [`validate_qir`] still rejects those names (and `___*`).
