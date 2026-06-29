@@ -37,9 +37,6 @@ pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
 ];
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
-#[cfg(test)]
-const RESERVED_INTERNAL_RUNTIME_PASSTHROUGH_NAMES: [&str; 4] =
-    ["panic", "print_int", "print_bool", "print_bool_arr"];
 pub(crate) const RESERVED_PASSTHROUGH_EXACT_NAMES: [&str; 17] = [
     "qmain",
     "setup",
@@ -1496,6 +1493,12 @@ mod tests {
     use super::*;
     use crate::{qir_ll_to_bc, qir_qis};
 
+    // Subset of `RESERVED_PASSTHROUGH_EXACT_NAMES` that is rejected by the
+    // explicit internal-helper guard in `native_qir_to_qis_call`.
+    // `print_float` is intentionally excluded because it is not part of that guard.
+    const RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS: [&str; 4] =
+        ["panic", "print_int", "print_bool", "print_bool_arr"];
+
     #[test]
     fn test_is_i8_array_type_true() {
         let context = Context::create();
@@ -2457,7 +2460,7 @@ entry:
         for reserved_name in RESERVED_PASSTHROUGH_EXACT_NAMES
             .iter()
             .copied()
-            .filter(|name| !RESERVED_INTERNAL_RUNTIME_PASSTHROUGH_NAMES.contains(name))
+            .filter(|name| !RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS.contains(name))
         {
             let module = context.create_module(reserved_name);
             let builder = context.create_builder();
@@ -2494,7 +2497,7 @@ entry:
         let context = Context::create();
         let fn_type = context.void_type().fn_type(&[], false);
 
-        for reserved_name in RESERVED_INTERNAL_RUNTIME_PASSTHROUGH_NAMES {
+        for reserved_name in RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS {
             let module = context.create_module(reserved_name);
             let builder = context.create_builder();
             let defined_fn = module.add_function("defined_fn", fn_type, None);
