@@ -4752,6 +4752,45 @@ entry:
     }
 
     #[test]
+    fn test_qir_to_qis_rejects_unlisted_prefixed_external_rt_call() {
+        let bc_bytes = passthrough_qir_fixture(
+            "declare void @__quantum__rt__vendor__body()",
+            "  call void @__quantum__rt__vendor__body()\n  ret i64 0",
+            1,
+            0,
+        );
+
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("unlisted prefixed runtime call should fail");
+
+        assert!(err.contains("Unsupported QIR RT function: __quantum__rt__vendor__body"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_preserves_listed_prefixed_external_rt_call() {
+        let bc_bytes = passthrough_qir_fixture(
+            "declare void @__quantum__rt__vendor__body()",
+            "  call void @__quantum__rt__vendor__body()\n  ret i64 0",
+            1,
+            0,
+        );
+
+        let qis_bytes = qir_to_qis_with_passthrough_calls(
+            &bc_bytes,
+            0,
+            "native",
+            None,
+            &["__quantum__rt__vendor__body"],
+        )
+        .expect("listed prefixed runtime call should pass through");
+
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &qis_bytes, "qis").unwrap();
+        let vendor = module.get_function("__quantum__rt__vendor__body").unwrap();
+        assert!(module_contains_direct_call(&module, vendor));
+    }
+
+    #[test]
     fn test_qir_to_qis_with_passthrough_calls_lowers_listed_builtin_qis_call() {
         let bc_bytes = passthrough_qir_fixture(
             r"%Qubit = type opaque
