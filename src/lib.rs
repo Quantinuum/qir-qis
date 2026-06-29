@@ -4606,25 +4606,40 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         );
     }
 
-    fn passthrough_fixture() -> Vec<u8> {
-        let ll_text = r#"
-declare i64 @external_counter()
+    fn passthrough_qir_fixture(
+        declarations: &str,
+        entry_body: &str,
+        required_num_qubits: u32,
+        required_num_results: u32,
+    ) -> Vec<u8> {
+        let ll_text = format!(
+            r#"
+{declarations}
 
-define i64 @Entry_Point_Name() #0 {
+define i64 @Entry_Point_Name() #0 {{
 entry:
-  %value = call i64 @external_counter()
-  ret i64 %value
-}
+{entry_body}
+}}
 
-attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
+attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="{required_num_qubits}" "required_num_results"="{required_num_results}" }}
 
-!llvm.module.flags = !{!0, !1, !2, !3}
-!0 = !{i32 1, !"qir_major_version", i32 2}
-!1 = !{i32 7, !"qir_minor_version", i32 0}
-!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
-!3 = !{i32 1, !"dynamic_result_management", i1 false}
-"#;
-        qir_ll_to_bc(ll_text).expect("Failed to convert pass-through fixture to bitcode")
+!llvm.module.flags = !{{!0, !1, !2, !3}}
+!0 = !{{i32 1, !"qir_major_version", i32 2}}
+!1 = !{{i32 7, !"qir_minor_version", i32 0}}
+!2 = !{{i32 1, !"dynamic_qubit_management", i1 false}}
+!3 = !{{i32 1, !"dynamic_result_management", i1 false}}
+"#
+        );
+        qir_ll_to_bc(ll_text.as_str()).expect("Failed to convert pass-through fixture to bitcode")
+    }
+
+    fn passthrough_fixture() -> Vec<u8> {
+        passthrough_qir_fixture(
+            "declare i64 @external_counter()",
+            "  %value = call i64 @external_counter()\n  ret i64 %value",
+            1,
+            0,
+        )
     }
 
     #[test]
@@ -4664,28 +4679,15 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 
     #[test]
     fn test_qir_to_qis_with_passthrough_calls_rejects_ir_defined_passthrough_name() {
-        let ll_text = r#"
-define i64 @external_counter() {
+        let bc_bytes = passthrough_qir_fixture(
+            r"define i64 @external_counter() {
 entry:
   ret i64 7
-}
-
-define i64 @Entry_Point_Name() #0 {
-entry:
-  %value = call i64 @external_counter()
-  ret i64 %value
-}
-
-attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
-
-!llvm.module.flags = !{!0, !1, !2, !3}
-!0 = !{i32 1, !"qir_major_version", i32 2}
-!1 = !{i32 7, !"qir_minor_version", i32 0}
-!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
-!3 = !{i32 1, !"dynamic_result_management", i1 false}
-"#;
-        let bc_bytes =
-            qir_ll_to_bc(ll_text).expect("Failed to convert IR-defined fixture to bitcode");
+}",
+            "  %value = call i64 @external_counter()\n  ret i64 %value",
+            1,
+            0,
+        );
 
         let err =
             qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &["external_counter"])
@@ -4700,25 +4702,12 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 
     #[test]
     fn test_qir_to_qis_with_passthrough_calls_preserves_listed_prefixed_external_call() {
-        let ll_text = r#"
-declare void @__quantum__qis__vendor__body()
-
-define i64 @Entry_Point_Name() #0 {
-entry:
-  call void @__quantum__qis__vendor__body()
-  ret i64 0
-}
-
-attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
-
-!llvm.module.flags = !{!0, !1, !2, !3}
-!0 = !{i32 1, !"qir_major_version", i32 2}
-!1 = !{i32 7, !"qir_minor_version", i32 0}
-!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
-!3 = !{i32 1, !"dynamic_result_management", i1 false}
-"#;
-        let bc_bytes =
-            qir_ll_to_bc(ll_text).expect("Failed to convert prefixed fixture to bitcode");
+        let bc_bytes = passthrough_qir_fixture(
+            "declare void @__quantum__qis__vendor__body()",
+            "  call void @__quantum__qis__vendor__body()\n  ret i64 0",
+            1,
+            0,
+        );
 
         let qis_bytes = qir_to_qis_with_passthrough_calls(
             &bc_bytes,
@@ -4737,28 +4726,15 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 
     #[test]
     fn test_qir_to_qis_with_passthrough_calls_rejects_ir_defined_prefixed_call() {
-        let ll_text = r#"
-define void @__quantum__qis__vendor__body() {
+        let bc_bytes = passthrough_qir_fixture(
+            r"define void @__quantum__qis__vendor__body() {
 entry:
   ret void
-}
-
-define i64 @Entry_Point_Name() #0 {
-entry:
-  call void @__quantum__qis__vendor__body()
-  ret i64 0
-}
-
-attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
-
-!llvm.module.flags = !{!0, !1, !2, !3}
-!0 = !{i32 1, !"qir_major_version", i32 2}
-!1 = !{i32 7, !"qir_minor_version", i32 0}
-!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
-!3 = !{i32 1, !"dynamic_result_management", i1 false}
-"#;
-        let bc_bytes =
-            qir_ll_to_bc(ll_text).expect("Failed to convert prefixed fixture to bitcode");
+}",
+            "  call void @__quantum__qis__vendor__body()\n  ret i64 0",
+            1,
+            0,
+        );
 
         let err = qir_to_qis_with_passthrough_calls(
             &bc_bytes,
@@ -4776,28 +4752,14 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 
     #[test]
     fn test_qir_to_qis_with_passthrough_calls_lowers_listed_builtin_qis_call() {
-        let ll_text = r#"
-%Qubit = type opaque
+        let bc_bytes = passthrough_qir_fixture(
+            r"%Qubit = type opaque
 
-declare void @__quantum__qis__h__body(%Qubit*)
-
-define i64 @Entry_Point_Name() #0 {
-entry:
-  %q0 = inttoptr i64 0 to %Qubit*
-  call void @__quantum__qis__h__body(%Qubit* %q0)
-  ret i64 0
-}
-
-attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }
-
-!llvm.module.flags = !{!0, !1, !2, !3}
-!0 = !{i32 1, !"qir_major_version", i32 2}
-!1 = !{i32 7, !"qir_minor_version", i32 0}
-!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
-!3 = !{i32 1, !"dynamic_result_management", i1 false}
-"#;
-        let bc_bytes =
-            qir_ll_to_bc(ll_text).expect("Failed to convert built-in fixture to bitcode");
+declare void @__quantum__qis__h__body(%Qubit*)",
+            "  %q0 = inttoptr i64 0 to %Qubit*\n  call void @__quantum__qis__h__body(%Qubit* %q0)\n  ret i64 0",
+            1,
+            0,
+        );
 
         let default_qis_bytes =
             qir_to_qis(&bc_bytes, 0, "native", None).expect("built-in QIS call should lower");
@@ -4820,27 +4782,12 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             .copied()
             .chain(["qir_qis.helper", "res_result_slot"])
         {
-            let ll_text = format!(
-                r#"
-declare void @{reserved_name}()
-
-define i64 @Entry_Point_Name() #0 {{
-entry:
-  call void @{reserved_name}()
-  ret i64 0
-}}
-
-attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }}
-
-!llvm.module.flags = !{{!0, !1, !2, !3}}
-!0 = !{{i32 1, !"qir_major_version", i32 2}}
-!1 = !{{i32 7, !"qir_minor_version", i32 0}}
-!2 = !{{i32 1, !"dynamic_qubit_management", i1 false}}
-!3 = !{{i32 1, !"dynamic_result_management", i1 false}}
-"#
+            let bc_bytes = passthrough_qir_fixture(
+                format!("declare void @{reserved_name}()").as_str(),
+                format!("  call void @{reserved_name}()\n  ret i64 0").as_str(),
+                1,
+                0,
             );
-            let bc_bytes = qir_ll_to_bc(ll_text.as_str())
-                .expect("Failed to convert reserved-name fixture to bitcode");
 
             let err =
                 qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &[reserved_name])
@@ -4855,23 +4802,7 @@ attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_
     #[cfg(feature = "wasm")]
     #[test]
     fn test_qir_to_qis_with_passthrough_calls_rejects_invalid_wasm_bytes() {
-        let ll_text = r#"
-%Qubit = type opaque
-
-define i64 @Entry_Point_Name() #0 {
-entry:
-  ret i64 0
-}
-
-attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="0" "required_num_results"="0" }
-
-!llvm.module.flags = !{!0, !1, !2, !3}
-!0 = !{i32 1, !"qir_major_version", i32 2}
-!1 = !{i32 7, !"qir_minor_version", i32 0}
-!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
-!3 = !{i32 1, !"dynamic_result_management", i1 false}
-"#;
-        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert fixture to bitcode");
+        let bc_bytes = passthrough_qir_fixture("", "  ret i64 0", 0, 0);
         let err = qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", Some(&[0x00]), &[])
             .expect_err("invalid wasm bytes should be rejected");
 
