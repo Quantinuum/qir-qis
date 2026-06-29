@@ -50,7 +50,7 @@ jobs:
             nextest_extra_args: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Install hugrenv LLVM
@@ -101,7 +101,7 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Detect stub-affecting changes
@@ -126,7 +126,7 @@ jobs:
           echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: astral-sh/setup-uv@v8.2.0
       - uses: dtolnay/rust-toolchain@stable
-      - uses: cargo-bins/cargo-binstall@v1.20.0
+      - uses: cargo-bins/cargo-binstall@v1.20.1
       - name: Install lint tools
         run: |
           cargo binstall --no-confirm --force sccache
@@ -134,7 +134,7 @@ jobs:
             cargo binstall --no-confirm --force cargo-msrv
           fi
       - name: Restore sccache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/sccache
           key: sccache-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}

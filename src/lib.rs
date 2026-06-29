@@ -36,8 +36,9 @@ mod aux {
             INIT_QARRAY_FN, add_print_call, build_result_global, checked_qubit_index,
             convert_globals, create_reset_call, get_index, get_or_create_function,
             get_required_num_qubits, get_required_num_qubits_strict, get_required_num_results,
-            get_result_vars, get_string_label, handle_tuple_or_array_output, parse_gep,
-            record_classical_output, replace_rxy_call, replace_rz_call, replace_rzz_call,
+            get_result_vars, get_string_label, handle_tuple_or_array_output,
+            is_reserved_passthrough_name, parse_gep, record_classical_output, replace_rxy_call,
+            replace_rz_call, replace_rzz_call,
         },
         decode_llvm_bytes,
         utils::extract_operands,
@@ -1162,12 +1163,9 @@ mod aux {
         module: *const Module<'ctx>,
         instr: inkwell::values::InstructionValue<'ctx>,
         fn_name: String,
-        // Reserved for downstream passthrough compatibility.
-        #[allow(
-            dead_code,
-            reason = "reserved field keeps downstream passthrough API shape stable"
-        )]
+        #[allow(dead_code, reason = "reserved field keeps WASM API shape stable")]
         wasm_fns: *const BTreeMap<String, u64>,
+        passthrough_calls: *const BTreeSet<String>,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
         capability_flags: CapabilityFlags,
@@ -1181,6 +1179,7 @@ mod aux {
         module: &Module<'ctx>,
         entry_fn: FunctionValue<'ctx>,
         wasm_fns: &BTreeMap<String, u64>,
+        passthrough_calls: &BTreeSet<String>,
         qubit_array: Option<PointerValue<'ctx>>,
         capability_flags: CapabilityFlags,
     ) -> Result<(), String> {
@@ -1224,6 +1223,7 @@ mod aux {
                         instr,
                         fn_name,
                         wasm_fns: std::ptr::from_ref(wasm_fns),
+                        passthrough_calls: std::ptr::from_ref(passthrough_calls),
                         qubit_array,
                         qubit_array_type,
                         capability_flags,
@@ -1241,59 +1241,130 @@ mod aux {
     fn process_call_instruction(mut args: ProcessCallArgs<'_>) -> Result<(), String> {
         let call = CallSiteValue::try_from(args.instr)
             .map_err(|()| "Instruction is not a call site".to_string())?;
+        if let Some(f) = call.get_called_fn_value() {
+            let passthrough_calls = passthrough_calls_ref(&args);
+            let is_passthrough = passthrough_calls.contains(args.fn_name.as_str());
+            let is_ir_defined = f.count_basic_blocks() > 0;
+            match args.fn_name.as_str() {
+                name if name.starts_with("__quantum__qis__") => {
+                    if matches!(try_handle_qis_call(&args)?, BuiltinCallHandling::Handled) {
+                        return Ok(());
+                    }
+                    if is_ir_defined {
+                        // Under LLVM 21, decomposition functions may remain as IR-defined calls
+                        // rather than being fully inlined at this stage. Allow these calls to
+                        // pass through; their bodies are lowered by process_ir_defined_q_fns.
+                        return Ok(());
+                    }
+                    if is_passthrough {
+                        return passthrough_external_call(&args);
+                    }
+                    if check_downstream_attribute(f, args.fn_name.as_str()) {
+                        return Ok(());
+                    }
+                    return Err(format!("Unsupported QIR QIS function: {}", args.fn_name));
+                }
+                name if name.starts_with("__quantum__rt__") => {
+                    if matches!(try_handle_rt_call(&mut args)?, BuiltinCallHandling::Handled) {
+                        return Ok(());
+                    }
+                    if is_passthrough && !is_ir_defined {
+                        return passthrough_external_call(&args);
+                    }
+                    if check_downstream_attribute(f, args.fn_name.as_str()) {
+                        return Ok(());
+                    }
+                    return Err(format!("Unsupported QIR RT function: {}", args.fn_name));
+                }
+                name if name.starts_with("___") => return handle_qtm_call(&args),
+                _ => {}
+            }
+
+            // IR defined function calls
+            if is_ir_defined {
+                // INIT_QARRAY_FN is a frequently invoked helper for array initialization;
+                // skipping debug logs for it avoids excessive log noise while preserving
+                // useful debug information for other IR-defined functions.
+                if args.fn_name != INIT_QARRAY_FN {
+                    log::debug!("IR defined function `{}`: {}", args.fn_name, f.get_type());
+                }
+                if args.fn_name == "main" {
+                    return Err("IR defined function cannot be called `main`".to_string());
+                }
+                return Ok(());
+            }
+
+            if is_passthrough {
+                return passthrough_external_call(&args);
+            }
+
+            if check_downstream_attribute(f, args.fn_name.as_str()) {
+                return Ok(());
+            }
+
+            log::error!("Unknown external function: {}", args.fn_name);
+            return Err(format!("Unsupported function: {}", args.fn_name));
+        }
+
         match args.fn_name.as_str() {
-            name if name.starts_with("__quantum__qis__") => handle_qis_call(&args),
-            name if name.starts_with("__quantum__rt__") => handle_rt_call(&mut args),
+            name if name.starts_with("__quantum__qis__") => {
+                if matches!(try_handle_qis_call(&args)?, BuiltinCallHandling::Handled) {
+                    return Ok(());
+                }
+                Err(format!("Unsupported QIR QIS function: {}", args.fn_name))
+            }
+            name if name.starts_with("__quantum__rt__") => {
+                if matches!(try_handle_rt_call(&mut args)?, BuiltinCallHandling::Handled) {
+                    return Ok(());
+                }
+                Err(format!("Unsupported QIR RT function: {}", args.fn_name))
+            }
             name if name.starts_with("___") => handle_qtm_call(&args),
             _ => {
-                if let Some(f) = call.get_called_fn_value() {
-                    // IR defined function calls
-                    if f.count_basic_blocks() > 0 {
-                        // INIT_QARRAY_FN is a frequently invoked helper for array initialization;
-                        // skipping debug logs for it avoids excessive log noise while preserving
-                        // useful debug information for other IR-defined functions.
-                        if args.fn_name != INIT_QARRAY_FN {
-                            log::debug!("IR defined function `{}`: {}", args.fn_name, f.get_type());
-                        }
-                        if args.fn_name == "main" {
-                            return Err("IR defined function cannot be called `main`".to_string());
-                        }
-                        return Ok(());
-                    }
-
-                    // Check if this is a GPU function (has cudaq-fnid attribute)
-                    if f.get_string_attribute(AttributeLoc::Function, "cudaq-fnid")
-                        .is_some()
-                    {
-                        log::debug!(
-                            "GPU function `{}` found, leaving as-is for downstream processing",
-                            args.fn_name
-                        );
-                        return Ok(());
-                    }
-
-                    // Check if this is a WASM function (has wasm attribute)
-                    if f.get_string_attribute(AttributeLoc::Function, "wasm")
-                        .is_some()
-                    {
-                        log::debug!(
-                            "WASM function `{}` found, leaving as-is for downstream processing",
-                            args.fn_name
-                        );
-                        return Ok(());
-                    }
-
-                    log::error!("Unknown external function: {}", args.fn_name);
-                    return Err(format!("Unsupported function: {}", args.fn_name));
-                }
-
                 log::error!("Unsupported function: {}", args.fn_name);
                 Err(format!("Unsupported function: {}", args.fn_name))
             }
         }
     }
 
-    fn handle_qis_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
+    /// Returns `true` if `f` carries a `cudaq-fnid` or `wasm` attribute,
+    /// indicating it should be left as-is for downstream processing.
+    fn check_downstream_attribute(f: FunctionValue<'_>, fn_name: &str) -> bool {
+        if f.get_string_attribute(AttributeLoc::Function, "cudaq-fnid")
+            .is_some()
+        {
+            log::debug!("GPU function `{fn_name}` found, leaving as-is for downstream processing");
+            return true;
+        }
+        if f.get_string_attribute(AttributeLoc::Function, "wasm")
+            .is_some()
+        {
+            log::debug!("WASM function `{fn_name}` found, leaving as-is for downstream processing");
+            return true;
+        }
+        false
+    }
+
+    fn passthrough_external_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
+        if is_reserved_passthrough_name(args.fn_name.as_str()) {
+            return Err(format!(
+                "Pass-through function `{}` uses a reserved converter output name",
+                args.fn_name
+            ));
+        }
+        log::debug!(
+            "Pass-through function `{}` found, leaving as-is for downstream processing",
+            args.fn_name
+        );
+        Ok(())
+    }
+
+    enum BuiltinCallHandling {
+        Handled,
+        Unsupported,
+    }
+
+    fn try_handle_qis_call(args: &ProcessCallArgs<'_>) -> Result<BuiltinCallHandling, String> {
         let required_num_qubits = args
             .qubit_array_type
             .map_or(0, inkwell::types::ArrayType::len);
@@ -1306,6 +1377,7 @@ mod aux {
                     args.capability_flags.dynamic_qubit_management,
                     required_num_qubits,
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__rz__body" => {
                 replace_rz_call(
@@ -1315,6 +1387,7 @@ mod aux {
                     args.capability_flags.dynamic_qubit_management,
                     required_num_qubits,
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__rzz__body" => {
                 replace_rzz_call(
@@ -1324,6 +1397,7 @@ mod aux {
                     args.capability_flags.dynamic_qubit_management,
                     required_num_qubits,
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__u1q__body" => {
                 log::info!(
@@ -1336,6 +1410,7 @@ mod aux {
                     args.capability_flags.dynamic_qubit_management,
                     required_num_qubits,
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__mz__body"
             | "__quantum__qis__m__body"
@@ -1350,62 +1425,65 @@ mod aux {
                     args.qubit_array_type,
                     args.result_ssa.cast::<()>(),
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__mz_leaked__body" => {
                 handle_mz_leaked_call(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__qis__reset__body" => {
                 handle_reset_call(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             name if name.starts_with("__quantum__qis__barrier") && name.ends_with("__body") => {
                 handle_barrier_call(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
-            _ => {
-                // Under LLVM 21, decomposition functions may remain as IR-defined calls
-                // rather than being fully inlined at this stage. Allow these calls to
-                // pass through; their bodies are lowered by process_ir_defined_q_fns.
-                let is_ir_defined = module_ref(args)
-                    .get_function(args.fn_name.as_str())
-                    .is_some_and(|f| f.count_basic_blocks() > 0);
-                if !is_ir_defined {
-                    return Err(format!("Unsupported QIR QIS function: {}", args.fn_name));
-                }
-            }
+            _ => Ok(BuiltinCallHandling::Unsupported),
         }
-        Ok(())
     }
 
-    fn handle_rt_call(args: &mut ProcessCallArgs<'_>) -> Result<(), String> {
+    fn try_handle_rt_call(args: &mut ProcessCallArgs<'_>) -> Result<BuiltinCallHandling, String> {
         match args.fn_name.as_str() {
             "__quantum__rt__initialize" => {
                 args.instr.erase_from_basic_block();
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__qubit_allocate" => {
                 lower_dynamic_qubit_allocate(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__qubit_release" => {
                 lower_dynamic_qubit_release(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__qubit_array_allocate" => {
                 lower_dynamic_qubit_array_allocate(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__qubit_array_release" => {
                 lower_dynamic_qubit_array_release(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__result_allocate" => {
                 lower_dynamic_result_allocate(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__result_release" => {
                 lower_dynamic_result_release(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__result_array_allocate" => {
                 lower_dynamic_result_array_allocate(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__result_array_release" => {
                 lower_dynamic_result_array_release(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__result_array_record_output" => {
                 lower_dynamic_result_array_record_output(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => {
                 handle_read_result_call(
@@ -1417,6 +1495,7 @@ mod aux {
                     args.global_mapping.cast::<()>(),
                     args.result_ssa.cast::<()>(),
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__tuple_record_output" | "__quantum__rt__array_record_output" => {
                 let fn_name = args.fn_name.clone();
@@ -1427,15 +1506,16 @@ mod aux {
                     unsafe { &mut *args.global_mapping },
                     fn_name.as_str(),
                 )?;
+                Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__bool_record_output"
             | "__quantum__rt__int_record_output"
             | "__quantum__rt__double_record_output" => {
                 handle_classical_record_output(args)?;
+                Ok(BuiltinCallHandling::Handled)
             }
-            _ => return Err(format!("Unsupported QIR RT function: {}", args.fn_name)),
+            _ => Ok(BuiltinCallHandling::Unsupported),
         }
-        Ok(())
     }
 
     fn handle_qtm_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
@@ -1513,6 +1593,12 @@ mod aux {
         // SAFETY: `args.module` points to the borrowed module passed into
         // `process_entry_function`, which outlives all handler calls.
         unsafe { &*args.module }
+    }
+
+    const fn passthrough_calls_ref<'a>(args: &'a ProcessCallArgs<'_>) -> &'a BTreeSet<String> {
+        // SAFETY: `args.passthrough_calls` points to the borrowed set passed into
+        // `process_entry_function`, which outlives all handler calls.
+        unsafe { &*args.passthrough_calls }
     }
 
     fn get_or_create_qalloc_fail_global<'ctx>(
@@ -3612,7 +3698,8 @@ pub fn parse_bitcode_module<'ctx>(
 ///   exposed via [`DEFAULT_OPT_LEVEL`].
 /// - `target` - Target architecture ("aarch64", "x86-64", "native"). Platform
 ///   defaults are exposed via [`DEFAULT_TARGET`].
-/// - `wasm_bytes` - Optional WASM bytes for Wasm codegen.
+/// - `wasm_bytes` - Optional WASM bytes for Wasm codegen. When the `wasm` feature is enabled,
+///   invalid WASM bytes are rejected during translation.
 ///
 /// # Errors
 /// Returns an error string if the translation fails.
@@ -3620,7 +3707,37 @@ pub fn qir_to_qis(
     bc_bytes: &[u8],
     opt_level: u32,
     target: &str,
-    _wasm_bytes: Option<&[u8]>,
+    wasm_bytes: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
+    qir_to_qis_with_passthrough_calls(bc_bytes, opt_level, target, wasm_bytes, &[])
+}
+
+/// QIR to QIS translation logic with an explicit downstream external-call pass-through allow-list.
+///
+/// Preserves unknown externals that are either explicitly allow-listed or tagged for downstream
+/// handling via `cudaq-fnid` / `wasm` attributes.
+/// IR-defined functions and converter/runtime-reserved names are not pass-through eligible.
+/// Also supports allow-listed unknown `__quantum__qis__*` / `__quantum__rt__*` externals;
+/// [`validate_qir`] still rejects those names (and `___*`).
+///
+/// # Arguments
+/// - `bc_bytes` - The QIR bytes to translate.
+/// - `opt_level` - The optimization level to use (0-3). Platform defaults are
+///   exposed via [`DEFAULT_OPT_LEVEL`].
+/// - `target` - Target architecture ("aarch64", "x86-64", "native"). Platform
+///   defaults are exposed via [`DEFAULT_TARGET`].
+/// - `wasm_bytes` - Optional WASM bytes for Wasm codegen. When the `wasm` feature is enabled,
+///   invalid WASM bytes are rejected during translation.
+/// - `passthrough_calls` - External call names to preserve for downstream processing.
+///
+/// # Errors
+/// Returns an error string if the translation fails.
+pub fn qir_to_qis_with_passthrough_calls(
+    bc_bytes: &[u8],
+    opt_level: u32,
+    target: &str,
+    wasm_bytes: Option<&[u8]>,
+    passthrough_calls: &[&str],
 ) -> Result<Vec<u8>, String> {
     use crate::{
         aux::{get_capability_flags, process_entry_function, validate_static_qubit_helper_usage},
@@ -3633,11 +3750,26 @@ pub fn qir_to_qis(
         utils::add_generator_metadata,
     };
     use inkwell::{attributes::AttributeLoc, context::Context};
-    use std::{collections::BTreeMap, env};
+    use std::{collections::BTreeSet, env};
 
     let ctx = Context::create();
     let module = parse_bitcode_module(&ctx, bc_bytes, "bitcode")?;
     crate::llvm_verify::verify_module(&module, "LLVM module verification failed after parse")?;
+    let passthrough_calls: BTreeSet<String> = passthrough_calls
+        .iter()
+        .copied()
+        .map(ToOwned::to_owned)
+        .collect();
+    for name in &passthrough_calls {
+        if module
+            .get_function(name)
+            .is_some_and(|function| function.count_basic_blocks() > 0)
+        {
+            return Err(format!(
+                "Pass-through function `{name}` must be an external declaration"
+            ));
+        }
+    }
 
     add_decompositions(&ctx, &module)
         .map_err(|e| format!("Failed to add QIR decompositions: {e}"))?;
@@ -3665,12 +3797,13 @@ pub fn qir_to_qis(
         Some(create_qubit_array(&ctx, &module, entry_fn)?)
     };
 
-    let wasm_fns: BTreeMap<String, u64> = BTreeMap::new();
+    let wasm_fns = get_wasm_functions(wasm_bytes)?;
     process_entry_function(
         &ctx,
         &module,
         entry_fn,
         &wasm_fns,
+        &passthrough_calls,
         qubit_array,
         capability_flags,
     )?;
@@ -3681,6 +3814,7 @@ pub fn qir_to_qis(
         &module,
         entry_fn,
         capability_flags.dynamic_qubit_management,
+        &passthrough_calls,
     )?;
 
     if let Some(qubit_array) = qubit_array {
@@ -4077,7 +4211,7 @@ mod test {
     use crate::{
         convert::get_string_label, create_memory_buffer_from_bytes, create_module_from_ir_text,
         get_entry_attributes, memory_buffer_to_owned_bytes, parse_bitcode_module, qir_ll_to_bc,
-        qir_to_qis, validate_qir,
+        qir_to_qis, qir_to_qis_with_passthrough_calls, validate_qir,
     };
     use inkwell::{
         context::Context,
@@ -4471,6 +4605,221 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
                 .get_string_attribute(inkwell::attributes::AttributeLoc::Function, "custom_attr")
                 .is_none()
         );
+    }
+
+    fn passthrough_qir_fixture(
+        declarations: &str,
+        entry_body: &str,
+        required_num_qubits: u32,
+        required_num_results: u32,
+    ) -> Vec<u8> {
+        let ll_text = format!(
+            r#"
+{declarations}
+
+define i64 @Entry_Point_Name() #0 {{
+entry:
+{entry_body}
+}}
+
+attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="{required_num_qubits}" "required_num_results"="{required_num_results}" }}
+
+!llvm.module.flags = !{{!0, !1, !2, !3}}
+!0 = !{{i32 1, !"qir_major_version", i32 2}}
+!1 = !{{i32 7, !"qir_minor_version", i32 0}}
+!2 = !{{i32 1, !"dynamic_qubit_management", i1 false}}
+!3 = !{{i32 1, !"dynamic_result_management", i1 false}}
+"#
+        );
+        qir_ll_to_bc(ll_text.as_str()).expect("Failed to convert pass-through fixture to bitcode")
+    }
+
+    fn passthrough_fixture() -> Vec<u8> {
+        passthrough_qir_fixture(
+            "declare i64 @external_counter()",
+            "  %value = call i64 @external_counter()\n  ret i64 %value",
+            1,
+            0,
+        )
+    }
+
+    #[test]
+    fn test_qir_to_qis_rejects_unknown_external_call_by_default() {
+        let bc_bytes = passthrough_fixture();
+
+        let err = qir_to_qis(&bc_bytes, 0, "native", None)
+            .expect_err("default API should reject unknown external call");
+
+        assert!(err.contains("Unsupported function: external_counter"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_preserves_listed_external_call() {
+        let bc_bytes = passthrough_fixture();
+
+        let qis_bytes =
+            qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &["external_counter"])
+                .expect("listed external call should pass through");
+
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &qis_bytes, "qis").unwrap();
+        let external_counter = module.get_function("external_counter").unwrap();
+        assert!(module_contains_direct_call(&module, external_counter));
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_rejects_unlisted_external_call() {
+        let bc_bytes = passthrough_fixture();
+
+        let err =
+            qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &["other_external"])
+                .expect_err("unlisted external call should fail");
+
+        assert!(err.contains("Unsupported function: external_counter"));
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_rejects_ir_defined_passthrough_name() {
+        let bc_bytes = passthrough_qir_fixture(
+            r"define i64 @external_counter() {
+entry:
+  ret i64 7
+}",
+            "  %value = call i64 @external_counter()\n  ret i64 %value",
+            1,
+            0,
+        );
+
+        let err =
+            qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &["external_counter"])
+                .expect_err("IR-defined pass-through names should fail");
+
+        assert!(
+            err.contains(
+                "Pass-through function `external_counter` must be an external declaration"
+            )
+        );
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_preserves_listed_prefixed_external_call() {
+        let bc_bytes = passthrough_qir_fixture(
+            "declare void @__quantum__qis__vendor__body()",
+            "  call void @__quantum__qis__vendor__body()\n  ret i64 0",
+            1,
+            0,
+        );
+
+        let qis_bytes = qir_to_qis_with_passthrough_calls(
+            &bc_bytes,
+            0,
+            "native",
+            None,
+            &["__quantum__qis__vendor__body"],
+        )
+        .expect("listed prefixed external call should pass through");
+
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &qis_bytes, "qis").unwrap();
+        let vendor = module.get_function("__quantum__qis__vendor__body").unwrap();
+        assert!(module_contains_direct_call(&module, vendor));
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_rejects_ir_defined_prefixed_call() {
+        let bc_bytes = passthrough_qir_fixture(
+            r"define void @__quantum__qis__vendor__body() {
+entry:
+  ret void
+}",
+            "  call void @__quantum__qis__vendor__body()\n  ret i64 0",
+            1,
+            0,
+        );
+
+        let err = qir_to_qis_with_passthrough_calls(
+            &bc_bytes,
+            0,
+            "native",
+            None,
+            &["__quantum__qis__vendor__body"],
+        )
+        .expect_err("IR-defined prefixed pass-through name should be rejected");
+
+        assert!(err.contains(
+            "Pass-through function `__quantum__qis__vendor__body` must be an external declaration"
+        ));
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_lowers_listed_builtin_qis_call() {
+        let bc_bytes = passthrough_qir_fixture(
+            r"%Qubit = type opaque
+
+declare void @__quantum__qis__h__body(%Qubit*)",
+            "  %q0 = inttoptr i64 0 to %Qubit*\n  call void @__quantum__qis__h__body(%Qubit* %q0)\n  ret i64 0",
+            1,
+            0,
+        );
+
+        let default_qis_bytes =
+            qir_to_qis(&bc_bytes, 0, "native", None).expect("built-in QIS call should lower");
+        let passthrough_qis_bytes = qir_to_qis_with_passthrough_calls(
+            &bc_bytes,
+            0,
+            "native",
+            None,
+            &["__quantum__qis__h__body"],
+        )
+        .expect("listed built-in QIS call should still lower");
+
+        assert_eq!(passthrough_qis_bytes, default_qis_bytes);
+    }
+
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_rejects_reserved_output_names() {
+        for reserved_name in crate::convert::RESERVED_PASSTHROUGH_EXACT_NAMES
+            .iter()
+            .copied()
+            .chain(["qir_qis.helper", "res_result_slot"])
+        {
+            let bc_bytes = passthrough_qir_fixture(
+                format!("declare void @{reserved_name}()").as_str(),
+                format!("  call void @{reserved_name}()\n  ret i64 0").as_str(),
+                1,
+                0,
+            );
+
+            let err =
+                qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", None, &[reserved_name])
+                    .expect_err("reserved pass-through names should fail");
+
+            assert!(err.contains(&format!(
+                "Pass-through function `{reserved_name}` uses a reserved converter output name"
+            )));
+        }
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_rejects_invalid_wasm_bytes() {
+        let bc_bytes = passthrough_qir_fixture("", "  ret i64 0", 0, 0);
+        let err = qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", Some(&[0x00]), &[])
+            .expect_err("invalid wasm bytes should be rejected");
+
+        assert!(!err.is_empty());
+    }
+
+    fn module_contains_direct_call(module: &Module<'_>, callee: FunctionValue<'_>) -> bool {
+        module.get_functions().any(|function| {
+            function.get_basic_blocks().iter().any(|bb| {
+                bb.get_instructions()
+                    .any(|instr| match CallSiteValue::try_from(instr) {
+                        Ok(call) => call.get_called_fn_value() == Some(callee),
+                        Err(()) => false,
+                    })
+            })
+        })
     }
 
     #[test]

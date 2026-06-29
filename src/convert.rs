@@ -1,5 +1,5 @@
 use ::std::hash::BuildHasher;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::convert::Into;
 use std::error::Error;
 
@@ -37,6 +37,31 @@ pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
 ];
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
+pub(crate) const RESERVED_PASSTHROUGH_EXACT_NAMES: [&str; 17] = [
+    "qmain",
+    "setup",
+    "teardown",
+    "qis_qs",
+    "e_qalloc_fail",
+    "e_load_qubit_oob",
+    "panic",
+    "print_int",
+    "print_bool",
+    "print_float",
+    "print_bool_arr",
+    "get_current_shot",
+    "random_seed",
+    "random_int",
+    "random_float",
+    "random_rng",
+    "random_advance",
+];
+
+pub(crate) fn is_reserved_passthrough_name(name: &str) -> bool {
+    RESERVED_PASSTHROUGH_EXACT_NAMES.contains(&name)
+        || name.starts_with("qir_qis.")
+        || name.starts_with("res_")
+}
 
 /// Validate that a static qubit ID is within the module's zero-based range.
 ///
@@ -1204,6 +1229,7 @@ pub fn process_ir_defined_q_fns<'a>(
     module: &Module<'a>,
     entry_fn: FunctionValue,
     dynamic_qubit_management: bool,
+    passthrough_calls: &BTreeSet<String>,
 ) -> Result<(), String> {
     let required_num_qubits = if dynamic_qubit_management {
         0
@@ -1230,6 +1256,7 @@ pub fn process_ir_defined_q_fns<'a>(
                         defined_fn,
                         dynamic_qubit_management,
                         required_num_qubits,
+                        passthrough_calls,
                     )?;
                 }
             }
@@ -1287,6 +1314,7 @@ fn native_qir_to_qis_call<'a>(
     defined_fn: FunctionValue,
     dynamic_qubit_management: bool,
     required_num_qubits: u32,
+    passthrough_calls: &BTreeSet<String>,
 ) -> Result<(), String> {
     match fn_name {
         "__quantum__qis__rxy__body" => {
@@ -1324,6 +1352,7 @@ fn native_qir_to_qis_call<'a>(
         | "___dec_future_refcount"
         | "print_int"
         | "print_bool"
+        | "print_float"
         | "print_bool_arr" => {
             let defined_name = defined_fn.get_name().to_str().ok();
             if defined_name != Some(INIT_QARRAY_FN)
@@ -1343,6 +1372,14 @@ fn native_qir_to_qis_call<'a>(
             {
                 // Keep IR-defined QIS helpers (e.g. decomposition functions)
                 // and process their bodies in subsequent iterations.
+                return Ok(());
+            }
+            if passthrough_calls.contains(fn_name) {
+                if is_reserved_passthrough_name(fn_name) {
+                    return Err(format!(
+                        "Pass-through function `{fn_name}` uses a reserved converter output name"
+                    ));
+                }
                 return Ok(());
             }
             let defined_fn_name = defined_fn.get_name().to_str().unwrap_or("unknown");
@@ -1456,6 +1493,16 @@ mod tests {
 
     use super::*;
     use crate::{qir_ll_to_bc, qir_qis};
+
+    // Subset of `RESERVED_PASSTHROUGH_EXACT_NAMES` that is rejected by the
+    // explicit internal-helper guard in `native_qir_to_qis_call`.
+    const RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS: [&str; 5] = [
+        "panic",
+        "print_int",
+        "print_bool",
+        "print_float",
+        "print_bool_arr",
+    ];
 
     #[test]
     fn test_is_i8_array_type_true() {
@@ -2332,6 +2379,48 @@ entry:
         qir_ll_to_bc(&ll).expect("Failed to convert LLVM IR to bitcode")
     }
 
+    fn build_declared_call_fixture<'ctx>(
+        context: &'ctx Context,
+        module_name: &str,
+        decl_name: &str,
+    ) -> (Module<'ctx>, FunctionValue<'ctx>, InstructionValue<'ctx>) {
+        let module = context.create_module(module_name);
+        let builder = context.create_builder();
+        let fn_type = context.void_type().fn_type(&[], false);
+        let defined_fn = module.add_function("defined_fn", fn_type, None);
+        let entry = context.append_basic_block(defined_fn, "entry");
+        builder.position_at_end(entry);
+
+        let decl = module.add_function(decl_name, fn_type, None);
+        let call_instr = builder
+            .build_call(decl, &[], "fixture_call")
+            .expect("call should build")
+            .try_as_basic_value()
+            .unwrap_instruction();
+
+        (module, defined_fn, call_instr)
+    }
+
+    fn run_native_qir_to_qis_call<'ctx>(
+        context: &'ctx Context,
+        module: &Module<'ctx>,
+        call_instr: InstructionValue<'ctx>,
+        fn_name: &str,
+        defined_fn: FunctionValue<'ctx>,
+        passthrough_calls: &BTreeSet<String>,
+    ) -> Result<(), String> {
+        native_qir_to_qis_call(
+            context,
+            module,
+            call_instr,
+            fn_name,
+            defined_fn,
+            false,
+            0,
+            passthrough_calls,
+        )
+    }
+
     #[test]
     fn test_ir_fn_main_errors() {
         let ll_path = Path::new("tests/data/bad/ir_fn_main.ll");
@@ -2355,26 +2444,16 @@ entry:
     #[test]
     fn test_native_qir_to_qis_call_rejects_unknown_external_qis_decl() {
         let context = Context::create();
-        let module = context.create_module("test");
-        let builder = context.create_builder();
-        let fn_type = context.void_type().fn_type(&[], false);
-        let defined_fn = module.add_function("defined_fn", fn_type, None);
-        let entry = context.append_basic_block(defined_fn, "entry");
-        builder.position_at_end(entry);
+        let (module, defined_fn, call_instr) =
+            build_declared_call_fixture(&context, "test", "__quantum__qis__mystery__body");
 
-        let unknown_decl = module.add_function("__quantum__qis__mystery__body", fn_type, None);
-        let call = builder
-            .build_call(unknown_decl, &[], "unknown_call")
-            .expect("call should build");
-
-        let err = native_qir_to_qis_call(
+        let err = run_native_qir_to_qis_call(
             &context,
             &module,
-            call.try_as_basic_value().unwrap_instruction(),
+            call_instr,
             "__quantum__qis__mystery__body",
             defined_fn,
-            false,
-            0,
+            &BTreeSet::new(),
         )
         .expect_err("unknown external declaration should fail");
         assert!(err.contains("Unsupported function call"));
@@ -2383,29 +2462,106 @@ entry:
     #[test]
     fn test_native_qir_to_qis_call_rejects_internal_helper_in_non_internal_function() {
         let context = Context::create();
+        let (module, defined_fn, call_instr) =
+            build_declared_call_fixture(&context, "test", "___qalloc");
+
+        let err = run_native_qir_to_qis_call(
+            &context,
+            &module,
+            call_instr,
+            "___qalloc",
+            defined_fn,
+            &BTreeSet::new(),
+        )
+        .expect_err("non-internal helper should not call compiler-internal functions");
+        assert!(err.contains("Unexpected call to internal function"));
+    }
+
+    #[test]
+    fn test_native_qir_to_qis_call_rejects_reserved_passthrough_names() {
+        let context = Context::create();
+
+        for reserved_name in RESERVED_PASSTHROUGH_EXACT_NAMES
+            .iter()
+            .copied()
+            .filter(|name| !RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS.contains(name))
+        {
+            let (module, defined_fn, call_instr) =
+                build_declared_call_fixture(&context, reserved_name, reserved_name);
+            let passthrough_calls = BTreeSet::from([reserved_name.to_string()]);
+
+            let err = run_native_qir_to_qis_call(
+                &context,
+                &module,
+                call_instr,
+                reserved_name,
+                defined_fn,
+                &passthrough_calls,
+            )
+            .expect_err("reserved pass-through names should fail in helper bodies");
+
+            assert!(err.contains(&format!(
+                "Pass-through function `{reserved_name}` uses a reserved converter output name"
+            )));
+        }
+    }
+
+    #[test]
+    fn test_native_qir_to_qis_call_rejects_allowlisted_internal_runtime_names() {
+        let context = Context::create();
+
+        for reserved_name in RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS {
+            let (module, defined_fn, call_instr) =
+                build_declared_call_fixture(&context, reserved_name, reserved_name);
+            let passthrough_calls = BTreeSet::from([reserved_name.to_string()]);
+
+            let err = run_native_qir_to_qis_call(
+                &context,
+                &module,
+                call_instr,
+                reserved_name,
+                defined_fn,
+                &passthrough_calls,
+            )
+            .expect_err("allow-listed internal runtime names should still fail in helper bodies");
+
+            assert!(err.contains(&format!(
+                "Unexpected call to internal function: {reserved_name}"
+            )));
+        }
+    }
+
+    #[test]
+    fn test_native_qir_to_qis_call_allows_allowlisted_ir_defined_helper() {
+        let context = Context::create();
         let module = context.create_module("test");
         let builder = context.create_builder();
         let fn_type = context.void_type().fn_type(&[], false);
+
         let defined_fn = module.add_function("defined_fn", fn_type, None);
         let entry = context.append_basic_block(defined_fn, "entry");
         builder.position_at_end(entry);
 
-        let internal_decl = module.add_function("___qalloc", fn_type, None);
+        let helper = module.add_function("__quantum__qis__h__body", fn_type, None);
+        let helper_entry = context.append_basic_block(helper, "entry");
+        builder.position_at_end(helper_entry);
+        let _ = builder.build_return(None);
+
+        builder.position_at_end(entry);
         let call = builder
-            .build_call(internal_decl, &[], "internal_call")
+            .build_call(helper, &[], "helper_call")
             .expect("call should build");
 
-        let err = native_qir_to_qis_call(
+        let passthrough_calls = BTreeSet::from(["__quantum__qis__h__body".to_string()]);
+        run_native_qir_to_qis_call(
             &context,
             &module,
             call.try_as_basic_value().unwrap_instruction(),
-            "___qalloc",
+            "__quantum__qis__h__body",
             defined_fn,
-            false,
-            0,
+            &passthrough_calls,
         )
-        .expect_err("non-internal helper should not call compiler-internal functions");
-        assert!(err.contains("Unexpected call to internal function"));
+        .expect("IR-defined helper should not fail due to pass-through allow-list membership");
     }
 
     #[test]
@@ -2426,7 +2582,7 @@ entry:
             .expect("call should build");
         let _ = builder.build_return(None);
 
-        process_ir_defined_q_fns(&context, &module, entry_fn, false)
+        process_ir_defined_q_fns(&context, &module, entry_fn, false, &BTreeSet::new())
             .expect("entry function should be excluded from IR-defined helper processing");
     }
 
