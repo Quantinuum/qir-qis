@@ -1244,37 +1244,25 @@ mod aux {
         if let Some(f) = call.get_called_fn_value() {
             let passthrough_calls = passthrough_calls_ref(&args);
             let is_passthrough = passthrough_calls.contains(args.fn_name.as_str());
-            let is_ir_defined = module_ref(&args)
-                .get_function(args.fn_name.as_str())
-                .is_some_and(|function| function.count_basic_blocks() > 0);
+            let is_ir_defined = f.count_basic_blocks() > 0;
             match args.fn_name.as_str() {
                 name if name.starts_with("__quantum__qis__") => {
-                    return handle_qis_call(&args).or_else(|err| {
-                        if is_passthrough && err.starts_with("Unsupported QIR QIS function:") {
-                            if is_ir_defined {
-                                return Err(format!(
-                                    "Pass-through function `{}` must be an external declaration",
-                                    args.fn_name
-                                ));
-                            }
-                            return passthrough_external_call(&args);
-                        }
-                        Err(err)
-                    });
+                    if is_passthrough
+                        && !is_ir_defined
+                        && !is_supported_builtin_qis_call(args.fn_name.as_str())
+                    {
+                        return passthrough_external_call(&args);
+                    }
+                    return handle_qis_call(&args);
                 }
                 name if name.starts_with("__quantum__rt__") => {
-                    return handle_rt_call(&mut args).or_else(|err| {
-                        if is_passthrough && err.starts_with("Unsupported QIR RT function:") {
-                            if is_ir_defined {
-                                return Err(format!(
-                                    "Pass-through function `{}` must be an external declaration",
-                                    args.fn_name
-                                ));
-                            }
-                            return passthrough_external_call(&args);
-                        }
-                        Err(err)
-                    });
+                    if is_passthrough
+                        && !is_ir_defined
+                        && !is_supported_builtin_rt_call(args.fn_name.as_str())
+                    {
+                        return passthrough_external_call(&args);
+                    }
+                    return handle_rt_call(&mut args);
                 }
                 name if name.starts_with("___") => return handle_qtm_call(&args),
                 _ => {}
@@ -1347,6 +1335,44 @@ mod aux {
             args.fn_name
         );
         Ok(())
+    }
+
+    fn is_supported_builtin_qis_call(name: &str) -> bool {
+        matches!(
+            name,
+            "__quantum__qis__rxy__body"
+                | "__quantum__qis__rz__body"
+                | "__quantum__qis__rzz__body"
+                | "__quantum__qis__u1q__body"
+                | "__quantum__qis__mz__body"
+                | "__quantum__qis__m__body"
+                | "__quantum__qis__mresetz__body"
+                | "__quantum__qis__mz_leaked__body"
+                | "__quantum__qis__reset__body"
+        ) || (name.starts_with("__quantum__qis__barrier") && name.ends_with("__body"))
+    }
+
+    fn is_supported_builtin_rt_call(name: &str) -> bool {
+        matches!(
+            name,
+            "__quantum__rt__initialize"
+                | "__quantum__rt__qubit_allocate"
+                | "__quantum__rt__qubit_release"
+                | "__quantum__rt__qubit_array_allocate"
+                | "__quantum__rt__qubit_array_release"
+                | "__quantum__rt__result_allocate"
+                | "__quantum__rt__result_release"
+                | "__quantum__rt__result_array_allocate"
+                | "__quantum__rt__result_array_release"
+                | "__quantum__rt__result_array_record_output"
+                | "__quantum__rt__read_result"
+                | "__quantum__rt__result_record_output"
+                | "__quantum__rt__tuple_record_output"
+                | "__quantum__rt__array_record_output"
+                | "__quantum__rt__bool_record_output"
+                | "__quantum__rt__int_record_output"
+                | "__quantum__rt__double_record_output"
+        )
     }
 
     fn handle_qis_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
@@ -1571,11 +1597,7 @@ mod aux {
         unsafe { &*args.module }
     }
 
-    #[allow(
-        clippy::missing_const_for_fn,
-        reason = "non-const keeps the borrow tied to this synchronous processing helper"
-    )]
-    fn passthrough_calls_ref<'a>(args: &'a ProcessCallArgs<'_>) -> &'a BTreeSet<String> {
+    const fn passthrough_calls_ref<'a>(args: &'a ProcessCallArgs<'_>) -> &'a BTreeSet<String> {
         // SAFETY: `args.passthrough_calls` points to the borrowed set passed into
         // `process_entry_function`, which outlives all handler calls.
         unsafe { &*args.passthrough_calls }
@@ -3722,7 +3744,7 @@ pub fn qir_to_qis_with_passthrough_calls(
     bc_bytes: &[u8],
     opt_level: u32,
     target: &str,
-    _wasm_bytes: Option<&[u8]>,
+    wasm_bytes: Option<&[u8]>,
     passthrough_calls: &[&str],
 ) -> Result<Vec<u8>, String> {
     use crate::{
@@ -3736,10 +3758,7 @@ pub fn qir_to_qis_with_passthrough_calls(
         utils::add_generator_metadata,
     };
     use inkwell::{attributes::AttributeLoc, context::Context};
-    use std::{
-        collections::{BTreeMap, BTreeSet},
-        env,
-    };
+    use std::{collections::BTreeSet, env};
 
     let ctx = Context::create();
     let module = parse_bitcode_module(&ctx, bc_bytes, "bitcode")?;
@@ -3786,7 +3805,7 @@ pub fn qir_to_qis_with_passthrough_calls(
         Some(create_qubit_array(&ctx, &module, entry_fn)?)
     };
 
-    let wasm_fns: BTreeMap<String, u64> = BTreeMap::new();
+    let wasm_fns = get_wasm_functions(wasm_bytes)?;
     process_entry_function(
         &ctx,
         &module,
@@ -4807,6 +4826,8 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     fn test_qir_to_qis_with_passthrough_calls_rejects_reserved_output_names() {
         for reserved_name in [
             "qmain",
+            "setup",
+            "teardown",
             "qis_qs",
             "e_qalloc_fail",
             "e_load_qubit_oob",
@@ -4821,6 +4842,8 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             "random_float",
             "random_rng",
             "random_advance",
+            "qir_qis.helper",
+            "res_result_slot",
         ] {
             let ll_text = format!(
                 r#"
@@ -4852,6 +4875,32 @@ attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_
                 "Pass-through function `{reserved_name}` uses a reserved converter output name"
             )));
         }
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn test_qir_to_qis_with_passthrough_calls_rejects_invalid_wasm_bytes() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="0" "required_num_results"="0" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert fixture to bitcode");
+        let err = qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", Some(&[0x00]), &[])
+            .expect_err("invalid wasm bytes should be rejected");
+
+        assert!(!err.is_empty());
     }
 
     fn module_contains_direct_call(module: &Module<'_>, callee: FunctionValue<'_>) -> bool {
