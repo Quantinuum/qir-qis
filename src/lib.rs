@@ -428,7 +428,7 @@ mod aux {
             | "__quantum__qis__reset__body"
             | "__quantum__qis__mresetz__body" => vec![0],
             name if name.starts_with("__quantum__qis__barrier") && name.ends_with("__body") => {
-                (0..arg_count.saturating_sub(1)).collect()
+                (0..arg_count).collect()
             }
             _ => Vec::new(),
         }
@@ -5355,6 +5355,58 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_validate_qir_rejects_out_of_range_handles_for_direct_qubit_gate_shapes() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__rxy__body(double, double, %Qubit*)
+declare void @__quantum__qis__u1q__body(double, double, %Qubit*)
+declare void @__quantum__qis__rzz__body(double, %Qubit*, %Qubit*)
+declare void @__quantum__qis__cx__body(%Qubit*, %Qubit*)
+declare void @__quantum__qis__ccx__body(%Qubit*, %Qubit*, %Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 0 to %Qubit*
+  %q1 = inttoptr i64 1 to %Qubit*
+  %q2 = inttoptr i64 2 to %Qubit*
+  call void @__quantum__qis__rxy__body(double 5.000000e-1, double 2.500000e-1, %Qubit* %q1)
+  call void @__quantum__qis__u1q__body(double 5.000000e-1, double 2.500000e-1, %Qubit* %q1)
+  call void @__quantum__qis__rzz__body(double 5.000000e-1, %Qubit* %q0, %Qubit* %q1)
+  call void @__quantum__qis__cx__body(%Qubit* %q0, %Qubit* %q1)
+  call void @__quantum__qis__ccx__body(%Qubit* %q0, %Qubit* %q1, %Qubit* %q2)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("direct gate qubit positions should reject out-of-range static handles");
+        for callee in [
+            "__quantum__qis__rxy__body",
+            "__quantum__qis__u1q__body",
+            "__quantum__qis__rzz__body",
+            "__quantum__qis__cx__body",
+            "__quantum__qis__ccx__body",
+        ] {
+            assert!(
+                err.contains(&format!("Invalid static qubit handle passed to `{callee}`")),
+                "missing static handle validation for {callee}: {err}"
+            );
+        }
+        assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
+        assert!(err.contains("Qubit index 2 exceeds required_num_qubits (1)"));
+    }
+
+    #[test]
     fn test_validate_qir_rejects_nonzero_single_qubit_decomposed_handle() {
         let ll_text = r#"
 %Qubit = type opaque
@@ -5382,6 +5434,39 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             .expect_err("decomposed QIS gates should reject out-of-range static qubit handles");
         assert!(err.contains("Invalid static qubit handle passed to `__quantum__qis__h__body`"));
         assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_out_of_range_barrier_static_handles() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+declare void @__quantum__qis__barrier2__body(%Qubit*, %Qubit*)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q0 = inttoptr i64 0 to %Qubit*
+  %q1 = inttoptr i64 2 to %Qubit*
+  call void @__quantum__qis__barrier2__body(%Qubit* %q0, %Qubit* %q1)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="2" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("barrier calls should reject out-of-range static qubit handles");
+        assert!(
+            err.contains("Invalid static qubit handle passed to `__quantum__qis__barrier2__body`")
+        );
+        assert!(err.contains("Qubit index 2 exceeds required_num_qubits (2)"));
     }
 
     #[test]
@@ -5413,6 +5498,94 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         assert!(err.contains("Missing required attribute: `required_num_results`"));
         assert!(err.contains("Invalid static qubit handle passed to `__quantum__qis__h__body`"));
         assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
+    }
+
+    #[test]
+    fn test_validate_qir_ignores_reserved_helper_name_prefixes_for_qubit_inference() {
+        for helper_name in [
+            "__quantum__qis__custom_helper",
+            "__quantum__rt__custom_helper",
+            "qir_qis.custom_helper",
+            "___custom_helper",
+            "print_custom_helper",
+        ] {
+            let ll_text = format!(
+                r#"
+%Qubit = type opaque
+
+define internal void @{helper_name}(%Qubit* %qubit) {{
+entry:
+  call void @__quantum__qis__h__body(%Qubit* %qubit)
+  ret void
+}}
+
+define i64 @Entry_Point_Name() #0 {{
+entry:
+  %q1 = inttoptr i64 1 to %Qubit*
+  call void @{helper_name}(%Qubit* %q1)
+  ret i64 0
+}}
+
+declare void @__quantum__qis__h__body(%Qubit*)
+
+attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }}
+
+!llvm.module.flags = !{{!0, !1, !2, !3}}
+!0 = !{{i32 1, !"qir_major_version", i32 1}}
+!1 = !{{i32 7, !"qir_minor_version", i32 0}}
+!2 = !{{i32 1, !"dynamic_qubit_management", i1 false}}
+!3 = !{{i32 1, !"dynamic_result_management", i1 false}}
+"#
+            );
+
+            let ctx = Context::create();
+            let module = create_module_from_ir_text(&ctx, &ll_text, "qir")
+                .expect("inline IR should parse for reserved helper-name coverage");
+            let entry_fn = crate::convert::find_entry_function(&module)
+                .expect("inline IR should include an entry function");
+            let mut errors = Vec::new();
+
+            crate::aux::validate_static_qubit_helper_usage(&module, entry_fn, &mut errors);
+
+            assert!(
+                errors.is_empty(),
+                "reserved helper name `{helper_name}` should not trigger helper qubit inference: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_qir_does_not_treat_non_barrier_helpers_ending_in_body_as_barriers() {
+        let ll_text = r#"
+%Qubit = type opaque
+
+define internal void @helper__body(%Qubit* %qubit) {
+entry:
+  ret void
+}
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %q1 = inttoptr i64 1 to %Qubit*
+  call void @helper__body(%Qubit* %q1)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 1}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let result = validate_qir(&bc_bytes, None);
+        assert!(
+            result.is_ok(),
+            "non-barrier helpers ending in `__body` should not be treated as barriers: {result:?}"
+        );
     }
 
     #[test]
