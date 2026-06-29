@@ -1259,6 +1259,9 @@ mod aux {
                     if is_passthrough {
                         return passthrough_external_call(&args);
                     }
+                    if check_downstream_attribute(f, args.fn_name.as_str()) {
+                        return Ok(());
+                    }
                     return Err(format!("Unsupported QIR QIS function: {}", args.fn_name));
                 }
                 name if name.starts_with("__quantum__rt__") => {
@@ -1267,6 +1270,9 @@ mod aux {
                     }
                     if is_passthrough && !is_ir_defined {
                         return passthrough_external_call(&args);
+                    }
+                    if check_downstream_attribute(f, args.fn_name.as_str()) {
+                        return Ok(());
                     }
                     return Err(format!("Unsupported QIR RT function: {}", args.fn_name));
                 }
@@ -1292,25 +1298,7 @@ mod aux {
                 return passthrough_external_call(&args);
             }
 
-            // Check if this is a GPU function (has cudaq-fnid attribute)
-            if f.get_string_attribute(AttributeLoc::Function, "cudaq-fnid")
-                .is_some()
-            {
-                log::debug!(
-                    "GPU function `{}` found, leaving as-is for downstream processing",
-                    args.fn_name
-                );
-                return Ok(());
-            }
-
-            // Check if this is a WASM function (has wasm attribute)
-            if f.get_string_attribute(AttributeLoc::Function, "wasm")
-                .is_some()
-            {
-                log::debug!(
-                    "WASM function `{}` found, leaving as-is for downstream processing",
-                    args.fn_name
-                );
+            if check_downstream_attribute(f, args.fn_name.as_str()) {
                 return Ok(());
             }
 
@@ -1337,6 +1325,24 @@ mod aux {
                 Err(format!("Unsupported function: {}", args.fn_name))
             }
         }
+    }
+
+    /// Returns `true` if `f` carries a `cudaq-fnid` or `wasm` attribute,
+    /// indicating it should be left as-is for downstream processing.
+    fn check_downstream_attribute(f: FunctionValue<'_>, fn_name: &str) -> bool {
+        if f.get_string_attribute(AttributeLoc::Function, "cudaq-fnid")
+            .is_some()
+        {
+            log::debug!("GPU function `{fn_name}` found, leaving as-is for downstream processing");
+            return true;
+        }
+        if f.get_string_attribute(AttributeLoc::Function, "wasm")
+            .is_some()
+        {
+            log::debug!("WASM function `{fn_name}` found, leaving as-is for downstream processing");
+            return true;
+        }
+        false
     }
 
     fn passthrough_external_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
