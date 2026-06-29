@@ -428,7 +428,7 @@ mod aux {
             | "__quantum__qis__reset__body"
             | "__quantum__qis__mresetz__body" => vec![0],
             name if name.starts_with("__quantum__qis__barrier") && name.ends_with("__body") => {
-                (0..arg_count.saturating_sub(1)).collect()
+                (0..arg_count).collect()
             }
             _ => Vec::new(),
         }
@@ -5446,12 +5446,12 @@ declare void @__quantum__qis__barrier2__body(%Qubit*, %Qubit*)
 define i64 @Entry_Point_Name() #0 {
 entry:
   %q0 = inttoptr i64 0 to %Qubit*
-  %q1 = inttoptr i64 1 to %Qubit*
+  %q1 = inttoptr i64 2 to %Qubit*
   call void @__quantum__qis__barrier2__body(%Qubit* %q0, %Qubit* %q1)
   ret i64 0
 }
 
-attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="2" "required_num_results"="1" }
 
 !llvm.module.flags = !{!0, !1, !2, !3}
 !0 = !{i32 1, !"qir_major_version", i32 1}
@@ -5466,7 +5466,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         assert!(
             err.contains("Invalid static qubit handle passed to `__quantum__qis__barrier2__body`")
         );
-        assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
+        assert!(err.contains("Qubit index 2 exceeds required_num_qubits (2)"));
     }
 
     #[test]
