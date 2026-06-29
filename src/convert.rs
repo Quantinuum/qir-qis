@@ -37,28 +37,32 @@ pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
 ];
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
+#[cfg(test)]
+const RESERVED_INTERNAL_RUNTIME_PASSTHROUGH_NAMES: [&str; 4] =
+    ["panic", "print_int", "print_bool", "print_bool_arr"];
+const RESERVED_PASSTHROUGH_EXACT_NAMES: [&str; 17] = [
+    "qmain",
+    "setup",
+    "teardown",
+    "qis_qs",
+    "e_qalloc_fail",
+    "e_load_qubit_oob",
+    "panic",
+    "print_int",
+    "print_bool",
+    "print_float",
+    "print_bool_arr",
+    "get_current_shot",
+    "random_seed",
+    "random_int",
+    "random_float",
+    "random_rng",
+    "random_advance",
+];
 
 pub(crate) fn is_reserved_passthrough_name(name: &str) -> bool {
-    matches!(
-        name,
-        "qmain"
-            | "setup"
-            | "teardown"
-            | "qis_qs"
-            | "e_qalloc_fail"
-            | "e_load_qubit_oob"
-            | "panic"
-            | "print_int"
-            | "print_bool"
-            | "print_float"
-            | "print_bool_arr"
-            | "get_current_shot"
-            | "random_seed"
-            | "random_int"
-            | "random_float"
-            | "random_rng"
-            | "random_advance"
-    ) || name.starts_with("qir_qis.")
+    RESERVED_PASSTHROUGH_EXACT_NAMES.contains(&name)
+        || name.starts_with("qir_qis.")
         || name.starts_with("res_")
 }
 
@@ -2450,19 +2454,11 @@ entry:
         let context = Context::create();
         let fn_type = context.void_type().fn_type(&[], false);
 
-        for reserved_name in [
-            "qmain",
-            "qis_qs",
-            "e_qalloc_fail",
-            "e_load_qubit_oob",
-            "print_float",
-            "get_current_shot",
-            "random_seed",
-            "random_int",
-            "random_float",
-            "random_rng",
-            "random_advance",
-        ] {
+        for reserved_name in RESERVED_PASSTHROUGH_EXACT_NAMES
+            .iter()
+            .copied()
+            .filter(|name| !RESERVED_INTERNAL_RUNTIME_PASSTHROUGH_NAMES.contains(name))
+        {
             let module = context.create_module(reserved_name);
             let builder = context.create_builder();
             let defined_fn = module.add_function("defined_fn", fn_type, None);
@@ -2498,7 +2494,7 @@ entry:
         let context = Context::create();
         let fn_type = context.void_type().fn_type(&[], false);
 
-        for reserved_name in ["panic", "print_int", "print_bool", "print_bool_arr"] {
+        for reserved_name in RESERVED_INTERNAL_RUNTIME_PASSTHROUGH_NAMES {
             let module = context.create_module(reserved_name);
             let builder = context.create_builder();
             let defined_fn = module.add_function("defined_fn", fn_type, None);
