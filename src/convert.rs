@@ -1368,11 +1368,6 @@ fn native_qir_to_qis_call<'a>(
                 .get_function(fn_name)
                 .is_some_and(|f| f.count_basic_blocks() > 0)
             {
-                if passthrough_calls.contains(fn_name) {
-                    return Err(format!(
-                        "Pass-through function `{fn_name}` must be an external declaration"
-                    ));
-                }
                 // Keep IR-defined QIS helpers (e.g. decomposition functions)
                 // and process their bodies in subsequent iterations.
                 return Ok(());
@@ -2532,6 +2527,41 @@ entry:
                 "Unexpected call to internal function: {reserved_name}"
             )));
         }
+    }
+
+    #[test]
+    fn test_native_qir_to_qis_call_allows_allowlisted_ir_defined_helper() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+        let fn_type = context.void_type().fn_type(&[], false);
+
+        let defined_fn = module.add_function("defined_fn", fn_type, None);
+        let entry = context.append_basic_block(defined_fn, "entry");
+        builder.position_at_end(entry);
+
+        let helper = module.add_function("__quantum__qis__h__body", fn_type, None);
+        let helper_entry = context.append_basic_block(helper, "entry");
+        builder.position_at_end(helper_entry);
+        let _ = builder.build_return(None);
+
+        builder.position_at_end(entry);
+        let call = builder
+            .build_call(helper, &[], "helper_call")
+            .expect("call should build");
+
+        let passthrough_calls = BTreeSet::from(["__quantum__qis__h__body".to_string()]);
+        native_qir_to_qis_call(
+            &context,
+            &module,
+            call.try_as_basic_value().unwrap_instruction(),
+            "__quantum__qis__h__body",
+            defined_fn,
+            false,
+            0,
+            &passthrough_calls,
+        )
+        .expect("IR-defined helper should not fail due to pass-through allow-list membership");
     }
 
     #[test]
