@@ -3695,10 +3695,10 @@ pub fn qir_to_qis(
 ///
 /// Pass-through applies only to explicitly listed unknown external declarations that should remain
 /// available for downstream processing. It does not allow IR-defined functions to bypass
-/// conversion, and it does not override converter-owned output names such as `qmain`, `setup`,
-/// `teardown`, `qis_qs`, or `e_qalloc_fail`. Built-in `__quantum__*` and `___*` functions
-/// continue to use the normal lowering paths unless the listed external is otherwise unknown to
-/// qir-qis.
+/// conversion, and it does not override converter-owned output/runtime names such as `qmain`,
+/// `setup`, `teardown`, `qis_qs`, `panic`, `print_*`, or `random_*`. Built-in `__quantum__*` and
+/// `___*` functions continue to use the normal lowering paths unless the listed external is
+/// otherwise unknown to qir-qis.
 ///
 /// As an extension beyond the original issue scope, this API also supports explicitly allow-listed
 /// unknown external declarations in the `__quantum__qis__*` and `__quantum__rt__*` namespaces.
@@ -4805,19 +4805,31 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 
     #[test]
     fn test_qir_to_qis_with_passthrough_calls_rejects_reserved_output_names() {
-        for (reserved_name, return_type) in [
-            ("qmain", "i64"),
-            ("qis_qs", "ptr"),
-            ("e_qalloc_fail", "ptr"),
+        for reserved_name in [
+            "qmain",
+            "qis_qs",
+            "e_qalloc_fail",
+            "e_load_qubit_oob",
+            "panic",
+            "print_int",
+            "print_bool",
+            "print_float",
+            "print_bool_arr",
+            "get_current_shot",
+            "random_seed",
+            "random_int",
+            "random_float",
+            "random_rng",
+            "random_advance",
         ] {
             let ll_text = format!(
                 r#"
-declare {return_type} @{reserved_name}()
+declare void @{reserved_name}()
 
-define {return_type} @Entry_Point_Name() #0 {{
+define i64 @Entry_Point_Name() #0 {{
 entry:
-  %value = call {return_type} @{reserved_name}()
-  ret {return_type} %value
+  call void @{reserved_name}()
+  ret i64 0
 }}
 
 attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="labeled" "required_num_qubits"="1" "required_num_results"="0" }}

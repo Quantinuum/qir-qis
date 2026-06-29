@@ -41,7 +41,23 @@ const RESULT_TAG: &str = "USER";
 pub(crate) fn is_reserved_passthrough_name(name: &str) -> bool {
     matches!(
         name,
-        "qmain" | "setup" | "teardown" | "qis_qs" | "e_qalloc_fail"
+        "qmain"
+            | "setup"
+            | "teardown"
+            | "qis_qs"
+            | "e_qalloc_fail"
+            | "e_load_qubit_oob"
+            | "panic"
+            | "print_int"
+            | "print_bool"
+            | "print_float"
+            | "print_bool_arr"
+            | "get_current_shot"
+            | "random_seed"
+            | "random_int"
+            | "random_float"
+            | "random_rng"
+            | "random_advance"
     ) || name.starts_with("qir_qis.")
         || name.starts_with("res_")
 }
@@ -2439,7 +2455,19 @@ entry:
         let context = Context::create();
         let fn_type = context.void_type().fn_type(&[], false);
 
-        for reserved_name in ["qmain", "qis_qs", "e_qalloc_fail"] {
+        for reserved_name in [
+            "qmain",
+            "qis_qs",
+            "e_qalloc_fail",
+            "e_load_qubit_oob",
+            "print_float",
+            "get_current_shot",
+            "random_seed",
+            "random_int",
+            "random_float",
+            "random_rng",
+            "random_advance",
+        ] {
             let module = context.create_module(reserved_name);
             let builder = context.create_builder();
             let defined_fn = module.add_function("defined_fn", fn_type, None);
@@ -2466,6 +2494,42 @@ entry:
 
             assert!(err.contains(&format!(
                 "Pass-through function `{reserved_name}` uses a reserved converter output name"
+            )));
+        }
+    }
+
+    #[test]
+    fn test_native_qir_to_qis_call_rejects_allowlisted_internal_runtime_names() {
+        let context = Context::create();
+        let fn_type = context.void_type().fn_type(&[], false);
+
+        for reserved_name in ["panic", "print_int", "print_bool", "print_bool_arr"] {
+            let module = context.create_module(reserved_name);
+            let builder = context.create_builder();
+            let defined_fn = module.add_function("defined_fn", fn_type, None);
+            let entry = context.append_basic_block(defined_fn, "entry");
+            builder.position_at_end(entry);
+
+            let reserved_decl = module.add_function(reserved_name, fn_type, None);
+            let call = builder
+                .build_call(reserved_decl, &[], "reserved_call")
+                .expect("call should build");
+            let passthrough_calls = BTreeSet::from([reserved_name.to_string()]);
+
+            let err = native_qir_to_qis_call(
+                &context,
+                &module,
+                call.try_as_basic_value().unwrap_instruction(),
+                reserved_name,
+                defined_fn,
+                false,
+                0,
+                &passthrough_calls,
+            )
+            .expect_err("allow-listed internal runtime names should still fail in helper bodies");
+
+            assert!(err.contains(&format!(
+                "Unexpected call to internal function: {reserved_name}"
             )));
         }
     }
