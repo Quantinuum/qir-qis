@@ -677,13 +677,11 @@ mod aux {
     #[derive(Default)]
     struct ModuleFlagErrors {
         entries: Vec<ModuleFlagErrorEntry>,
-        missing_required: Vec<String>,
-        missing_or_unsupported: Vec<String>,
     }
 
     enum ModuleFlagErrorEntry {
-        MissingRequired,
-        MissingOrUnsupported,
+        MissingRequired(String),
+        MissingOrUnsupported(String),
         Message(String),
     }
 
@@ -693,51 +691,55 @@ mod aux {
         }
 
         fn push_missing_required(&mut self, flag_name: &str) {
-            if self.missing_required.is_empty() {
-                self.entries.push(ModuleFlagErrorEntry::MissingRequired);
-            }
-            push_unique_flag_name(&mut self.missing_required, flag_name);
+            self.entries
+                .push(ModuleFlagErrorEntry::MissingRequired(flag_name.to_string()));
         }
 
         fn push_missing_or_unsupported(&mut self, flag_name: &str) {
-            if self.missing_or_unsupported.is_empty() {
-                self.entries
-                    .push(ModuleFlagErrorEntry::MissingOrUnsupported);
-            }
-            push_unique_flag_name(&mut self.missing_or_unsupported, flag_name);
+            self.entries
+                .push(ModuleFlagErrorEntry::MissingOrUnsupported(
+                    flag_name.to_string(),
+                ));
         }
 
         fn into_messages(self) -> Vec<String> {
-            let Self {
-                entries,
-                missing_required,
-                missing_or_unsupported,
-            } = self;
-            let mut missing_required_message = format_grouped_module_flag_error(
-                "Missing required module flag",
-                "Missing required module flags",
-                &missing_required,
-            );
-            let mut missing_or_unsupported_message = format_grouped_module_flag_error(
-                "Missing or unsupported module flag",
-                "Missing or unsupported module flags",
-                &missing_or_unsupported,
-            );
-            let mut messages = Vec::with_capacity(entries.len());
-
-            for entry in entries {
+            let mut messages = Vec::new();
+            let mut entries = self.entries.into_iter().peekable();
+            while let Some(entry) = entries.next() {
                 match entry {
-                    ModuleFlagErrorEntry::MissingRequired => {
-                        if let Some(message) = missing_required_message.take() {
-                            messages.push(message);
-                        }
-                    }
-                    ModuleFlagErrorEntry::MissingOrUnsupported => {
-                        if let Some(message) = missing_or_unsupported_message.take() {
-                            messages.push(message);
-                        }
-                    }
                     ModuleFlagErrorEntry::Message(message) => messages.push(message),
+                    ModuleFlagErrorEntry::MissingRequired(flag_name) => {
+                        let mut flag_names = vec![flag_name];
+                        while let Some(ModuleFlagErrorEntry::MissingRequired(next_flag_name)) =
+                            entries.peek()
+                        {
+                            push_unique_flag_name(&mut flag_names, next_flag_name);
+                            let _ = entries.next();
+                        }
+                        if let Some(message) = format_grouped_module_flag_error(
+                            "Missing required module flag",
+                            "Missing required module flags",
+                            &flag_names,
+                        ) {
+                            messages.push(message);
+                        }
+                    }
+                    ModuleFlagErrorEntry::MissingOrUnsupported(flag_name) => {
+                        let mut flag_names = vec![flag_name];
+                        while let Some(ModuleFlagErrorEntry::MissingOrUnsupported(next_flag_name)) =
+                            entries.peek()
+                        {
+                            push_unique_flag_name(&mut flag_names, next_flag_name);
+                            let _ = entries.next();
+                        }
+                        if let Some(message) = format_grouped_module_flag_error(
+                            "Missing or unsupported module flag",
+                            "Missing or unsupported module flags",
+                            &flag_names,
+                        ) {
+                            messages.push(message);
+                        }
+                    }
                 }
             }
 
@@ -5429,6 +5431,62 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         assert_eq!(
             err,
             "Missing required module flags: qir_major_version, qir_minor_version, dynamic_qubit_management, dynamic_result_management"
+        );
+    }
+
+    #[test]
+    fn test_validate_qir_consolidates_missing_or_unsupported_module_flags() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", !5}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 1, !"arrays", !5}
+!5 = !{i32 99}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("Malformed module flags should report unsupported flags");
+        assert_eq!(
+            err,
+            "Missing or unsupported module flags: qir_major_version, arrays"
+        );
+    }
+
+    #[test]
+    fn test_validate_qir_preserves_error_ordering_across_grouped_module_flags() {
+        let ll_text = r#"
+define i64 @Entry_Point_Name() #0 {
+entry:
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4}
+!0 = !{i32 1, !"qir_major_version", !5}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i32 7}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 1, !"arrays", !5}
+!5 = !{i32 99}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err =
+            validate_qir(&bc_bytes, None).expect_err("Malformed and unsupported flags should fail");
+        assert_eq!(
+            err,
+            "Missing or unsupported module flag: qir_major_version; Unsupported dynamic_qubit_management: expected one of i1 false, i1 true; Missing or unsupported module flag: arrays"
         );
     }
 
