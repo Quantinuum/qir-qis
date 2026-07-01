@@ -88,8 +88,7 @@ fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<Targ
 /// Returns an error if module verification fails
 pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), String> {
     let target_config =
-        get_target_config(target).map_err(|e| format!("Failed to get target machine: {e}"))?;
-
+        get_target_config(target).map_err(|e| format!("Failed to get target config: {e}"))?;
     #[cfg(windows)]
     if opt_level > 0 && target_config != X86_CONFIG {
         return Err(format!(
