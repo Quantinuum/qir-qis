@@ -78,8 +78,9 @@ cargo run -- input.ll
 This generates `input.qis.bc` containing the compiled QIS bitcode.
 
 On Windows, the default mode remains conservative: `-O 0 -t native`. Optimized
-conversion is supported with `-t x86-64`; other optimized target combinations
-still fail fast to avoid known unstable LLVM 21 paths.
+conversion requires requesting optimization (for example, `-O 1`) and is
+supported only with `-t x86-64`; other optimized target combinations still fail
+fast to avoid known unstable LLVM 21 paths.
 
 ### Python API
 
@@ -103,7 +104,7 @@ cargo run --example rust_api
 
 Windows support is functional, but a few LLVM integration paths still differ from Linux and macOS:
 
-- Optimized conversion on Windows is currently supported only for `-t x86-64`; other optimized target combinations fail fast instead of entering known unstable LLVM paths.
+- Optimized conversion on Windows is currently supported only when optimization is requested (for example, `-O 1`) with `-t x86-64`; other optimized target combinations fail fast instead of entering known unstable LLVM paths.
 - LLVM verifier failures return a generic error on Windows instead of the full verifier message.
 - Native target codegen on Windows uses conservative CPU settings instead of host CPU feature detection.
 - `-O0` optimization on Windows is a validation-only fast path and does not rewrite the module triple.
