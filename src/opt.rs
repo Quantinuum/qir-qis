@@ -26,7 +26,12 @@ const AARCH64_CONFIG: TargetConfig = (
 );
 
 /// Default config for x86-64 codegen target
+#[cfg(not(windows))]
 const X86_CONFIG: TargetConfig = ("x86-64", "x86-64", "x86_64-unknown-linux-gnu", "");
+
+/// Default config for x86-64 codegen target on Windows (uses MSVC triple)
+#[cfg(windows)]
+const X86_CONFIG: TargetConfig = ("x86-64", "x86-64", "x86_64-pc-windows-msvc", "");
 
 /// Sentinel config for native codegen target
 const NATIVE_CONFIG: TargetConfig = ("", "", "", "");
@@ -209,5 +214,22 @@ mod tests {
 
         let triple = module.get_triple().as_str().to_string_lossy().into_owned();
         assert_eq!(triple, "x86_64-unknown-linux-gnu");
+    }
+
+    /// On Windows the x86-64 optimized path must embed a Windows MSVC triple, not the Linux one.
+    #[cfg(windows)]
+    #[test]
+    fn test_optimize_windows_x86_64_sets_windows_triple() {
+        use super::optimize;
+        use inkwell::context::Context;
+
+        let context = Context::create();
+        let module = context.create_module("test");
+        optimize(&module, 1, "x86-64").expect("Windows x86-64 O1 optimize should succeed");
+        let triple = module.get_triple().as_str().to_string_lossy().into_owned();
+        assert_eq!(
+            triple, "x86_64-pc-windows-msvc",
+            "Windows optimized path must set the MSVC triple, not the Linux cross-compile triple"
+        );
     }
 }
