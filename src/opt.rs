@@ -31,9 +31,6 @@ const X86_CONFIG: TargetConfig = ("x86-64", "x86-64", "x86_64-unknown-linux-gnu"
 /// Sentinel config for native codegen target
 const NATIVE_CONFIG: TargetConfig = ("", "", "", "");
 
-#[cfg(windows)]
-const WINDOWS_STABLE_OPT_TARGET: &str = "x86-64";
-
 fn get_target_config(target: &str) -> Result<TargetConfig<'_>, String> {
     match target {
         "x86-64" => Ok(X86_CONFIG),
