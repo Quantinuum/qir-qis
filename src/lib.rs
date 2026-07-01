@@ -4891,9 +4891,21 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 "#;
         let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
         let err = qir_to_qis(&bc_bytes, 1, "native", None)
-            .expect_err("optimized conversion should fail fast on Windows");
-        assert!(err.contains("currently unavailable on Windows"));
+            .expect_err("optimized native conversion should fail fast on Windows");
+        assert!(err.contains("supported only for `target=\"x86-64\"`"));
         assert!(err.contains("opt_level=0"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_windows_optimized_x86_64_conversion_smoke() {
+        let bc_bytes = load_fixture_bitcode("tests/data/base.ll");
+        let output_bc = qir_to_qis(&bc_bytes, 1, "x86-64", None)
+            .expect("optimized x86-64 conversion should succeed on Windows");
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &output_bc, "optimized_windows_qis")
+            .expect("optimized Windows output should parse");
+        assert!(module.get_function("qmain").is_some());
     }
 
     #[test]

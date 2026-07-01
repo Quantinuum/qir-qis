@@ -2719,7 +2719,7 @@ entry:
     #[cfg(windows)]
     conversion_cases! {
     // Windows runs this as a smoke test instead of snapshot matching because
-    // cross-target (`aarch64`) optimized codegen in CI has shown backend
+    // broad cross-target (`aarch64`) optimized codegen in CI has shown backend
     // instability and non-deterministic output differences. Re-checked on
     // Windows Arm64 on March 23, 2026: the new dynamic-allocation fixtures are
     // stable under this `-O0`/`native` conversion+parse path, and the remaining
@@ -2738,4 +2738,18 @@ entry:
             .expect("Compiled QIS bitcode should parse on Windows");
         assert!(parsed.get_function("qmain").is_some());
     }}
+
+    #[cfg(windows)]
+    #[test]
+    fn test_snapshot_conversion_windows_optimized_x86_64_smoke() {
+        let ll_path = Path::new("tests/data/base.ll");
+        let qir_bytes = get_qir_bytes(ll_path);
+        let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 1, "x86-64", None)
+            .expect("optimized Windows x86-64 conversion should succeed");
+
+        let context = Context::create();
+        let parsed = crate::parse_bitcode_module(&context, &qis_bytes, "qis_module")
+            .expect("optimized Windows QIS bitcode should parse");
+        assert!(parsed.get_function("qmain").is_some());
+    }
 }

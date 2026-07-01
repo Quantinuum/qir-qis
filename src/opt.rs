@@ -31,6 +31,9 @@ const X86_CONFIG: TargetConfig = ("x86-64", "x86-64", "x86_64-unknown-linux-gnu"
 /// Sentinel config for native codegen target
 const NATIVE_CONFIG: TargetConfig = ("", "", "", "");
 
+#[cfg(windows)]
+const WINDOWS_STABLE_OPT_TARGET: &str = "x86-64";
+
 fn get_target_config(target: &str) -> Result<TargetConfig<'_>, String> {
     match target {
         "x86-64" => Ok(X86_CONFIG),
@@ -88,9 +91,9 @@ fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<Targ
 /// Returns an error if module verification fails
 pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), String> {
     #[cfg(windows)]
-    if opt_level > 0 {
+    if opt_level > 0 && target != WINDOWS_STABLE_OPT_TARGET {
         return Err(format!(
-            "Optimized QIR-to-QIS conversion is currently unavailable on Windows with the LLVM 21 integration. Re-run with `opt_level=0` and preferably `target=\"native\"` (requested opt_level={opt_level}, target=\"{target}\")."
+            "Optimized QIR-to-QIS conversion on Windows with LLVM 21 is currently supported only for `target=\"x86-64\"`. Re-run with `target=\"x86-64\"` for optimized conversion, or use `opt_level=0` with `target=\"native\"` for the conservative path (requested opt_level={opt_level}, target=\"{target}\")."
         ));
     }
 
@@ -127,14 +130,17 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
     let target_machine = get_target_machine(target, opt)
         .map_err(|e| format!("Failed to get target machine: {e}"))?;
 
-    let (data_layout, triple) = {
-        (
-            target_machine.get_target_data().get_data_layout(),
-            target_machine.get_triple(),
-        )
-    };
-    module.set_triple(&triple);
-    module.set_data_layout(&data_layout);
+    #[cfg(not(windows))]
+    {
+        let (data_layout, triple) = {
+            (
+                target_machine.get_target_data().get_data_layout(),
+                target_machine.get_triple(),
+            )
+        };
+        module.set_triple(&triple);
+        module.set_data_layout(&data_layout);
+    }
     module
         .run_passes(opt_str, &target_machine, PassBuilderOptions::create())
         .map_err(|e| format!("Failed to run passes: {e}"))?;
