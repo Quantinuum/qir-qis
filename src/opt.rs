@@ -131,6 +131,14 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
     let target_machine = get_target_machine(target, opt)
         .map_err(|e| format!("Failed to get target machine: {e}"))?;
 
+    #[cfg(windows)]
+    {
+        let (_, _, triple, _) = target_config;
+        module.set_triple(&TargetTriple::create(triple));
+        let data_layout = target_machine.get_target_data().get_data_layout();
+        module.set_data_layout(&data_layout);
+    }
+
     #[cfg(not(windows))]
     {
         let (data_layout, triple) = {
