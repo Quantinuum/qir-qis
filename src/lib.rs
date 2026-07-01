@@ -4909,6 +4909,14 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_invalid_target_reports_invalid_architecture_even_when_optimized_requested() {
+        let bc_bytes = load_fixture_bitcode("tests/data/base.ll");
+        let err = qir_to_qis(&bc_bytes, 1, "invalid-target", None)
+            .expect_err("invalid targets should fail before platform-specific optimized guards");
+        assert!(err.contains("Invalid target architecture: invalid-target"));
+    }
+
+    #[test]
     fn test_qir_ll_to_bc_accepts_legacy_typed_pointers() {
         let ll_text =
             std::fs::read_to_string("tests/data/base.ll").expect("Failed to read base.ll");

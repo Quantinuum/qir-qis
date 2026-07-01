@@ -90,8 +90,11 @@ fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<Targ
 /// # Errors
 /// Returns an error if module verification fails
 pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), String> {
+    let target_config =
+        get_target_config(target).map_err(|e| format!("Failed to get target machine: {e}"))?;
+
     #[cfg(windows)]
-    if opt_level > 0 && target != WINDOWS_STABLE_OPT_TARGET {
+    if opt_level > 0 && target_config != X86_CONFIG {
         return Err(format!(
             "Optimized QIR-to-QIS conversion on Windows with LLVM 21 is currently supported only for `target=\"x86-64\"`. Re-run with `target=\"x86-64\"` for optimized conversion, or use `opt_level=0` with `target=\"native\"` for the conservative path (requested opt_level={opt_level}, target=\"{target}\")."
         ));
@@ -101,8 +104,6 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
     // Avoid creating a TargetMachine in this mode; TargetMachine teardown has
     // caused access violations in some Windows environments.
     if opt_level == 0 {
-        let target_config =
-            get_target_config(target).map_err(|e| format!("Failed to get target machine: {e}"))?;
         #[cfg(not(windows))]
         {
             let triple = if target_config == NATIVE_CONFIG {
