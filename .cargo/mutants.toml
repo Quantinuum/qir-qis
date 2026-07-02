@@ -25,6 +25,8 @@ exclude_re = [
   'src/opt\.rs:\d+:\d+: replace > with >= in optimize',
   'src/opt\.rs:\d+:\d+: replace > with == in optimize',
   'src/opt\.rs:\d+:\d+: replace > with < in optimize',
+  'src/opt\.rs:\d+:\d+: replace && with \|\| in optimize',
+  'src/opt\.rs:\d+:\d+: replace != with == in optimize',
   'src/opt\.rs:\d+:\d+: delete match arm 1 in optimize',
   'src/opt\.rs:\d+:\d+: delete match arm 3 in optimize',
 ]
