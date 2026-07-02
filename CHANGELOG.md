@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10](https://github.com/Quantinuum/qir-qis/compare/v0.1.9...v0.1.10) (2026-07-02)
+
+
+### Bug Fixes
+
+* consolidate repeated validate_qir module flag errors ([#120](https://github.com/Quantinuum/qir-qis/issues/120)) ([f481928](https://github.com/Quantinuum/qir-qis/commit/f48192877b3b6952530f772271c2af96afa9a8f2))
+* **windows:** restore optimized llvm21 conversion coverage ([#121](https://github.com/Quantinuum/qir-qis/issues/121)) ([eb9dbd4](https://github.com/Quantinuum/qir-qis/commit/eb9dbd4fc9fa5e07849466c68db852a025ee0a4c))
+
 ## [0.1.9](https://github.com/Quantinuum/qir-qis/compare/v0.1.8...v0.1.9) (2026-06-29)
 
 
