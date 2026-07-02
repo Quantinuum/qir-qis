@@ -3709,9 +3709,9 @@ mod aux {
                 format_grouped_module_flag_error(
                     "Missing required module flag",
                     "Missing required module flags",
-                    &empty
+                    &empty,
                 ),
-                None
+                None,
             );
         }
     }
