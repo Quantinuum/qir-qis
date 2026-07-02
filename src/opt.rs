@@ -26,7 +26,12 @@ const AARCH64_CONFIG: TargetConfig = (
 );
 
 /// Default config for x86-64 codegen target
+#[cfg(not(windows))]
 const X86_CONFIG: TargetConfig = ("x86-64", "x86-64", "x86_64-unknown-linux-gnu", "");
+
+/// Default config for x86-64 codegen target on Windows (uses MSVC triple)
+#[cfg(windows)]
+const X86_CONFIG: TargetConfig = ("x86-64", "x86-64", "x86_64-pc-windows-msvc", "");
 
 /// Sentinel config for native codegen target
 const NATIVE_CONFIG: TargetConfig = ("", "", "", "");
@@ -87,10 +92,12 @@ fn get_target_machine(target: &str, opt_level: OptimizationLevel) -> Result<Targ
 /// # Errors
 /// Returns an error if module verification fails
 pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), String> {
+    let target_config =
+        get_target_config(target).map_err(|e| format!("Failed to get target config: {e}"))?;
     #[cfg(windows)]
-    if opt_level > 0 {
+    if opt_level > 0 && target_config != X86_CONFIG {
         return Err(format!(
-            "Optimized QIR-to-QIS conversion is currently unavailable on Windows with the LLVM 21 integration. Re-run with `opt_level=0` and preferably `target=\"native\"` (requested opt_level={opt_level}, target=\"{target}\")."
+            "Optimized QIR-to-QIS conversion on Windows with LLVM 21 is currently supported only for `target=\"x86-64\"`. Re-run with `target=\"x86-64\"` for optimized conversion, or use `opt_level=0` with `target=\"native\"` for the conservative path (requested opt_level={opt_level}, target=\"{target}\")."
         ));
     }
 
@@ -98,8 +105,6 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
     // Avoid creating a TargetMachine in this mode; TargetMachine teardown has
     // caused access violations in some Windows environments.
     if opt_level == 0 {
-        let target_config =
-            get_target_config(target).map_err(|e| format!("Failed to get target machine: {e}"))?;
         #[cfg(not(windows))]
         {
             let triple = if target_config == NATIVE_CONFIG {
@@ -127,14 +132,25 @@ pub fn optimize(module: &Module, opt_level: u32, target: &str) -> Result<(), Str
     let target_machine = get_target_machine(target, opt)
         .map_err(|e| format!("Failed to get target machine: {e}"))?;
 
-    let (data_layout, triple) = {
-        (
-            target_machine.get_target_data().get_data_layout(),
-            target_machine.get_triple(),
-        )
-    };
-    module.set_triple(&triple);
-    module.set_data_layout(&data_layout);
+    #[cfg(windows)]
+    {
+        let (_, _, triple, _) = target_config;
+        module.set_triple(&TargetTriple::create(triple));
+        let data_layout = target_machine.get_target_data().get_data_layout();
+        module.set_data_layout(&data_layout);
+    }
+
+    #[cfg(not(windows))]
+    {
+        let (data_layout, triple) = {
+            (
+                target_machine.get_target_data().get_data_layout(),
+                target_machine.get_triple(),
+            )
+        };
+        module.set_triple(&triple);
+        module.set_data_layout(&data_layout);
+    }
     module
         .run_passes(opt_str, &target_machine, PassBuilderOptions::create())
         .map_err(|e| format!("Failed to run passes: {e}"))?;
@@ -198,5 +214,22 @@ mod tests {
 
         let triple = module.get_triple().as_str().to_string_lossy().into_owned();
         assert_eq!(triple, "x86_64-unknown-linux-gnu");
+    }
+
+    /// On Windows the x86-64 optimized path must embed a Windows MSVC triple, not the Linux one.
+    #[cfg(windows)]
+    #[test]
+    fn test_optimize_windows_x86_64_sets_windows_triple() {
+        use super::optimize;
+        use inkwell::context::Context;
+
+        let context = Context::create();
+        let module = context.create_module("test");
+        optimize(&module, 1, "x86-64").expect("Windows x86-64 O1 optimize should succeed");
+        let triple = module.get_triple().as_str().to_string_lossy().into_owned();
+        assert_eq!(
+            triple, "x86_64-pc-windows-msvc",
+            "Windows optimized path must set the MSVC triple, not the Linux cross-compile triple"
+        );
     }
 }
