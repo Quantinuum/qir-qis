@@ -3697,6 +3697,24 @@ mod aux {
             "Failed to build call to random_advance",
         )
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::format_grouped_module_flag_error;
+
+        #[test]
+        fn test_format_grouped_module_flag_error_returns_none_for_empty_flag_names() {
+            let empty: [String; 0] = [];
+            assert_eq!(
+                format_grouped_module_flag_error(
+                    "Missing required module flag",
+                    "Missing required module flags",
+                    &empty,
+                ),
+                None,
+            );
+        }
+    }
 }
 
 pub(crate) fn decode_llvm_bytes(value: &[u8]) -> Option<&str> {
