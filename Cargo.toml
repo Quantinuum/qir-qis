@@ -113,4 +113,4 @@ wildcard_enum_match_arm = "deny"
 insta = { version = "1", features = ["filters"] }
 proptest = "1"
 tempfile = "3"
-wasm-encoder = "0.253"
+wasm-encoder = "0.254"
