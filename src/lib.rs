@@ -1017,7 +1017,17 @@ mod aux {
         _wasm_fns: &BTreeMap<String, u64>,
         capability_flags: CapabilityFlags,
         errors: &mut Vec<String>,
-    ) {
+    ) -> Vec<String> {
+        // Errors are collected per-check so that, once merged back into
+        // `errors`, they preserve the same relative grouping/order that the
+        // previously-separate sequential passes produced.
+        let mut functions_errors = Vec::new();
+        let mut result_slot_errors = Vec::new();
+        let mut static_qubit_errors = Vec::new();
+        let mut dynamic_result_placement_errors = Vec::new();
+        let mut dynamic_array_backing_errors = Vec::new();
+        let mut capability_errors = Vec::new();
+
         // --- Setup shared by the per-call-site checks below (mirrors what each
         // individual pass computed before its own traversal). ---
         let required_num_qubits_for_barrier = get_required_num_qubits(entry_fn);
@@ -1029,7 +1039,7 @@ mod aux {
             match get_required_num_results(entry_fn) {
                 Ok(required) => Some(required),
                 Err(err) => {
-                    errors.push(err);
+                    result_slot_errors.push(err);
                     None
                 }
             }
@@ -1042,30 +1052,22 @@ mod aux {
         } else {
             match get_required_num_qubits_strict(entry_fn) {
                 Ok(required_num_qubits) => {
-                    let previous_error_count = errors.len();
-                    let helper_qubit_params = infer_ir_defined_helper_qubit_params(module, errors);
-                    if errors.len() > previous_error_count {
-                        None
-                    } else {
+                    let mut infer_errors = Vec::new();
+                    let helper_qubit_params =
+                        infer_ir_defined_helper_qubit_params(module, &mut infer_errors);
+                    if infer_errors.is_empty() {
                         Some((required_num_qubits, helper_qubit_params))
+                    } else {
+                        static_qubit_errors.extend(infer_errors);
+                        None
                     }
                 }
                 Err(err) => {
-                    errors.push(err);
+                    static_qubit_errors.push(err);
                     None
                 }
             }
         };
-
-        // Errors are collected per-check so that, once merged back into
-        // `errors`, they preserve the same relative grouping/order that the
-        // previously-separate sequential passes produced.
-        let mut functions_errors = Vec::new();
-        let mut result_slot_errors = Vec::new();
-        let mut static_qubit_errors = Vec::new();
-        let mut dynamic_result_placement_errors = Vec::new();
-        let mut dynamic_array_backing_errors = Vec::new();
-        let mut capability_errors = Vec::new();
 
         for fun in module.get_functions() {
             // --- validate_functions (function-level only; no instruction walk) ---
@@ -1216,7 +1218,10 @@ mod aux {
                     let result_slot_relevant =
                         required_num_results.is_some() && result_operand_index.is_some();
                     let direct_qubit_positions = static_qubit_ctx.as_ref().map(|_| {
-                        direct_qubit_operand_positions(&callee_name, call.count_arguments() as usize)
+                        direct_qubit_operand_positions(
+                            &callee_name,
+                            call.count_arguments() as usize,
+                        )
                     });
                     let helper_qubit_positions = static_qubit_ctx
                         .as_ref()
@@ -1225,7 +1230,9 @@ mod aux {
                         && (direct_qubit_positions
                             .as_ref()
                             .is_some_and(|positions| !positions.is_empty())
-                            || helper_qubit_positions.is_some_and(|positions| !positions.is_empty()));
+                            || helper_qubit_positions
+                                .is_some_and(|positions| !positions.is_empty()));
+                    let static_qubit_operand_inspection_relevant = static_qubit_ctx.is_some();
                     let array_backing_relevant = matches!(
                         callee_name.as_str(),
                         "__quantum__rt__qubit_array_allocate"
@@ -1235,7 +1242,11 @@ mod aux {
                             | "__quantum__rt__result_array_record_output"
                     );
 
-                    if !result_slot_relevant && !static_qubit_relevant && !array_backing_relevant {
+                    if !result_slot_relevant
+                        && !static_qubit_relevant
+                        && !static_qubit_operand_inspection_relevant
+                        && !array_backing_relevant
+                    {
                         continue;
                     }
 
@@ -1243,14 +1254,12 @@ mod aux {
                         Ok(args) => args,
                         Err(err) => {
                             if result_slot_relevant {
-                                result_slot_errors.push(format!(
-                                    "Failed to inspect `{callee_name}` call: {err}"
-                                ));
+                                result_slot_errors
+                                    .push(format!("Failed to inspect `{callee_name}` call: {err}"));
                             }
-                            if static_qubit_relevant {
-                                static_qubit_errors.push(format!(
-                                    "Failed to inspect `{callee_name}` call: {err}"
-                                ));
+                            if static_qubit_operand_inspection_relevant {
+                                static_qubit_errors
+                                    .push(format!("Failed to inspect `{callee_name}` call: {err}"));
                             }
                             if array_backing_relevant {
                                 dynamic_array_backing_errors.push(format!(
@@ -1321,7 +1330,8 @@ mod aux {
 
                     // --- validate_dynamic_array_allocation_backing ---
                     if array_backing_relevant {
-                        if call_args.len() < 2 || !matches!(call_args[0], BasicValueEnum::IntValue(_))
+                        if call_args.len() < 2
+                            || !matches!(call_args[0], BasicValueEnum::IntValue(_))
                         {
                             dynamic_array_backing_errors.push(format!(
                                 "{callee_name} requires a constant array length and backing array pointer"
@@ -1368,7 +1378,7 @@ mod aux {
         errors.extend(static_qubit_errors);
         errors.extend(dynamic_result_placement_errors);
         errors.extend(dynamic_array_backing_errors);
-        errors.extend(capability_errors);
+        capability_errors
     }
 
     // SAFETY: `ProcessCallArgs` is created and consumed synchronously within a single
@@ -4181,9 +4191,11 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
 
     let wasm_fns = get_wasm_functions(wasm_bytes)?;
 
-    validate_qir_call_sites(&module, entry_fn, &wasm_fns, capability_flags, &mut errors);
+    let capability_errors =
+        validate_qir_call_sites(&module, entry_fn, &wasm_fns, capability_flags, &mut errors);
 
     validate_module_flags(&module, &mut errors);
+    errors.extend(capability_errors);
 
     if !errors.is_empty() {
         return Err(errors.join("; "));
@@ -5635,6 +5647,75 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
         assert_eq!(
             err,
             "Missing or unsupported module flag: qir_major_version; Unsupported dynamic_qubit_management: expected one of i1 false, i1 true; Missing or unsupported module flag: arrays"
+        );
+    }
+
+    #[test]
+    fn test_validate_qir_preserves_function_before_invalid_required_num_results_error_ordering() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "abc",
+            "1",
+            "declare void @__quantum__qis__bogus__body(%Qubit*)",
+            r"  %q0 = inttoptr i64 0 to %Qubit*
+  call void @__quantum__qis__bogus__body(%Qubit* %q0)",
+        );
+
+        let bc_bytes = qir_ll_to_bc(&ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("invalid required_num_results and unsupported QIS call should fail");
+
+        let unsupported_fn_idx = err
+            .find("Unsupported QIR QIS function: __quantum__qis__bogus__body")
+            .expect("unsupported function error should be present");
+        let invalid_required_num_results_idx = err
+            .find("Invalid required_num_results attribute value: abc")
+            .expect("invalid required_num_results error should be present");
+
+        assert!(
+            unsupported_fn_idx < invalid_required_num_results_idx,
+            "unsupported function error should be reported before required_num_results parse error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_qir_preserves_module_flag_before_capability_error_ordering() {
+        let ll_text = r#"
+%Result = type opaque
+
+declare %Result* @__quantum__rt__result_allocate(ptr)
+
+define i64 @Entry_Point_Name() #0 {
+entry:
+  %tmp = alloca i64
+  %res = call %Result* @__quantum__rt__result_allocate(ptr %tmp)
+  ret i64 0
+}
+
+attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", !4}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+!4 = !{i32 99}
+"#;
+
+        let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
+        let err = validate_qir(&bc_bytes, None)
+            .expect_err("malformed module flags and capability misuse should fail");
+
+        let module_flag_idx = err
+            .find("Missing or unsupported module flag: qir_major_version")
+            .expect("module flag error should be present");
+        let capability_idx = err
+            .find("__quantum__rt__result_allocate requires `dynamic_result_management=true`")
+            .expect("capability error should be present");
+
+        assert!(
+            module_flag_idx < capability_idx,
+            "module flag errors should be reported before capability errors: {err}"
         );
     }
 
