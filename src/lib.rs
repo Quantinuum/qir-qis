@@ -235,173 +235,6 @@ mod aux {
         // Windows Arm64 on March 23, 2026 reproduced STATUS_ACCESS_VIOLATION.
     }
 
-    pub fn validate_functions(
-        module: &Module,
-        entry_fn: FunctionValue,
-        _wasm_fns: &BTreeMap<String, u64>,
-        errors: &mut Vec<String>,
-    ) {
-        // Extract required_num_qubits for barrier validation
-        let required_num_qubits = get_required_num_qubits(entry_fn);
-
-        for fun in module.get_functions() {
-            if fun == entry_fn {
-                // Skip the entry function
-                continue;
-            }
-            let fn_name = fun.get_name().to_str().unwrap_or("");
-            if fn_name.starts_with("qir_qis.") {
-                errors.push(format!(
-                    "Input QIR must not define internal helper function: {fn_name}"
-                ));
-                continue;
-            }
-            if fn_name.starts_with("__quantum__qis__") {
-                // Check for barrier instructions with arbitrary arity (barrier1, barrier2, ...)
-                let is_barrier = if fn_name.starts_with("__quantum__qis__barrier")
-                    && fn_name.ends_with("__body")
-                {
-                    parse_barrier_arity(fn_name).is_ok_and(|arity| {
-                        // Validate barrier arity doesn't exceed module's required_num_qubits
-                        if let Some(max_qubits) = required_num_qubits
-                            && let Ok(arity_u32) = u32::try_from(arity)
-                            && arity_u32 > max_qubits
-                        {
-                            errors.push(format!(
-                "Barrier arity {arity} exceeds module's required_num_qubits ({max_qubits})"
-            ));
-                        }
-                        true
-                    })
-                } else {
-                    false
-                };
-
-                if !is_barrier && !ALLOWED_QIS_FNS.contains(&fn_name) {
-                    errors.push(format!("Unsupported QIR QIS function: {fn_name}"));
-                }
-                continue;
-            } else if fn_name.starts_with("__quantum__rt__") {
-                if !BASE_ALLOWED_RT_FNS.contains(&fn_name)
-                    && !is_capability_gated_rt_function(fn_name)
-                {
-                    errors.push(format!("Unsupported QIR RT function: {fn_name}"));
-                } else if is_capability_gated_rt_function(fn_name)
-                    && let Err(err) = validate_dynamic_rt_signature(fn_name, fun.get_type())
-                {
-                    errors.push(err);
-                }
-                continue;
-            } else if fn_name.starts_with("___") {
-                if !ALLOWED_QTM_FNS.contains(&fn_name) {
-                    errors.push(format!("Unsupported Qtm QIS function: {fn_name}"));
-                }
-                continue;
-            }
-
-            if fun.count_basic_blocks() > 0 {
-                // IR defined functions
-                // TODO: allowed only if "ir_functions" is true
-                if fn_name == "main" {
-                    errors.push("IR defined function cannot be called `main`".to_string());
-                }
-                // See whether a function returns a pointer type
-                if fun
-                    .get_type()
-                    .get_return_type()
-                    .is_some_and(BasicTypeEnum::is_pointer_type)
-                {
-                    errors.push(format!("Function `{fn_name}` cannot return a pointer type"));
-                }
-                continue;
-            }
-
-            log::debug!(
-                "External function `{fn_name}` found, leaving as-is for downstream processing"
-            );
-        }
-    }
-
-    pub fn validate_result_slot_usage(
-        module: &Module,
-        entry_fn: FunctionValue,
-        errors: &mut Vec<String>,
-    ) {
-        if entry_fn
-            .get_string_attribute(AttributeLoc::Function, "required_num_results")
-            .is_none()
-        {
-            return;
-        }
-
-        let required_num_results = match get_required_num_results(entry_fn) {
-            Ok(required_num_results) => required_num_results,
-            Err(err) => {
-                errors.push(err);
-                return;
-            }
-        };
-
-        for function in module.get_functions() {
-            for bb in function.get_basic_blocks() {
-                for instr in bb.get_instructions() {
-                    let Ok(call) = CallSiteValue::try_from(instr) else {
-                        continue;
-                    };
-                    let Some(fn_name) = call.get_called_fn_value().and_then(|f| {
-                        f.as_global_value()
-                            .get_name()
-                            .to_str()
-                            .ok()
-                            .map(ToOwned::to_owned)
-                    }) else {
-                        continue;
-                    };
-
-                    let result_operand_index = match fn_name.as_str() {
-                        "__quantum__qis__mz__body"
-                        | "__quantum__qis__m__body"
-                        | "__quantum__qis__mresetz__body" => 1,
-                        "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => 0,
-                        _ => continue,
-                    };
-
-                    let call_args = match extract_operands(&instr) {
-                        Ok(args) => args,
-                        Err(err) => {
-                            errors.push(format!("Failed to inspect `{fn_name}` call: {err}"));
-                            continue;
-                        }
-                    };
-                    let Some(result_arg) = call_args.get(result_operand_index).copied() else {
-                        errors.push(format!("Call to `{fn_name}` is missing a result operand"));
-                        continue;
-                    };
-
-                    let BasicValueEnum::PointerValue(result_ptr) = result_arg else {
-                        errors.push(format!(
-                            "Call to `{fn_name}` has a non-pointer result operand"
-                        ));
-                        continue;
-                    };
-
-                    let result_idx = match get_index(result_ptr) {
-                        Ok(idx) => idx,
-                        Err(err) => {
-                            errors.push(format!(
-                                "Failed to inspect result operand for `{fn_name}`: {err}"
-                            ));
-                            continue;
-                        }
-                    };
-                    if let Err(err) = checked_result_index(result_idx, required_num_results) {
-                        errors.push(err);
-                    }
-                }
-            }
-        }
-    }
-
     fn direct_qubit_operand_positions(fn_name: &str, arg_count: usize) -> Vec<usize> {
         match fn_name {
             "__quantum__qis__rxy__body" | "__quantum__qis__u1q__body" => vec![2],
@@ -1074,6 +907,10 @@ mod aux {
         Err(array_backing_error())
     }
 
+    /// Standalone dynamic-array-allocation-backing check, retained for narrow
+    /// targeted unit tests. Production validation runs this same logic as part
+    /// of the single consolidated traversal in [`validate_qir_call_sites`].
+    #[cfg(test)]
     pub fn validate_dynamic_array_allocation_backing(module: &Module, errors: &mut Vec<String>) {
         for fun in module.get_functions() {
             for bb in fun.get_basic_blocks() {
@@ -1156,72 +993,146 @@ mod aux {
         }
     }
 
-    pub fn validate_capability_usage(
-        module: &Module,
-        flags: CapabilityFlags,
-        errors: &mut Vec<String>,
-    ) {
-        for fun in module.get_functions() {
-            for bb in fun.get_basic_blocks() {
-                for instr in bb.get_instructions() {
-                    let Ok(call) = CallSiteValue::try_from(instr) else {
-                        continue;
-                    };
-                    let Some(callee) = call.get_called_fn_value() else {
-                        continue;
-                    };
-                    let callee_global = callee.as_global_value();
-                    let callee_name = callee_global.get_name();
-                    let Some(fn_name) = callee_name.to_str().ok() else {
-                        continue;
-                    };
-
-                    match fn_name {
-                        "__quantum__rt__qubit_array_allocate"
-                        | "__quantum__rt__qubit_array_release"
-                            if !flags.arrays || !flags.dynamic_qubit_management =>
-                        {
-                            errors.push(format!(
-                                "{fn_name} requires both `arrays=true` and `dynamic_qubit_management=true`"
-                            ));
-                        }
-                        "__quantum__rt__result_array_allocate"
-                        | "__quantum__rt__result_array_release"
-                        | "__quantum__rt__result_array_record_output"
-                            if !flags.arrays || !flags.dynamic_result_management =>
-                        {
-                            errors.push(format!(
-                                "{fn_name} requires both `arrays=true` and `dynamic_result_management=true`"
-                            ));
-                        }
-                        "__quantum__rt__qubit_allocate" | "__quantum__rt__qubit_release"
-                            if !flags.dynamic_qubit_management =>
-                        {
-                            errors.push(format!(
-                                "{fn_name} requires `dynamic_qubit_management=true`"
-                            ));
-                        }
-                        "__quantum__rt__result_allocate" | "__quantum__rt__result_release"
-                            if !flags.dynamic_result_management =>
-                        {
-                            errors.push(format!(
-                                "{fn_name} requires `dynamic_result_management=true`"
-                            ));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn validate_dynamic_result_allocation_placement(
+    /// Single-pass validation used by [`crate::validate_qir`], replacing what
+    /// were previously five separate full-module traversals: function-level
+    /// checks (allow-listed QIS/RT/Qtm functions, barrier arity, IR-defined
+    /// function shape), result-slot usage, the per-call-site half of static
+    /// qubit-helper usage, dynamic result-allocation placement, dynamic
+    /// array-allocation backing, and capability-gated runtime function usage.
+    ///
+    /// Each of those checks used to independently walk every function, basic
+    /// block, and instruction in the module, re-deriving the same call-site
+    /// data (callee name and call arguments) each time. This function performs
+    /// a single walk and shares that per-call-site data across all of the
+    /// checks, while producing the same errors (grouped in the same relative
+    /// order per check) that calling the individual passes in sequence used to
+    /// produce.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "single consolidated validation pass mirrors five previously-separate functions"
+    )]
+    pub fn validate_qir_call_sites(
         module: &Module,
         entry_fn: FunctionValue,
+        _wasm_fns: &BTreeMap<String, u64>,
+        capability_flags: CapabilityFlags,
         errors: &mut Vec<String>,
     ) {
+        // --- Setup shared by the per-call-site checks below (mirrors what each
+        // individual pass computed before its own traversal). ---
+        let required_num_qubits_for_barrier = get_required_num_qubits(entry_fn);
+
+        let required_num_results = if entry_fn
+            .get_string_attribute(AttributeLoc::Function, "required_num_results")
+            .is_some()
+        {
+            match get_required_num_results(entry_fn) {
+                Ok(required) => Some(required),
+                Err(err) => {
+                    errors.push(err);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let static_qubit_ctx = if capability_flags.dynamic_qubit_management {
+            None
+        } else {
+            match get_required_num_qubits_strict(entry_fn) {
+                Ok(required_num_qubits) => {
+                    let previous_error_count = errors.len();
+                    let helper_qubit_params = infer_ir_defined_helper_qubit_params(module, errors);
+                    if errors.len() > previous_error_count {
+                        None
+                    } else {
+                        Some((required_num_qubits, helper_qubit_params))
+                    }
+                }
+                Err(err) => {
+                    errors.push(err);
+                    None
+                }
+            }
+        };
+
+        // Errors are collected per-check so that, once merged back into
+        // `errors`, they preserve the same relative grouping/order that the
+        // previously-separate sequential passes produced.
+        let mut functions_errors = Vec::new();
+        let mut result_slot_errors = Vec::new();
+        let mut static_qubit_errors = Vec::new();
+        let mut dynamic_result_placement_errors = Vec::new();
+        let mut dynamic_array_backing_errors = Vec::new();
+        let mut capability_errors = Vec::new();
+
         for fun in module.get_functions() {
-            let allowed_block = if fun == entry_fn {
+            // --- validate_functions (function-level only; no instruction walk) ---
+            if fun != entry_fn {
+                let fn_name = fun.get_name().to_str().unwrap_or("");
+                if fn_name.starts_with("qir_qis.") {
+                    functions_errors.push(format!(
+                        "Input QIR must not define internal helper function: {fn_name}"
+                    ));
+                } else if fn_name.starts_with("__quantum__qis__") {
+                    let is_barrier = if fn_name.starts_with("__quantum__qis__barrier")
+                        && fn_name.ends_with("__body")
+                    {
+                        parse_barrier_arity(fn_name).is_ok_and(|arity| {
+                            if let Some(max_qubits) = required_num_qubits_for_barrier
+                                && let Ok(arity_u32) = u32::try_from(arity)
+                                && arity_u32 > max_qubits
+                            {
+                                functions_errors.push(format!(
+                    "Barrier arity {arity} exceeds module's required_num_qubits ({max_qubits})"
+                ));
+                            }
+                            true
+                        })
+                    } else {
+                        false
+                    };
+
+                    if !is_barrier && !ALLOWED_QIS_FNS.contains(&fn_name) {
+                        functions_errors.push(format!("Unsupported QIR QIS function: {fn_name}"));
+                    }
+                } else if fn_name.starts_with("__quantum__rt__") {
+                    if !BASE_ALLOWED_RT_FNS.contains(&fn_name)
+                        && !is_capability_gated_rt_function(fn_name)
+                    {
+                        functions_errors.push(format!("Unsupported QIR RT function: {fn_name}"));
+                    } else if is_capability_gated_rt_function(fn_name)
+                        && let Err(err) = validate_dynamic_rt_signature(fn_name, fun.get_type())
+                    {
+                        functions_errors.push(err);
+                    }
+                } else if fn_name.starts_with("___") {
+                    if !ALLOWED_QTM_FNS.contains(&fn_name) {
+                        functions_errors.push(format!("Unsupported Qtm QIS function: {fn_name}"));
+                    }
+                } else if fun.count_basic_blocks() > 0 {
+                    // IR defined functions
+                    if fn_name == "main" {
+                        functions_errors
+                            .push("IR defined function cannot be called `main`".to_string());
+                    }
+                    if fun
+                        .get_type()
+                        .get_return_type()
+                        .is_some_and(BasicTypeEnum::is_pointer_type)
+                    {
+                        functions_errors
+                            .push(format!("Function `{fn_name}` cannot return a pointer type"));
+                    }
+                } else {
+                    log::debug!(
+                        "External function `{fn_name}` found, leaving as-is for downstream processing"
+                    );
+                }
+            }
+
+            let allowed_result_alloc_block = if fun == entry_fn {
                 fun.get_first_basic_block()
             } else {
                 None
@@ -1232,26 +1143,232 @@ mod aux {
                     let Ok(call) = CallSiteValue::try_from(instr) else {
                         continue;
                     };
-                    let Some(callee) = call.get_called_fn_value() else {
+                    let Some(callee_name) = call.get_called_fn_value().and_then(|f| {
+                        f.as_global_value()
+                            .get_name()
+                            .to_str()
+                            .ok()
+                            .map(ToOwned::to_owned)
+                    }) else {
                         continue;
                     };
-                    let callee_global = callee.as_global_value();
-                    let callee_name = callee_global.get_name();
-                    let Some(fn_name) = callee_name.to_str().ok() else {
-                        continue;
-                    };
+
+                    // --- validate_dynamic_result_allocation_placement ---
                     if matches!(
-                        fn_name,
+                        callee_name.as_str(),
                         "__quantum__rt__result_allocate" | "__quantum__rt__result_array_allocate"
-                    ) && Some(bb) != allowed_block
+                    ) && Some(bb) != allowed_result_alloc_block
                     {
-                        errors.push(format!(
-                            "{fn_name} is only supported in the entry block because dynamic result slots are lowered to stack storage"
+                        dynamic_result_placement_errors.push(format!(
+                            "{callee_name} is only supported in the entry block because dynamic result slots are lowered to stack storage"
                         ));
+                    }
+
+                    // --- validate_capability_usage ---
+                    match callee_name.as_str() {
+                        "__quantum__rt__qubit_array_allocate"
+                        | "__quantum__rt__qubit_array_release"
+                            if !capability_flags.arrays
+                                || !capability_flags.dynamic_qubit_management =>
+                        {
+                            capability_errors.push(format!(
+                                "{callee_name} requires both `arrays=true` and `dynamic_qubit_management=true`"
+                            ));
+                        }
+                        "__quantum__rt__result_array_allocate"
+                        | "__quantum__rt__result_array_release"
+                        | "__quantum__rt__result_array_record_output"
+                            if !capability_flags.arrays
+                                || !capability_flags.dynamic_result_management =>
+                        {
+                            capability_errors.push(format!(
+                                "{callee_name} requires both `arrays=true` and `dynamic_result_management=true`"
+                            ));
+                        }
+                        "__quantum__rt__qubit_allocate" | "__quantum__rt__qubit_release"
+                            if !capability_flags.dynamic_qubit_management =>
+                        {
+                            capability_errors.push(format!(
+                                "{callee_name} requires `dynamic_qubit_management=true`"
+                            ));
+                        }
+                        "__quantum__rt__result_allocate" | "__quantum__rt__result_release"
+                            if !capability_flags.dynamic_result_management =>
+                        {
+                            capability_errors.push(format!(
+                                "{callee_name} requires `dynamic_result_management=true`"
+                            ));
+                        }
+                        _ => {}
+                    }
+
+                    // Determine, without extracting operands, whether any check
+                    // below needs this call site's arguments.
+                    let result_operand_index = match callee_name.as_str() {
+                        "__quantum__qis__mz__body"
+                        | "__quantum__qis__m__body"
+                        | "__quantum__qis__mresetz__body" => Some(1),
+                        "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => {
+                            Some(0)
+                        }
+                        _ => None,
+                    };
+                    let result_slot_relevant =
+                        required_num_results.is_some() && result_operand_index.is_some();
+                    let direct_qubit_positions = static_qubit_ctx.as_ref().map(|_| {
+                        direct_qubit_operand_positions(&callee_name, call.count_arguments() as usize)
+                    });
+                    let helper_qubit_positions = static_qubit_ctx
+                        .as_ref()
+                        .and_then(|(_, helper_qubit_params)| helper_qubit_params.get(&callee_name));
+                    let static_qubit_relevant = static_qubit_ctx.is_some()
+                        && (direct_qubit_positions
+                            .as_ref()
+                            .is_some_and(|positions| !positions.is_empty())
+                            || helper_qubit_positions.is_some_and(|positions| !positions.is_empty()));
+                    let array_backing_relevant = matches!(
+                        callee_name.as_str(),
+                        "__quantum__rt__qubit_array_allocate"
+                            | "__quantum__rt__qubit_array_release"
+                            | "__quantum__rt__result_array_allocate"
+                            | "__quantum__rt__result_array_release"
+                            | "__quantum__rt__result_array_record_output"
+                    );
+
+                    if !result_slot_relevant && !static_qubit_relevant && !array_backing_relevant {
+                        continue;
+                    }
+
+                    let call_args = match extract_operands(&instr) {
+                        Ok(args) => args,
+                        Err(err) => {
+                            if result_slot_relevant {
+                                result_slot_errors.push(format!(
+                                    "Failed to inspect `{callee_name}` call: {err}"
+                                ));
+                            }
+                            if static_qubit_relevant {
+                                static_qubit_errors.push(format!(
+                                    "Failed to inspect `{callee_name}` call: {err}"
+                                ));
+                            }
+                            if array_backing_relevant {
+                                dynamic_array_backing_errors.push(format!(
+                                    "Failed to inspect {callee_name} operands: {err}"
+                                ));
+                            }
+                            continue;
+                        }
+                    };
+
+                    // --- validate_result_slot_usage ---
+                    if let (Some(required_num_results), Some(result_operand_index)) =
+                        (required_num_results, result_operand_index)
+                    {
+                        match call_args.get(result_operand_index).copied() {
+                            None => result_slot_errors.push(format!(
+                                "Call to `{callee_name}` is missing a result operand"
+                            )),
+                            Some(BasicValueEnum::PointerValue(result_ptr)) => {
+                                match get_index(result_ptr) {
+                                    Ok(result_idx) => {
+                                        if let Err(err) =
+                                            checked_result_index(result_idx, required_num_results)
+                                        {
+                                            result_slot_errors.push(err);
+                                        }
+                                    }
+                                    Err(err) => result_slot_errors.push(format!(
+                                        "Failed to inspect result operand for `{callee_name}`: {err}"
+                                    )),
+                                }
+                            }
+                            Some(_) => result_slot_errors.push(format!(
+                                "Call to `{callee_name}` has a non-pointer result operand"
+                            )),
+                        }
+                    }
+
+                    // --- validate_static_qubit_helper_usage (per-call-site pass) ---
+                    if let Some((required_num_qubits, _)) = static_qubit_ctx.as_ref() {
+                        if let Some(direct_positions) = direct_qubit_positions
+                            && !direct_positions.is_empty()
+                        {
+                            validate_static_qubit_call_operands(
+                                fun,
+                                &callee_name,
+                                direct_positions,
+                                &call_args,
+                                *required_num_qubits,
+                                false,
+                                &mut static_qubit_errors,
+                            );
+                        }
+                        if let Some(qubit_positions) = helper_qubit_positions
+                            && !qubit_positions.is_empty()
+                        {
+                            validate_static_qubit_call_operands(
+                                fun,
+                                &callee_name,
+                                qubit_positions.iter().copied(),
+                                &call_args,
+                                *required_num_qubits,
+                                true,
+                                &mut static_qubit_errors,
+                            );
+                        }
+                    }
+
+                    // --- validate_dynamic_array_allocation_backing ---
+                    if array_backing_relevant {
+                        if call_args.len() < 2 || !matches!(call_args[0], BasicValueEnum::IntValue(_))
+                        {
+                            dynamic_array_backing_errors.push(format!(
+                                "{callee_name} requires a constant array length and backing array pointer"
+                            ));
+                        } else {
+                            match extract_const_len(call_args[0], &callee_name) {
+                                Ok(requested_len) => {
+                                    let BasicValueEnum::PointerValue(backing_ptr) = call_args[1]
+                                    else {
+                                        dynamic_array_backing_errors.push(format!(
+                                            "{callee_name} requires a fixed-size backing array allocated as [N x ptr]"
+                                        ));
+                                        continue;
+                                    };
+                                    match get_fixed_pointer_array_len(backing_ptr, &callee_name) {
+                                        Ok(backing_len) => {
+                                            if requested_len != backing_len {
+                                                dynamic_array_backing_errors.push(format!(
+                                                    "{callee_name} requires a fixed-size backing array whose requested length {requested_len} does not match backing array length {backing_len}"
+                                                ));
+                                            }
+                                            if callee_name
+                                                == "__quantum__rt__result_array_record_output"
+                                                && requested_len > i32::MAX as u64
+                                            {
+                                                dynamic_array_backing_errors.push(format!(
+                                                    "{callee_name} requires an array length that fits in i32 for RESULT_ARRAY output"
+                                                ));
+                                            }
+                                        }
+                                        Err(err) => dynamic_array_backing_errors.push(err),
+                                    }
+                                }
+                                Err(err) => dynamic_array_backing_errors.push(err),
+                            }
+                        }
                     }
                 }
             }
         }
+
+        errors.extend(functions_errors);
+        errors.extend(result_slot_errors);
+        errors.extend(static_qubit_errors);
+        errors.extend(dynamic_result_placement_errors);
+        errors.extend(dynamic_array_backing_errors);
+        errors.extend(capability_errors);
     }
 
     // SAFETY: `ProcessCallArgs` is created and consumed synchronously within a single
@@ -4007,10 +4124,8 @@ fn get_wasm_functions(
 pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), String> {
     use crate::{
         aux::{
-            get_capability_flags, validate_capability_usage,
-            validate_dynamic_array_allocation_backing,
-            validate_dynamic_result_allocation_placement, validate_functions,
-            validate_module_flags, validate_module_layout_and_triple, validate_result_slot_usage,
+            get_capability_flags, validate_module_flags, validate_module_layout_and_triple,
+            validate_qir_call_sites,
         },
         convert::{ENTRY_ATTRIBUTE_KEYS, find_entry_function},
     };
@@ -4066,14 +4181,9 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
 
     let wasm_fns = get_wasm_functions(wasm_bytes)?;
 
-    validate_functions(&module, entry_fn, &wasm_fns, &mut errors);
-    validate_result_slot_usage(&module, entry_fn, &mut errors);
-    aux::validate_static_qubit_helper_usage(&module, entry_fn, &mut errors);
-    validate_dynamic_result_allocation_placement(&module, entry_fn, &mut errors);
-    validate_dynamic_array_allocation_backing(&module, &mut errors);
+    validate_qir_call_sites(&module, entry_fn, &wasm_fns, capability_flags, &mut errors);
 
     validate_module_flags(&module, &mut errors);
-    validate_capability_usage(&module, capability_flags, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors.join("; "));
