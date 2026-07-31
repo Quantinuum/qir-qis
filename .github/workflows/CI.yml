@@ -86,7 +86,7 @@ jobs:
         # All exercised tests live in the library test binary. Avoid rebuilding
         # empty bin/example harnesses, which is especially expensive with LLVM 21.
         run: cargo nextest run --lib --all-features ${{ matrix.nextest_extra_args }}
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v9.0.0
       - name: Rust API example smoke
         if: runner.os != 'Linux'
         run: cargo run --example rust_api --all-features --profile test
@@ -124,9 +124,9 @@ jobs:
           echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
           echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
           echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v9.0.0
       - uses: dtolnay/rust-toolchain@stable
-      - uses: cargo-bins/cargo-binstall@v1.20.1
+      - uses: cargo-bins/cargo-binstall@v1.21.1
       - name: Install lint tools
         run: |
           cargo binstall --no-confirm --force sccache
