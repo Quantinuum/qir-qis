@@ -937,13 +937,14 @@ mod aux {
                         continue;
                     }
 
-                    let call_args: Vec<BasicValueEnum> = match extract_operands(&instr) {
+                    let mut call_args: Vec<BasicValueEnum> = match extract_operands(&instr) {
                         Ok(args) => args,
                         Err(err) => {
                             errors.push(format!("Failed to inspect {fn_name} operands: {err}"));
                             continue;
                         }
                     };
+                    call_args.truncate(call.count_arguments() as usize);
                     if call_args.len() < 2 {
                         errors.push(format!(
                             "{fn_name} requires a constant array length and backing array pointer"
@@ -1243,7 +1244,7 @@ mod aux {
                         continue;
                     }
 
-                    let call_args = match extract_operands(&instr) {
+                    let mut call_args = match extract_operands(&instr) {
                         Ok(args) => args,
                         Err(err) => {
                             if result_slot_relevant {
@@ -1262,6 +1263,7 @@ mod aux {
                             continue;
                         }
                     };
+                    call_args.truncate(call.count_arguments() as usize);
 
                     // --- validate_result_slot_usage ---
                     if let (Some(required_num_results), Some(result_operand_index)) =
@@ -7609,11 +7611,11 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
         let ll_text = r#"
 define i64 @Entry_Point_Name() #0 {
 entry:
-  call void @__quantum__rt__qubit_array_allocate()
+  call void @__quantum__rt__qubit_array_allocate(i64 2)
   ret i64 0
 }
 
-declare void @__quantum__rt__qubit_array_allocate()
+declare void @__quantum__rt__qubit_array_allocate(i64)
 
 attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_results"="1" }
 
@@ -7788,7 +7790,7 @@ declare void @__quantum__rt__qubit_array_release(i64)
         assert_eq!(
             errors,
             vec![
-                "__quantum__rt__qubit_array_release requires a fixed-size backing array allocated as [N x ptr]"
+                "__quantum__rt__qubit_array_release requires a constant array length and backing array pointer"
                     .to_string()
             ]
         );
