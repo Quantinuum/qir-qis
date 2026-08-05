@@ -937,13 +937,14 @@ mod aux {
                         continue;
                     }
 
-                    let call_args: Vec<BasicValueEnum> = match extract_operands(&instr) {
+                    let mut call_args: Vec<BasicValueEnum> = match extract_operands(&instr) {
                         Ok(args) => args,
                         Err(err) => {
                             errors.push(format!("Failed to inspect {fn_name} operands: {err}"));
                             continue;
                         }
                     };
+                    call_args.truncate(call.count_arguments() as usize);
                     if call_args.len() < 2 {
                         errors.push(format!(
                             "{fn_name} requires a constant array length and backing array pointer"
@@ -1078,23 +1079,17 @@ mod aux {
                         "Input QIR must not define internal helper function: {fn_name}"
                     ));
                 } else if fn_name.starts_with("__quantum__qis__") {
-                    let is_barrier = if fn_name.starts_with("__quantum__qis__barrier")
-                        && fn_name.ends_with("__body")
-                    {
-                        parse_barrier_arity(fn_name).is_ok_and(|arity| {
-                            if let Some(max_qubits) = required_num_qubits_for_barrier
-                                && let Ok(arity_u32) = u32::try_from(arity)
-                                && arity_u32 > max_qubits
-                            {
-                                functions_errors.push(format!(
+                    let is_barrier = parse_barrier_arity(fn_name).is_ok_and(|arity| {
+                        if let Some(max_qubits) = required_num_qubits_for_barrier
+                            && let Ok(arity_u32) = u32::try_from(arity)
+                            && arity_u32 > max_qubits
+                        {
+                            functions_errors.push(format!(
                     "Barrier arity {arity} exceeds module's required_num_qubits ({max_qubits})"
                 ));
-                            }
-                            true
-                        })
-                    } else {
-                        false
-                    };
+                        }
+                        true
+                    });
 
                     if !is_barrier && !ALLOWED_QIS_FNS.contains(&fn_name) {
                         functions_errors.push(format!("Unsupported QIR QIS function: {fn_name}"));
@@ -1215,8 +1210,10 @@ mod aux {
                         }
                         _ => None,
                     };
-                    let result_slot_relevant =
-                        required_num_results.is_some() && result_operand_index.is_some();
+                    let result_slot_relevant = matches!(
+                        (required_num_results, result_operand_index),
+                        (Some(_), Some(_))
+                    );
                     let direct_qubit_positions = static_qubit_ctx.as_ref().map(|_| {
                         direct_qubit_operand_positions(
                             &callee_name,
@@ -1226,12 +1223,6 @@ mod aux {
                     let helper_qubit_positions = static_qubit_ctx
                         .as_ref()
                         .and_then(|(_, helper_qubit_params)| helper_qubit_params.get(&callee_name));
-                    let static_qubit_relevant = static_qubit_ctx.is_some()
-                        && (direct_qubit_positions
-                            .as_ref()
-                            .is_some_and(|positions| !positions.is_empty())
-                            || helper_qubit_positions
-                                .is_some_and(|positions| !positions.is_empty()));
                     let static_qubit_operand_inspection_relevant = static_qubit_ctx.is_some();
                     let array_backing_relevant = matches!(
                         callee_name.as_str(),
@@ -1242,15 +1233,18 @@ mod aux {
                             | "__quantum__rt__result_array_record_output"
                     );
 
-                    if !result_slot_relevant
-                        && !static_qubit_relevant
-                        && !static_qubit_operand_inspection_relevant
-                        && !array_backing_relevant
-                    {
+                    if matches!(
+                        (
+                            result_slot_relevant,
+                            static_qubit_ctx.as_ref(),
+                            array_backing_relevant
+                        ),
+                        (false, None, false)
+                    ) {
                         continue;
                     }
 
-                    let call_args = match extract_operands(&instr) {
+                    let mut call_args = match extract_operands(&instr) {
                         Ok(args) => args,
                         Err(err) => {
                             if result_slot_relevant {
@@ -1269,6 +1263,7 @@ mod aux {
                             continue;
                         }
                     };
+                    call_args.truncate(call.count_arguments() as usize);
 
                     // --- validate_result_slot_usage ---
                     if let (Some(required_num_results), Some(result_operand_index)) =
@@ -1330,16 +1325,18 @@ mod aux {
 
                     // --- validate_dynamic_array_allocation_backing ---
                     if array_backing_relevant {
-                        if call_args.len() < 2
-                            || !matches!(call_args[0], BasicValueEnum::IntValue(_))
-                        {
+                        let Some((length_operand, backing_operand)) =
+                            call_args.first().copied().zip(call_args.get(1).copied())
+                        else {
                             dynamic_array_backing_errors.push(format!(
                                 "{callee_name} requires a constant array length and backing array pointer"
                             ));
-                        } else {
-                            match extract_const_len(call_args[0], &callee_name) {
+                            continue;
+                        };
+                        if matches!(length_operand, BasicValueEnum::IntValue(_)) {
+                            match extract_const_len(length_operand, &callee_name) {
                                 Ok(requested_len) => {
-                                    let BasicValueEnum::PointerValue(backing_ptr) = call_args[1]
+                                    let BasicValueEnum::PointerValue(backing_ptr) = backing_operand
                                     else {
                                         dynamic_array_backing_errors.push(format!(
                                             "{callee_name} requires a fixed-size backing array allocated as [N x ptr]"
@@ -1367,6 +1364,10 @@ mod aux {
                                 }
                                 Err(err) => dynamic_array_backing_errors.push(err),
                             }
+                        } else {
+                            dynamic_array_backing_errors.push(format!(
+                                "{callee_name} requires a constant array length and backing array pointer"
+                            ));
                         }
                     }
                 }
@@ -7610,11 +7611,11 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
         let ll_text = r#"
 define i64 @Entry_Point_Name() #0 {
 entry:
-  call void @__quantum__rt__qubit_array_allocate()
+  call void @__quantum__rt__qubit_array_allocate(i64 2)
   ret i64 0
 }
 
-declare void @__quantum__rt__qubit_array_allocate()
+declare void @__quantum__rt__qubit_array_allocate(i64)
 
 attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_results"="1" }
 
@@ -7789,7 +7790,7 @@ declare void @__quantum__rt__qubit_array_release(i64)
         assert_eq!(
             errors,
             vec![
-                "__quantum__rt__qubit_array_release requires a fixed-size backing array allocated as [N x ptr]"
+                "__quantum__rt__qubit_array_release requires a constant array length and backing array pointer"
                     .to_string()
             ]
         );
