@@ -2694,7 +2694,8 @@ entry:
 
         let ll_path = Path::new(llpath);
         let qir_bytes = get_qir_bytes(ll_path);
-        let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 2, "aarch64", None).unwrap();
+        let qis_bytes = crate::qir_to_qis(&qir_bytes, 2, "aarch64", None)
+            .expect("fixture should translate to QIS");
 
         let context = Context::create();
         let qis_text = crate::parse_bitcode_module(&context, &qis_bytes, "qis_module")
@@ -2731,7 +2732,8 @@ entry:
         // Keep this as a pure conversion/parsing smoke test on Windows.
         // TargetMachine creation for optimized native codegen can be unstable
         // on some Windows LLVM environments and cause access violations.
-        let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 0, "native", None).unwrap();
+        let qis_bytes = crate::qir_to_qis(&qir_bytes, 0, "native", None)
+            .expect("fixture should translate to QIS on Windows");
 
         let context = Context::create();
         let parsed = crate::parse_bitcode_module(&context, &qis_bytes, "qis_module")
@@ -2744,7 +2746,7 @@ entry:
     fn test_snapshot_conversion_windows_optimized_x86_64_smoke() {
         let ll_path = Path::new("tests/data/base.ll");
         let qir_bytes = get_qir_bytes(ll_path);
-        let qis_bytes = qir_qis::qir_to_qis(qir_bytes.into(), 1, "x86-64", None)
+        let qis_bytes = crate::qir_to_qis(&qir_bytes, 1, "x86-64", None)
             .expect("optimized Windows x86-64 conversion should succeed");
 
         let context = Context::create();
