@@ -3897,21 +3897,16 @@ pub(crate) fn create_module_from_ir_text<'ctx>(
 
 /// Copy an LLVM memory buffer into public bitcode bytes.
 ///
-/// LLVM's in-memory bitcode writer includes an implicit trailing NUL byte. This
-/// helper removes that terminator so the returned bytes can be written to files
-/// or passed to file-oriented bitcode consumers.
+/// `MemoryBuffer::as_slice` reports exactly the buffer payload LLVM allocated,
+/// so the returned bytes can be written to files or passed to file-oriented
+/// bitcode consumers as-is. No terminator is stripped: bitcode payloads are
+/// four-byte aligned and legitimately end in a zero byte, so trimming a
+/// trailing NUL would truncate real bitcode.
 #[must_use]
 pub fn memory_buffer_to_owned_bytes(
     memory_buffer: &inkwell::memory_buffer::MemoryBuffer<'_>,
 ) -> Vec<u8> {
-    let bytes = memory_buffer.as_slice();
-    if bytes.last() == Some(&0) {
-        bytes
-            .split_last()
-            .map_or_else(Vec::new, |(_, rest)| rest.to_vec())
-    } else {
-        bytes.to_vec()
-    }
+    memory_buffer.as_slice().to_vec()
 }
 
 /// Parse public bitcode bytes into an `inkwell` module.
@@ -4543,16 +4538,11 @@ mod test {
         let module = parse_bitcode_module(&ctx, bitcode, name)
             .expect("Bitcode should reparse through qir-qis helpers");
         let raw_buffer = module.write_bitcode_to_memory();
-        let expected_len = bitcode
-            .len()
-            .checked_add(1)
-            .expect("bitcode length should not overflow");
         assert_eq!(
             raw_buffer.as_slice().len(),
-            expected_len,
-            "Public bitcode bytes should exclude LLVM's implicit trailing NUL"
+            bitcode.len(),
+            "Public bitcode bytes should match LLVM's in-memory buffer length exactly"
         );
-        assert_eq!(raw_buffer.as_slice().last(), Some(&0));
         parse_bitcode_as_file(bitcode, name)
             .expect("Public bitcode should parse when consumed from a file");
     }
@@ -5184,20 +5174,57 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let module = parse_bitcode_module(&ctx, &public_bc, "public_bitcode")
             .expect("public parser helper should parse generated bitcode");
         let raw_buffer = module.write_bitcode_to_memory();
-        assert_eq!(raw_buffer.as_slice().last(), Some(&0));
 
         let extracted = memory_buffer_to_owned_bytes(&raw_buffer);
-        let expected_len = raw_buffer
-            .as_slice()
-            .len()
-            .checked_sub(1)
-            .expect("raw bitcode buffer should include LLVM's trailing NUL");
-        assert_eq!(extracted.len(), expected_len);
+        assert_eq!(
+            extracted.len(),
+            raw_buffer.as_slice().len(),
+            "extracted bytes should preserve the full LLVM buffer payload"
+        );
+        assert_eq!(extracted, raw_buffer.as_slice());
 
         let copied_buffer = create_memory_buffer_from_bytes(&extracted, "copied_public_bitcode")
             .expect("public memory-buffer helper should copy public bitcode");
         Module::parse_bitcode_from_buffer(&copied_buffer, &ctx)
             .expect("copied public bitcode should parse through inkwell");
+    }
+
+    /// Regression guard for the `inkwell` 0.10 memory-buffer change.
+    ///
+    /// Earlier `inkwell` releases reported an extra phantom trailing NUL from
+    /// `MemoryBuffer::get_size`, so this crate trimmed the last byte. `inkwell`
+    /// 0.10 reports the exact payload length, and trimming truncated real
+    /// bitcode: the bytes stopped being four-byte aligned and LLVM rejected
+    /// them with "Invalid bitcode signature".
+    #[test]
+    fn test_memory_buffer_to_owned_bytes_preserves_full_bitcode_payload() {
+        let ll_text =
+            std::fs::read_to_string("tests/data/base.ll").expect("Failed to read base.ll");
+        let bitcode = qir_ll_to_bc(&ll_text).expect("Failed to convert base.ll to bitcode");
+
+        assert!(
+            !bitcode.is_empty(),
+            "bitcode writer should produce a non-empty payload"
+        );
+        assert_eq!(
+            bitcode.len() % 4,
+            0,
+            "LLVM bitcode payloads are four-byte aligned; a truncated trailing byte breaks parsing"
+        );
+        assert_eq!(
+            bitcode.first_chunk::<4>(),
+            Some(&[0x42, 0x43, 0xc0, 0xde]),
+            "bitcode should retain the LLVM 'BC\\u{{c0}}\\u{{de}}' magic"
+        );
+
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &bitcode, "round_trip")
+            .expect("bitcode should parse without any terminator trimming");
+        assert_eq!(
+            memory_buffer_to_owned_bytes(&module.write_bitcode_to_memory()),
+            bitcode,
+            "round-tripping through the memory-buffer helper should be byte-identical"
+        );
     }
 
     #[test]
