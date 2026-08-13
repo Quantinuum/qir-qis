@@ -4404,7 +4404,7 @@ mod qir_qis {
     /// Returns a `ValidationError` if the LLVM IR is invalid.
     #[gen_stub_pyfunction]
     #[pyfunction]
-    fn qir_ll_to_bc(ll_text: &str) -> PyResult<Cow<'_, [u8]>> {
+    pub fn qir_ll_to_bc(ll_text: &str) -> PyResult<Cow<'_, [u8]>> {
         let result = crate::qir_ll_to_bc(ll_text).map_err(PyErr::new::<ValidationError, _>)?;
         Ok(result.into())
     }
@@ -5224,6 +5224,67 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             memory_buffer_to_owned_bytes(&module.write_bitcode_to_memory()),
             bitcode,
             "round-tripping through the memory-buffer helper should be byte-identical"
+        );
+    }
+
+    /// Unwrap a [`PyResult`] without letting `PyErr` reach a `Debug` formatter.
+    ///
+    /// `Result::unwrap`/`expect` format the error with `Debug`, and
+    /// `PyErr`'s `Debug` impl acquires the GIL. Under `cargo test` there is no
+    /// initialized interpreter, so a failing `PyO3` call aborts the whole test
+    /// binary with `SIGABRT` inside `PyO3` instead of reporting the real error.
+    /// Converting to [`Option`] first keeps failures readable.
+    #[cfg(feature = "python")]
+    #[track_caller]
+    #[expect(
+        clippy::ok_expect,
+        reason = "expecting the Result directly formats PyErr with Debug, which needs an \
+                  initialized interpreter and aborts the test binary"
+    )]
+    fn expect_py_ok<T>(result: crate::PyResult<T>, msg: &str) -> T {
+        result.ok().expect(msg)
+    }
+
+    /// Cover the `PyO3` wrappers' success paths.
+    ///
+    /// The conversion tests call the plain Rust entry points so that failures
+    /// print an error instead of aborting, which leaves the wrappers' owned
+    /// `Cow` round-trip uncovered on the Rust side. Pin it here by asserting
+    /// the wrappers return exactly what the Rust API returns.
+    #[cfg(feature = "python")]
+    #[test]
+    fn test_python_wrappers_match_rust_api_on_success() {
+        let ll_text =
+            std::fs::read_to_string("tests/data/base.ll").expect("Failed to read base.ll");
+
+        let rust_bc = qir_ll_to_bc(&ll_text).expect("Rust qir_ll_to_bc should succeed");
+        let py_bc = expect_py_ok(
+            crate::qir_qis::qir_ll_to_bc(&ll_text),
+            "PyO3 qir_ll_to_bc should succeed for a valid fixture",
+        );
+        assert_eq!(
+            py_bc.as_ref(),
+            rust_bc.as_slice(),
+            "PyO3 qir_ll_to_bc should return the same bytes as the Rust API"
+        );
+
+        expect_py_ok(
+            crate::qir_qis::validate_qir(rust_bc.clone().into(), None),
+            "PyO3 validate_qir should accept a valid fixture",
+        );
+
+        // `opt_level=0` with `target="native"` is the one combination accepted
+        // on every supported platform, including Windows with LLVM 21.
+        let rust_qis =
+            qir_to_qis(&rust_bc, 0, "native", None).expect("Rust qir_to_qis should succeed");
+        let py_qis = expect_py_ok(
+            crate::qir_qis::qir_to_qis(rust_bc.into(), 0, "native", None),
+            "PyO3 qir_to_qis should succeed for a valid fixture",
+        );
+        assert_eq!(
+            py_qis.as_ref(),
+            rust_qis.as_slice(),
+            "PyO3 qir_to_qis should return the same bytes as the Rust API"
         );
     }
 
