@@ -9,6 +9,10 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
+    groups:
+      wasm:
+        patterns:
+          - "wasm*"
     ignore:
       # Keep llvm-sys aligned with inkwell, CI images, and the installed LLVM toolchain.
       # Standalone bumps create unusable PRs (for example llvm-sys 221 while the repo is on LLVM 21).
