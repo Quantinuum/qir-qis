@@ -17,3 +17,11 @@ updates:
       # Keep llvm-sys aligned with inkwell, CI images, and the installed LLVM toolchain.
       # Standalone bumps create unusable PRs (for example llvm-sys 221 while the repo is on LLVM 21).
       - dependency-name: "llvm-sys"
+  - package-ecosystem: "cargo"
+    directory: "/fuzz"
+    schedule:
+      interval: "weekly"
+    groups:
+      wasm:
+        patterns:
+          - "wasm*"
