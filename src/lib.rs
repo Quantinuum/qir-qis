@@ -145,8 +145,7 @@ mod aux {
     fn extract_label_from_tag(full_tag: &str) -> &str {
         full_tag
             .rsplit_once(':')
-            .map(|(_, label)| label)
-            .unwrap_or(full_tag)
+            .map_or(full_tag, |(_, label)| label)
     }
 
     fn validate_dynamic_rt_signature(
@@ -3678,8 +3677,7 @@ mod aux {
         // Parse the label from the global string (format: USER:RESULT:tag)
         let old_label = extract_label_from_tag(&full_tag);
 
-        let (new_const, new_name) =
-            build_result_global(ctx, old_label, &old_name, type_tag, None)?;
+        let (new_const, new_name) = build_result_global(ctx, old_label, &old_name, type_tag, None)?;
 
         let new_global = module.add_global(new_const.get_type(), None, &new_name);
         new_global.set_initializer(&new_const);
