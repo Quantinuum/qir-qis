@@ -139,6 +139,15 @@ mod aux {
             .is_some_and(BasicTypeEnum::is_pointer_type)
     }
 
+    /// Extract label from a full tag string without allocating.
+    /// Handles format "USER:RESULT:tag" by returning the last component if present,
+    /// otherwise returns the full tag.
+    fn extract_label_from_tag(full_tag: &str) -> &str {
+        full_tag
+            .rsplit_once(':')
+            .map_or(full_tag, |(_, label)| label)
+    }
+
     fn validate_dynamic_rt_signature(
         fn_name: &str,
         fn_type: FunctionType<'_>,
@@ -3146,11 +3155,9 @@ mod aux {
             } else {
                 return Err(format!("Output global `{old_name}` not found in mapping"));
             };
-        let old_label = full_tag
-            .rsplit_once(':')
-            .map_or_else(|| full_tag.clone(), |(_, label)| label.to_string());
+        let old_label = extract_label_from_tag(&full_tag);
         let (new_const, new_name) =
-            build_result_global(args.ctx, &old_label, &old_name, "RESULT_ARRAY", None)?;
+            build_result_global(args.ctx, old_label, &old_name, "RESULT_ARRAY", None)?;
         let new_global = module_ref(args).add_global(new_const.get_type(), None, &new_name);
         new_global.set_initializer(&new_const);
         new_global.set_linkage(Linkage::Private);
@@ -3668,12 +3675,9 @@ mod aux {
             old_name.clone()
         };
         // Parse the label from the global string (format: USER:RESULT:tag)
-        let old_label = full_tag
-            .rsplit_once(':')
-            .map_or_else(|| full_tag.clone(), |(_, label)| label.to_string());
+        let old_label = extract_label_from_tag(&full_tag);
 
-        let (new_const, new_name) =
-            build_result_global(ctx, &old_label, &old_name, type_tag, None)?;
+        let (new_const, new_name) = build_result_global(ctx, old_label, &old_name, type_tag, None)?;
 
         let new_global = module.add_global(new_const.get_type(), None, &new_name);
         new_global.set_initializer(&new_const);
