@@ -23,6 +23,7 @@ use llvm_sys::{
     core::{LLVMGetAttributeCountAtIndex, LLVMGetAttributesAtIndex, LLVMIsStringAttribute},
     prelude::LLVMAttributeRef,
 };
+use phf::phf_set;
 
 use crate::decode_llvm_c_string;
 
@@ -37,7 +38,11 @@ pub const ENTRY_ATTRIBUTE_KEYS: [&str; 5] = [
 ];
 const EXIT_CODE: u64 = 1001;
 const RESULT_TAG: &str = "USER";
-pub(crate) const RESERVED_PASSTHROUGH_EXACT_NAMES: [&str; 17] = [
+
+// Compile-time perfect hash set for O(1) reserved name lookup.
+// Using phf::Set provides constant-time lookup without runtime overhead.
+// See is_reserved_passthrough_name() below for usage.
+pub(crate) static RESERVED_PASSTHROUGH_EXACT_NAMES: phf::Set<&'static str> = phf_set! {
     "qmain",
     "setup",
     "teardown",
@@ -55,10 +60,10 @@ pub(crate) const RESERVED_PASSTHROUGH_EXACT_NAMES: [&str; 17] = [
     "random_float",
     "random_rng",
     "random_advance",
-];
+};
 
 pub(crate) fn is_reserved_passthrough_name(name: &str) -> bool {
-    RESERVED_PASSTHROUGH_EXACT_NAMES.contains(&name)
+    RESERVED_PASSTHROUGH_EXACT_NAMES.contains(name)
         || name.starts_with("qir_qis.")
         || name.starts_with("res_")
 }
