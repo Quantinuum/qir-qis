@@ -26,7 +26,7 @@ Add or update tests whenever a PR changes:
 - validation rules in `src/lib.rs`
 - lowering/output behavior in `src/convert.rs` or `src/decompose.rs`
 - LLVM verification/optimization behavior in `src/llvm_verify.rs` or `src/opt.rs`
-- WASM parsing behavior in `src/utils.rs`
+- WASM parsing behavior in `src/lib.rs` (via the `wasm` feature) or `fuzz/fuzz_targets/`
 - fuzz, mutation-testing, or robustness workflow infrastructure
 
 Rule of thumb:
@@ -74,8 +74,8 @@ When touching Clippy policy or lint-driven cleanup:
 
 Before pushing changes:
 
-- run `make lint`
-- run `make test`
+- run `make lint` (runs Python linting via ruff/prek and type checking via ty; Rust clippy runs via the pre-commit hook)
+- run `make test` (runs `cargo nextest` for Rust and `tests/test_main.py` for Python)
 
 If local validation is running on a protected branch such as `main`, it is acceptable to skip only the `no-commit-to-branch` pre-commit hook for local lint runs; keep the hook enabled for normal developer protection.
 
