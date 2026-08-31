@@ -43,6 +43,7 @@ Rule of thumb:
 - If expensive fixture compilation is repeated across many tests, cache it with `LazyLock` or similar.
 - Keep `make mutants` useful: kill meaningful mutants with tests, and keep `.cargo/mutants.toml` exclusions resilient to line movement.
 - For external/runtime signature validation, prefer table-driven negative tests that cover return type, arity, and parameter kind/width; for numeric limits, cover both the largest accepted value and first rejected value.
+- For compiler resource ceilings, benchmark release-mode time, peak memory, and output size at representative boundaries. Measure qubits and results independently, and distinguish generic compiler safety budgets from target-specific hardware capacity.
 - During validation-helper work, run a scoped mutation check such as `cargo mutants --package qir-qis --all-features --test-tool cargo --file src/lib.rs --re '<helper_name>'`.
 
 ## LLVM and platform guidance
@@ -62,6 +63,7 @@ When touching `Makefile`, `.cargo/mutants.toml`, `fuzz/`, or `.github/workflows/
 - keep PR smoke coverage practical
 - reserve longer fuzzing and mutation campaigns for scheduled/manual runs unless there is a strong reason otherwise
 - avoid adding unused tooling installs to CI jobs
+- when changing dependencies or dependency-audit workflows, run the repo-native audit entrypoint (`make audit` when present) and distinguish vulnerabilities from advisory-only warnings
 
 When touching Clippy policy or lint-driven cleanup:
 
