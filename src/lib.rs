@@ -4001,6 +4001,7 @@ pub fn qir_to_qis_with_passthrough_calls(
         convert::{
             add_qmain_wrapper, create_qubit_array, find_entry_function, free_all_qubits,
             get_string_attrs, process_ir_defined_q_fns, prune_unused_ir_qis_helpers,
+            validate_declared_resource_limits,
         },
         decompose::add_decompositions,
         opt::optimize,
@@ -4032,6 +4033,7 @@ pub fn qir_to_qis_with_passthrough_calls(
         .map_err(|e| format!("Failed to add QIR decompositions: {e}"))?;
     let entry_fn = find_entry_function(&module)
         .map_err(|e| format!("Failed to find entry function in QIR module: {e}"))?;
+    validate_declared_resource_limits(entry_fn)?;
 
     let entry_fn_name = entry_fn
         .get_name()
@@ -4149,7 +4151,10 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
             get_capability_flags, validate_module_flags, validate_module_layout_and_triple,
             validate_qir_call_sites,
         },
-        convert::{ENTRY_ATTRIBUTE_KEYS, find_entry_function},
+        convert::{
+            ENTRY_ATTRIBUTE_KEYS, find_entry_function, validate_declared_qubit_limit,
+            validate_declared_result_limit,
+        },
     };
     use inkwell::{attributes::AttributeLoc, context::Context};
 
@@ -4194,6 +4199,16 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
             {
                 errors.push(format!("Entry function must have at least one {type_}"));
             }
+        }
+        if capability_flags.dynamic_qubit_management
+            && let Err(err) = validate_declared_qubit_limit(entry_fn)
+        {
+            errors.push(err);
+        }
+        if capability_flags.dynamic_result_management
+            && let Err(err) = validate_declared_result_limit(entry_fn)
+        {
+            errors.push(err);
         }
         entry_fn
     } else {
@@ -7095,6 +7110,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let ll_text = minimal_qir_with_body(required_num_qubits, required_num_results, "1", "", "");
         let bc = qir_ll_to_bc(&ll_text).expect("inline IR should parse");
         validate_qir(&bc, None).expect("maximum static resource count should validate");
+        qir_to_qis(&bc, 0, "native", None).expect("maximum static resource count should translate");
     }
 
     #[rstest]
@@ -7115,6 +7131,35 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 
         let translation_error = qir_to_qis(&bc, 0, "native", None)
             .expect_err("oversized static resources should not be allocated during translation");
+        assert!(translation_error.contains(&expected_error));
+    }
+
+    #[rstest]
+    #[case("65536", "1", "required_num_qubits")]
+    #[case("1", "65536", "required_num_results")]
+    fn test_dynamic_management_rejects_oversized_optional_static_resource_count(
+        #[case] required_num_qubits: &str,
+        #[case] required_num_results: &str,
+        #[case] resource_name: &str,
+    ) {
+        let ll_text = minimal_qir_with_body(required_num_qubits, required_num_results, "2", "", "")
+            .replace(
+                "dynamic_qubit_management\", i1 false",
+                "dynamic_qubit_management\", i1 true",
+            )
+            .replace(
+                "dynamic_result_management\", i1 false",
+                "dynamic_result_management\", i1 true",
+            );
+        let bc = qir_ll_to_bc(&ll_text).expect("inline adaptive IR should parse");
+        let expected_error = format!("{resource_name} value 65536 exceeds compiler limit 65535");
+
+        let validation_error = validate_qir(&bc, None)
+            .expect_err("oversized optional static resources should not validate");
+        assert!(validation_error.contains(&expected_error));
+
+        let translation_error = qir_to_qis(&bc, 0, "native", None)
+            .expect_err("oversized optional static resources should not translate");
         assert!(translation_error.contains(&expected_error));
     }
 

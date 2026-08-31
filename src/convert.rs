@@ -653,6 +653,31 @@ pub fn get_required_num_results(entry_fn: FunctionValue) -> Result<usize, String
     Ok(required_num_results as usize)
 }
 
+pub(crate) fn validate_declared_qubit_limit(entry_fn: FunctionValue) -> Result<(), String> {
+    if entry_fn
+        .get_string_attribute(AttributeLoc::Function, "required_num_qubits")
+        .is_some()
+    {
+        get_required_num_qubits_strict(entry_fn)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_declared_result_limit(entry_fn: FunctionValue) -> Result<(), String> {
+    if entry_fn
+        .get_string_attribute(AttributeLoc::Function, "required_num_results")
+        .is_some()
+    {
+        get_required_num_results(entry_fn)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_declared_resource_limits(entry_fn: FunctionValue) -> Result<(), String> {
+    validate_declared_qubit_limit(entry_fn)?;
+    validate_declared_result_limit(entry_fn)
+}
+
 /// Retrieves the result SSA variables from the entry function.
 /// The result variable count is equal to the `required_num_results` attribute.
 ///
