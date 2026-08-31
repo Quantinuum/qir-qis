@@ -86,6 +86,11 @@ jobs:
         # All exercised tests live in the library test binary. Avoid rebuilding
         # empty bin/example harnesses, which is especially expensive with LLVM 21.
         run: cargo nextest run --lib --all-features ${{ matrix.nextest_extra_args }}
+      - name: Test critical release behavior
+        if: runner.os == 'Linux'
+        run: >-
+          cargo nextest run --release --lib --all-features
+          -E 'test(/test_(qir2_base_fixture_validate_and_compile|qir_to_qis_output_parses_with_raw_llvm_buffer)$/)'
       - uses: astral-sh/setup-uv@v9.0.0
       - name: Rust API example smoke
         if: runner.os != 'Linux'
@@ -164,3 +169,16 @@ jobs:
       - name: Verify the MSRV
         if: github.event_name != 'pull_request'
         run: cargo msrv verify
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: cargo-bins/cargo-binstall@v1.21.1
+      - name: Install cargo-audit
+        run: cargo binstall --no-confirm --force cargo-audit
+      - name: Audit Rust dependencies
+        run: make audit

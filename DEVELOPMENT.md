@@ -120,6 +120,20 @@ rustup toolchain install nightly
 The property-based tests run as part of the normal Rust test suite, so `make test`
 already exercises them.
 
+Audit the locked Rust dependency graph for published security advisories with:
+
+```sh
+# Install cargo-audit first.
+make audit
+```
+
+CI runs the same audit and a focused release-profile translation smoke test in
+addition to the normal debug-profile suite.
+
+Static resource-limit changes must cover the largest accepted value and first
+rejected value in both validation and translation. The current limits are
+exposed as `MAX_STATIC_QUBITS` and `MAX_STATIC_RESULTS`.
+
 ### Python Stubs
 
 After modifying the Python API:

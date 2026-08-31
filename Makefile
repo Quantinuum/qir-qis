@@ -21,6 +21,10 @@ test:
 	cargo nextest run --all-targets --all-features
 	$(PYTHON) tests/test_main.py
 
+.PHONY: audit
+audit:
+	cargo audit
+
 .PHONY: mutants
 mutants:
 	cargo mutants --package qir-qis --all-features --test-tool cargo

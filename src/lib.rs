@@ -19,6 +19,18 @@ pub const DEFAULT_TARGET: &str = "native";
 #[cfg(not(windows))]
 pub const DEFAULT_TARGET: &str = "aarch64";
 
+/// Maximum number of statically declared qubits accepted by validation and translation.
+///
+/// This safety ceiling prevents untrusted entry-point metadata from driving
+/// effectively unbounded compiler allocations and LLVM instruction generation.
+pub const MAX_STATIC_QUBITS: u32 = 65_535;
+
+/// Maximum number of statically declared results accepted by validation and translation.
+///
+/// This safety ceiling prevents untrusted entry-point metadata from driving
+/// effectively unbounded compiler allocations.
+pub const MAX_STATIC_RESULTS: u32 = 65_535;
+
 mod aux {
     #![allow(
         clippy::expect_used,
@@ -4460,6 +4472,7 @@ mod test {
         values::{CallSiteValue, FunctionValue},
     };
     use proptest::prelude::*;
+    use rstest::rstest;
     use std::{collections::BTreeMap, path::Path, sync::LazyLock};
     #[cfg(feature = "wasm")]
     use wasm_encoder::{ExportKind, ExportSection, Module as WasmModule};
@@ -7070,6 +7083,39 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let bc = qir_ll_to_bc(&ll_text).expect("inline IR should parse");
         let err = validate_qir(&bc, None).expect_err("validation should reject zero qubits");
         assert!(err.contains("Entry function must have at least one qubit"));
+    }
+
+    #[rstest]
+    #[case("65535", "1")]
+    #[case("1", "65535")]
+    fn test_validate_static_resource_limit_accepts_maximum(
+        #[case] required_num_qubits: &str,
+        #[case] required_num_results: &str,
+    ) {
+        let ll_text = minimal_qir_with_body(required_num_qubits, required_num_results, "1", "", "");
+        let bc = qir_ll_to_bc(&ll_text).expect("inline IR should parse");
+        validate_qir(&bc, None).expect("maximum static resource count should validate");
+    }
+
+    #[rstest]
+    #[case("65536", "1", "required_num_qubits")]
+    #[case("1", "65536", "required_num_results")]
+    fn test_static_resource_limit_rejects_first_oversized_value(
+        #[case] required_num_qubits: &str,
+        #[case] required_num_results: &str,
+        #[case] resource_name: &str,
+    ) {
+        let ll_text = minimal_qir_with_body(required_num_qubits, required_num_results, "1", "", "");
+        let bc = qir_ll_to_bc(&ll_text).expect("inline IR should parse");
+        let expected_error = format!("{resource_name} value 65536 exceeds compiler limit 65535");
+
+        let validation_error =
+            validate_qir(&bc, None).expect_err("oversized static resources should not validate");
+        assert!(validation_error.contains(&expected_error));
+
+        let translation_error = qir_to_qis(&bc, 0, "native", None)
+            .expect_err("oversized static resources should not be allocated during translation");
+        assert!(translation_error.contains(&expected_error));
     }
 
     #[test]

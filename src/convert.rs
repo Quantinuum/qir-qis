@@ -24,7 +24,7 @@ use llvm_sys::{
     prelude::LLVMAttributeRef,
 };
 
-use crate::decode_llvm_c_string;
+use crate::{MAX_STATIC_QUBITS, MAX_STATIC_RESULTS, decode_llvm_c_string};
 
 pub const INIT_QARRAY_FN: &str = "qir_qis.init_qubit";
 pub const LOAD_QUBIT_FN: &str = "qir_qis.load_qubit";
@@ -322,8 +322,15 @@ pub fn get_required_num_qubits_strict(function: FunctionValue) -> Result<u32, St
         .ok_or("Missing or invalid required_num_qubits attribute")?;
     let raw = decode_llvm_c_string(attr.get_string_value())
         .ok_or_else(|| "Invalid required_num_qubits attribute (not UTF-8)".to_string())?;
-    raw.parse::<u32>()
-        .map_err(|_err| format!("Invalid required_num_qubits attribute value: {raw}"))
+    let required_num_qubits = raw
+        .parse::<u32>()
+        .map_err(|_err| format!("Invalid required_num_qubits attribute value: {raw}"))?;
+    if required_num_qubits > MAX_STATIC_QUBITS {
+        return Err(format!(
+            "required_num_qubits value {required_num_qubits} exceeds compiler limit {MAX_STATIC_QUBITS}"
+        ));
+    }
+    Ok(required_num_qubits)
 }
 
 /// Creates a global array of qubits and initializes them using `___qalloc` calls.
@@ -636,6 +643,12 @@ pub fn get_required_num_results(entry_fn: FunctionValue) -> Result<usize, String
     let required_num_results = decoded_value
         .parse::<u32>()
         .map_err(|_err| format!("Invalid required_num_results attribute value: {decoded_value}"))?;
+
+    if required_num_results > MAX_STATIC_RESULTS {
+        return Err(format!(
+            "required_num_results value {required_num_results} exceeds compiler limit {MAX_STATIC_RESULTS}"
+        ));
+    }
 
     Ok(required_num_results as usize)
 }
