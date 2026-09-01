@@ -26,7 +26,7 @@ Add or update tests whenever a PR changes:
 - validation rules in `src/lib.rs`
 - lowering/output behavior in `src/convert.rs` or `src/decompose.rs`
 - LLVM verification/optimization behavior in `src/llvm_verify.rs` or `src/opt.rs`
-- WASM parsing behavior in `src/utils.rs`
+- WASM parsing behavior in `src/utils.rs`, its `src/lib.rs` wrapper (via the `wasm` feature), or `fuzz/fuzz_targets/`
 - fuzz, mutation-testing, or robustness workflow infrastructure
 
 Rule of thumb:
@@ -43,6 +43,9 @@ Rule of thumb:
 - If expensive fixture compilation is repeated across many tests, cache it with `LazyLock` or similar.
 - Keep `make mutants` useful: kill meaningful mutants with tests, and keep `.cargo/mutants.toml` exclusions resilient to line movement.
 - For external/runtime signature validation, prefer table-driven negative tests that cover return type, arity, and parameter kind/width; for numeric limits, cover both the largest accepted value and first rejected value.
+- For compiler resource ceilings, benchmark release-mode time, peak memory, and output size.
+- Measure qubits and results independently at representative boundaries.
+- Distinguish generic compiler safety budgets from target-specific hardware capacity when interpreting results.
 - During validation-helper work, run a scoped mutation check such as `cargo mutants --package qir-qis --all-features --test-tool cargo --file src/lib.rs --re '<helper_name>'`.
 
 ## LLVM and platform guidance
@@ -63,6 +66,11 @@ When touching `Makefile`, `.cargo/mutants.toml`, `fuzz/`, or `.github/workflows/
 - reserve longer fuzzing and mutation campaigns for scheduled/manual runs unless there is a strong reason otherwise
 - avoid adding unused tooling installs to CI jobs
 
+When changing `Cargo.toml`, `Cargo.lock`, `fuzz/Cargo.toml`, `fuzz/Cargo.lock`, or dependency-audit workflows:
+
+- run the repository audit entrypoint, `make audit`
+- distinguish vulnerabilities from advisory-only warnings
+
 When touching Clippy policy or lint-driven cleanup:
 
 - keep package-wide lint policy in `Cargo.toml` under `[lints.clippy]` and `[lints.rust]`, not in `src/lib.rs`
@@ -74,8 +82,8 @@ When touching Clippy policy or lint-driven cleanup:
 
 Before pushing changes:
 
-- run `make lint`
-- run `make test`
+- run `make lint`; it runs the configured `prek` hook suite, including Ruff for Python linting and formatting, Clippy for Rust linting, and Rust formatting/documentation checks, then runs the `ty` Python type checker separately
+- run `make test` (runs `cargo nextest` for Rust and `tests/test_main.py` for Python)
 
 If local validation is running on a protected branch such as `main`, it is acceptable to skip only the `no-commit-to-branch` pre-commit hook for local lint runs; keep the hook enabled for normal developer protection.
 
