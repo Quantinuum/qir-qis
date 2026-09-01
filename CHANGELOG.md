@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11](https://github.com/Quantinuum/qir-qis/compare/v0.1.10...v0.1.11) (2026-09-01)
+
+
+### Bug Fixes
+
+* **convert:** improve error message for missing required_num_qubits attribute ([#150](https://github.com/Quantinuum/qir-qis/issues/150)) ([0444c75](https://github.com/Quantinuum/qir-qis/commit/0444c75e4872ebccdffc3d061427b2b8ee24ab18))
+* **deps:** bump inkwell to 0.10.0 and correct bitcode buffer sizing ([#137](https://github.com/Quantinuum/qir-qis/issues/137)) ([7f40f98](https://github.com/Quantinuum/qir-qis/commit/7f40f982ea163688bc18b1556621ba701b6fb069))
+* **deps:** bump log from 0.4.33 to 0.4.34 ([#148](https://github.com/Quantinuum/qir-qis/issues/148)) ([910543a](https://github.com/Quantinuum/qir-qis/commit/910543a2cf5b336c9d08832ac6c553aee8623876))
+* **deps:** bump the wasm group with 2 updates ([#147](https://github.com/Quantinuum/qir-qis/issues/147)) ([3becb4c](https://github.com/Quantinuum/qir-qis/commit/3becb4c0e8bdf3f8e27e8fcb2c64785b436aafcb))
+* **deps:** bump wasm-encoder from 0.256.0 to 0.257.1 in /fuzz in the wasm group ([#149](https://github.com/Quantinuum/qir-qis/issues/149)) ([444b44b](https://github.com/Quantinuum/qir-qis/commit/444b44be39cb20220e9b70d1b37d80494515f8cf))
+* **deps:** update wasm cohort and fuzz CI ([#141](https://github.com/Quantinuum/qir-qis/issues/141)) ([cf03ff3](https://github.com/Quantinuum/qir-qis/commit/cf03ff37f4f0a6e8265a0bb58efa10368e0190e9))
+* **validation:** harden static resource handling ([#152](https://github.com/Quantinuum/qir-qis/issues/152)) ([3ec0924](https://github.com/Quantinuum/qir-qis/commit/3ec092432cb5051d783deeb96cde021b19f7b242))
+* **validation:** make `validate_qir_call_sites` mutation-resistant ([#134](https://github.com/Quantinuum/qir-qis/issues/134)) ([edd9620](https://github.com/Quantinuum/qir-qis/commit/edd962031b87a0d4840d5b99992d26611b659cb3))
+
+
+### Performance Improvements
+
+* avoid string allocations in label extraction ([#144](https://github.com/Quantinuum/qir-qis/issues/144)) ([65acc65](https://github.com/Quantinuum/qir-qis/commit/65acc65bc171e61b16251a1230d7aec093bb8b08))
+* replace linear search array with phf::Set for reserved passthrough names ([#145](https://github.com/Quantinuum/qir-qis/issues/145)) ([fba93b3](https://github.com/Quantinuum/qir-qis/commit/fba93b335f729f280eed31ed517bf64b3928cec8))
+* **validation:** consolidate validate_qir call-site traversals ([#130](https://github.com/Quantinuum/qir-qis/issues/130)) ([e8d8bb0](https://github.com/Quantinuum/qir-qis/commit/e8d8bb05c17f950ccba9f7b69a008a1a1e5624d3))
+
 ## [0.1.10](https://github.com/Quantinuum/qir-qis/compare/v0.1.9...v0.1.10) (2026-07-02)
 
 
