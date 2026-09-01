@@ -319,7 +319,7 @@ pub fn get_required_num_qubits(function: FunctionValue) -> Option<u32> {
 pub fn get_required_num_qubits_strict(function: FunctionValue) -> Result<u32, String> {
     let attr = function
         .get_string_attribute(AttributeLoc::Function, "required_num_qubits")
-        .ok_or("Missing or invalid required_num_qubits attribute")?;
+        .ok_or("Missing required_num_qubits attribute")?;
     let raw = decode_llvm_c_string(attr.get_string_value())
         .ok_or_else(|| "Invalid required_num_qubits attribute (not UTF-8)".to_string())?;
     let required_num_qubits = raw
@@ -1601,6 +1601,21 @@ mod tests {
             func.as_global_value().as_pointer_value(),
             func2.as_global_value().as_pointer_value()
         );
+    }
+
+    #[test]
+    fn test_get_required_num_qubits_strict_returns_missing_error() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let fn_type = context.void_type().fn_type(&[], false);
+        let func = module.add_function("entry", fn_type, None);
+        let entry_block = context.append_basic_block(func, "entry");
+        let builder = context.create_builder();
+        builder.position_at_end(entry_block);
+        let _ = builder.build_return(None);
+
+        let result = get_required_num_qubits_strict(func);
+        assert_eq!(result.unwrap_err(), "Missing required_num_qubits attribute");
     }
 
     #[test]
