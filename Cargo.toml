@@ -35,6 +35,7 @@ inkwell = { version = "0.10", default-features = false, features = [
 ] }
 llvm-sys = "211.0.1"
 log = "0.4"
+phf = { version = "0.14", features = ["macros"] }
 pyo3 = { version = "0.29", features = [
     "abi3-py310",
     "anyhow",
