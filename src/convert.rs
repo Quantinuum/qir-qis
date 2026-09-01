@@ -1577,10 +1577,7 @@ mod tests {
         let _ = builder.build_return(None);
 
         let result = get_required_num_qubits_strict(func);
-        assert_eq!(
-            result.unwrap_err(),
-            "Missing required_num_qubits attribute"
-        );
+        assert_eq!(result.unwrap_err(), "Missing required_num_qubits attribute");
     }
 
     #[test]
