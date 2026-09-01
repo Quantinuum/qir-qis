@@ -100,6 +100,11 @@ See [examples/rust_api.rs](https://github.com/quantinuum/qir-qis/blob/main/examp
 cargo run --example rust_api
 ```
 
+To keep untrusted entry-point metadata from driving effectively unbounded
+compiler allocations, validation and translation accept at most 65,535
+statically declared qubits and 65,535 statically declared results. The Rust
+constants `MAX_STATIC_QUBITS` and `MAX_STATIC_RESULTS` expose these limits.
+
 ## Platform Notes
 
 Windows support is functional, but a few LLVM integration paths still differ from Linux and macOS:
