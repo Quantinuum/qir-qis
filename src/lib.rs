@@ -1747,13 +1747,12 @@ mod aux {
                 Ok(BuiltinCallHandling::Handled)
             }
             "__quantum__rt__tuple_record_output" | "__quantum__rt__array_record_output" => {
-                let fn_name = args.fn_name.clone();
                 handle_tuple_or_array_output(
                     args.ctx,
                     module_ref(args),
                     args.instr,
                     unsafe { &mut *args.global_mapping },
-                    fn_name.as_str(),
+                    args.fn_name.as_str(),
                 )?;
                 Ok(BuiltinCallHandling::Handled)
             }
