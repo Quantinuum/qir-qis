@@ -44,7 +44,7 @@ pyo3-stub-gen = { version = "0.23", optional = true, features = [
     "infer_signature",
 ], default-features = false }
 rstest = "0.26"
-wasmparser = { version = "0.257", optional = true }
+wasmparser = { version = "0.258", optional = true }
 
 [features]
 default = ["python"]
@@ -114,4 +114,4 @@ wildcard_enum_match_arm = "deny"
 insta = { version = "1", features = ["filters"] }
 proptest = "1"
 tempfile = "3"
-wasm-encoder = "0.257"
+wasm-encoder = "0.258"
