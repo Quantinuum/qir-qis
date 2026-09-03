@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12](https://github.com/Quantinuum/qir-qis/compare/v0.1.11...v0.1.12) (2026-09-03)
+
+
+### Bug Fixes
+
+* **deps:** bump the wasm group with 2 updates ([#155](https://github.com/Quantinuum/qir-qis/issues/155)) ([d6cdb06](https://github.com/Quantinuum/qir-qis/commit/d6cdb06d8b93ea47afb5068c610bd87d66a4d58d))
+* **deps:** bump wasm-encoder in /fuzz in the wasm group ([#156](https://github.com/Quantinuum/qir-qis/issues/156)) ([2488bf5](https://github.com/Quantinuum/qir-qis/commit/2488bf5b89486bc3b46a1c4586e4690123daf33b))
+
 ## [0.1.11](https://github.com/Quantinuum/qir-qis/compare/v0.1.10...v0.1.11) (2026-09-01)
 
 
