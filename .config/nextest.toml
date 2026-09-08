@@ -1,0 +1,4 @@
+[profile.mutants]
+# Mutated cleanup/optimization can make the maximum-resource fixtures explode
+# in cost. Fail the individual test before cargo-mutants times out the suite.
+slow-timeout = { period = "20s", terminate-after = 1, grace-period = "1s" }
