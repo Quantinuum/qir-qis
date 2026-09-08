@@ -14,6 +14,7 @@ on:
       - "Cargo.lock"
       - "fuzz/**"
       - "Makefile"
+      - ".config/nextest.toml"
       - ".github/workflows/robustness.yml"
   pull_request:
     types:
@@ -27,6 +28,7 @@ on:
       - "Cargo.lock"
       - "fuzz/**"
       - "Makefile"
+      - ".config/nextest.toml"
       - ".github/workflows/robustness.yml"
 
 concurrency:
@@ -185,8 +187,8 @@ jobs:
           echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
       - uses: cargo-bins/cargo-binstall@v1.21.1
-      - name: Install cargo-mutants
-        run: cargo binstall --no-confirm --force cargo-mutants
+      - name: Install mutation test tools
+        run: cargo binstall --no-confirm --force cargo-mutants cargo-nextest
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: robustness-mutants-${{ runner.os }}-llvm21
@@ -194,4 +196,4 @@ jobs:
           cache-workspace-crates: true
           cache-targets: true
       - name: Run cargo-mutants
-        run: cargo mutants --package qir-qis --all-features --test-tool cargo
+        run: make mutants

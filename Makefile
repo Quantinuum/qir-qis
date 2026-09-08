@@ -27,7 +27,7 @@ audit:
 
 .PHONY: mutants
 mutants:
-	cargo mutants --package qir-qis --all-features --test-tool cargo
+	NEXTEST_PROFILE=mutants cargo mutants --package qir-qis --all-features --test-tool nextest --minimum-test-timeout 60
 
 .PHONY: fuzz
 fuzz:

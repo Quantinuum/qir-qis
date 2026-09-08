@@ -120,6 +120,13 @@ rustup toolchain install nightly
 The property-based tests run as part of the normal Rust test suite, so `make test`
 already exercises them.
 
+`make mutants` uses cargo-nextest (also required by `make test`) with the
+`mutants` profile. Each test has a 20-second timeout, while cargo-mutants allows
+at least 60 seconds for the suite. This lets Nextest report runaway mutations
+as test failures before the outer mutation runner times out, including mutations
+that make the maximum-resource translation tests excessively expensive. The
+normal test profile has no new timeout, and no boundary tests are excluded.
+
 Audit the locked Rust dependency graph for published security advisories with:
 
 ```sh
