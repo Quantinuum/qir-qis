@@ -316,9 +316,9 @@ mod aux {
     struct CallSiteAnalysis<'ctx> {
         function: FunctionValue<'ctx>,
         basic_block: BasicBlock<'ctx>,
+        instruction: inkwell::values::InstructionValue<'ctx>,
         arg_count: usize,
         callee_name: String,
-        call_args: Result<Vec<BasicValueEnum<'ctx>>, String>,
     }
 
     fn analyze_call_sites<'ctx>(module: &Module<'ctx>) -> Vec<CallSiteAnalysis<'ctx>> {
@@ -335,13 +335,12 @@ mod aux {
                                 .ok()
                                 .map(str::to_owned)
                         })?;
-                        let call_args = extract_operands(instr);
                         Some(CallSiteAnalysis {
                             function,
                             basic_block: bb,
+                            instruction: instr,
                             arg_count: call.count_arguments() as usize,
                             callee_name,
-                            call_args,
                         })
                     })
                 })
@@ -354,25 +353,30 @@ mod aux {
         errors: &mut Vec<String>,
     ) -> HashMap<String, BTreeSet<usize>> {
         let mut sites_by_function: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut helper_function_order = Vec::new();
         for (index, call_site) in call_sites.iter().enumerate() {
             let Ok(function_name) = call_site.function.get_name().to_str() else {
                 continue;
             };
             if is_user_ir_defined_helper_name(function_name) {
+                if !sites_by_function.contains_key(function_name) {
+                    helper_function_order.push(function_name.to_owned());
+                }
                 sites_by_function
                     .entry(function_name.to_string())
                     .or_default()
                     .push(index);
             }
         }
-        let mut helper_qubit_params: HashMap<String, BTreeSet<usize>> = sites_by_function
-            .keys()
+        let mut helper_qubit_params: HashMap<String, BTreeSet<usize>> = helper_function_order
+            .iter()
             .map(|name| (name.clone(), BTreeSet::new()))
             .collect();
 
         loop {
             let mut changed = false;
-            for (function_name, site_indices) in &sites_by_function {
+            for function_name in &helper_function_order {
+                let site_indices = &sites_by_function[function_name];
                 let function = call_sites[site_indices[0]].function;
                 let mut discovered = helper_qubit_params
                     .get(function_name)
@@ -381,7 +385,7 @@ mod aux {
 
                 for &site_index in site_indices {
                     let call_site = &call_sites[site_index];
-                    let call_args = match &call_site.call_args {
+                    let call_args = match extract_operands(call_site.instruction) {
                         Ok(args) => args,
                         Err(err) => {
                             errors.push(format!(
@@ -491,7 +495,7 @@ mod aux {
         }
 
         for call_site in &call_sites {
-            let call_args = match &call_site.call_args {
+            let call_args = match extract_operands(call_site.instruction) {
                 Ok(args) => args,
                 Err(err) => {
                     errors.push(format!(
@@ -509,7 +513,7 @@ mod aux {
                     call_site.function,
                     &call_site.callee_name,
                     direct_positions,
-                    call_args,
+                    &call_args,
                     required_num_qubits,
                     false,
                     errors,
@@ -523,7 +527,7 @@ mod aux {
                     call_site.function,
                     &call_site.callee_name,
                     qubit_positions.iter().copied(),
-                    call_args,
+                    &call_args,
                     required_num_qubits,
                     true,
                     errors,
@@ -1255,8 +1259,8 @@ mod aux {
                     continue;
                 }
 
-                let mut call_args = match &call_site.call_args {
-                    Ok(args) => args.clone(),
+                let mut call_args = match extract_operands(call_site.instruction) {
+                    Ok(args) => args,
                     Err(err) => {
                         if result_slot_relevant {
                             result_slot_errors
