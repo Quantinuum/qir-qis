@@ -33,9 +33,9 @@ pub fn add_generator_metadata<'c>(
 ///
 /// # Errors
 /// Returns an error if the operands could not be extracted.
-pub fn extract_operands<'a>(
-    instr: &'a InstructionValue<'a>,
-) -> Result<Vec<BasicValueEnum<'a>>, String> {
+pub fn extract_operands<'ctx>(
+    instr: &InstructionValue<'ctx>,
+) -> Result<Vec<BasicValueEnum<'ctx>>, String> {
     (0..instr.get_num_operands())
         .map(|i| {
             let op = instr

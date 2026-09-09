@@ -313,12 +313,46 @@ mod aux {
             })
     }
 
+    struct CallSiteAnalysis<'ctx> {
+        function: FunctionValue<'ctx>,
+        callee_name: String,
+        call_args: Result<Vec<BasicValueEnum<'ctx>>, String>,
+    }
+
+    fn analyze_call_sites<'ctx>(module: &Module<'ctx>) -> Vec<CallSiteAnalysis<'ctx>> {
+        module
+            .get_functions()
+            .flat_map(|function| {
+                function.get_basic_blocks().into_iter().flat_map(move |bb| {
+                    let instructions: Vec<_> = bb.get_instructions().collect();
+                    instructions.into_iter().filter_map(move |instr| {
+                        let call = CallSiteValue::try_from(instr).ok()?;
+                        let callee_name = call.get_called_fn_value().and_then(|f| {
+                            f.as_global_value()
+                                .get_name()
+                                .to_str()
+                                .ok()
+                                .map(str::to_owned)
+                        })?;
+                        let call_args = extract_operands(&instr);
+                        Some(CallSiteAnalysis {
+                            function,
+                            callee_name,
+                            call_args,
+                        })
+                    })
+                })
+            })
+            .collect()
+    }
+
     fn infer_ir_defined_helper_qubit_params(
-        module: &Module,
+        call_sites: &[CallSiteAnalysis<'_>],
         errors: &mut Vec<String>,
     ) -> HashMap<String, BTreeSet<usize>> {
-        let mut helper_qubit_params: HashMap<String, BTreeSet<usize>> = module
-            .get_functions()
+        let mut helper_qubit_params: HashMap<String, BTreeSet<usize>> = call_sites
+            .iter()
+            .map(|call_site| call_site.function)
             .filter(|function| function.count_basic_blocks() > 0)
             .filter_map(|function| {
                 function
@@ -332,10 +366,16 @@ mod aux {
 
         loop {
             let mut changed = false;
-            for function in module
-                .get_functions()
-                .filter(|function| function.count_basic_blocks() > 0)
-            {
+            let helper_functions: Vec<_> = helper_qubit_params
+                .keys()
+                .filter_map(|name| {
+                    call_sites
+                        .iter()
+                        .find(|call_site| call_site.function.get_name().to_str().ok() == Some(name))
+                        .map(|call_site| call_site.function)
+                })
+                .collect();
+            for function in helper_functions {
                 let Ok(function_name) = function.get_name().to_str() else {
                     continue;
                 };
@@ -347,53 +387,39 @@ mod aux {
                     .cloned()
                     .unwrap_or_default();
 
-                for bb in function.get_basic_blocks() {
-                    for instr in bb.get_instructions() {
-                        let Ok(call) = CallSiteValue::try_from(instr) else {
+                for call_site in call_sites
+                    .iter()
+                    .filter(|call_site| call_site.function == function)
+                {
+                    let call_args = match &call_site.call_args {
+                        Ok(args) => args,
+                        Err(err) => {
+                            errors.push(format!(
+                                "Failed to inspect `{}` call in `{function_name}`: {err}",
+                                call_site.callee_name
+                            ));
+                            continue;
+                        }
+                    };
+
+                    let direct_positions =
+                        direct_qubit_operand_positions(&call_site.callee_name, call_args.len());
+                    let qubit_positions = if direct_positions.is_empty() {
+                        helper_qubit_params
+                            .get(&call_site.callee_name)
+                            .map(|positions| positions.iter().copied().collect())
+                            .unwrap_or_default()
+                    } else {
+                        direct_positions
+                    };
+
+                    for pos in qubit_positions {
+                        let Some(BasicValueEnum::PointerValue(ptr)) = call_args.get(pos).copied()
+                        else {
                             continue;
                         };
-                        let Some(callee_name) = call.get_called_fn_value().and_then(|f| {
-                            f.as_global_value()
-                                .get_name()
-                                .to_str()
-                                .ok()
-                                .map(ToOwned::to_owned)
-                        }) else {
-                            continue;
-                        };
-
-                        let call_args = match extract_operands(&instr) {
-                            Ok(args) => args,
-                            Err(err) => {
-                                errors.push(format!(
-                                    "Failed to inspect `{callee_name}` call in `{function_name}`: {err}"
-                                ));
-                                continue;
-                            }
-                        };
-
-                        let qubit_positions = {
-                            let direct_positions =
-                                direct_qubit_operand_positions(&callee_name, call_args.len());
-                            if direct_positions.is_empty() {
-                                helper_qubit_params
-                                    .get(&callee_name)
-                                    .map(|positions| positions.iter().copied().collect())
-                                    .unwrap_or_default()
-                            } else {
-                                direct_positions
-                            }
-                        };
-
-                        for pos in qubit_positions {
-                            let Some(BasicValueEnum::PointerValue(ptr)) =
-                                call_args.get(pos).copied()
-                            else {
-                                continue;
-                            };
-                            if let Some(param_idx) = find_pointer_param_index(function, ptr) {
-                                discovered.insert(param_idx);
-                            }
+                        if let Some(param_idx) = find_pointer_param_index(function, ptr) {
+                            discovered.insert(param_idx);
                         }
                     }
                 }
@@ -468,62 +494,50 @@ mod aux {
         };
 
         let previous_error_count = errors.len();
-        let helper_qubit_params = infer_ir_defined_helper_qubit_params(module, errors);
+        let call_sites = analyze_call_sites(module);
+        let helper_qubit_params = infer_ir_defined_helper_qubit_params(&call_sites, errors);
         if errors.len() > previous_error_count {
             return;
         }
 
-        for function in module.get_functions() {
-            for bb in function.get_basic_blocks() {
-                for instr in bb.get_instructions() {
-                    let Ok(call) = CallSiteValue::try_from(instr) else {
-                        continue;
-                    };
-                    let Some(callee_name) = call.get_called_fn_value().and_then(|f| {
-                        f.as_global_value()
-                            .get_name()
-                            .to_str()
-                            .ok()
-                            .map(ToOwned::to_owned)
-                    }) else {
-                        continue;
-                    };
-                    let call_args = match extract_operands(&instr) {
-                        Ok(args) => args,
-                        Err(err) => {
-                            errors.push(format!("Failed to inspect `{callee_name}` call: {err}"));
-                            continue;
-                        }
-                    };
-
-                    let direct_positions =
-                        direct_qubit_operand_positions(&callee_name, call_args.len());
-                    if !direct_positions.is_empty() {
-                        validate_static_qubit_call_operands(
-                            function,
-                            &callee_name,
-                            direct_positions,
-                            &call_args,
-                            required_num_qubits,
-                            false,
-                            errors,
-                        );
-                    }
-
-                    if let Some(qubit_positions) = helper_qubit_params.get(&callee_name)
-                        && !qubit_positions.is_empty()
-                    {
-                        validate_static_qubit_call_operands(
-                            function,
-                            &callee_name,
-                            qubit_positions.iter().copied(),
-                            &call_args,
-                            required_num_qubits,
-                            true,
-                            errors,
-                        );
-                    }
+        for call_site in &call_sites {
+            let call_args = match &call_site.call_args {
+                Ok(args) => args,
+                Err(err) => {
+                    errors.push(format!(
+                        "Failed to inspect `{}` call: {err}",
+                        call_site.callee_name
+                    ));
+                    continue;
                 }
+            };
+
+            let direct_positions =
+                direct_qubit_operand_positions(&call_site.callee_name, call_args.len());
+            if !direct_positions.is_empty() {
+                validate_static_qubit_call_operands(
+                    call_site.function,
+                    &call_site.callee_name,
+                    direct_positions,
+                    call_args,
+                    required_num_qubits,
+                    false,
+                    errors,
+                );
+            }
+
+            if let Some(qubit_positions) = helper_qubit_params.get(&call_site.callee_name)
+                && !qubit_positions.is_empty()
+            {
+                validate_static_qubit_call_operands(
+                    call_site.function,
+                    &call_site.callee_name,
+                    qubit_positions.iter().copied(),
+                    call_args,
+                    required_num_qubits,
+                    true,
+                    errors,
+                );
             }
         }
     }
@@ -1074,9 +1088,10 @@ mod aux {
         } else {
             match get_required_num_qubits_strict(entry_fn) {
                 Ok(required_num_qubits) => {
+                    let call_sites = analyze_call_sites(module);
                     let mut infer_errors = Vec::new();
                     let helper_qubit_params =
-                        infer_ir_defined_helper_qubit_params(module, &mut infer_errors);
+                        infer_ir_defined_helper_qubit_params(&call_sites, &mut infer_errors);
                     if infer_errors.is_empty() {
                         Some((required_num_qubits, helper_qubit_params))
                     } else {
