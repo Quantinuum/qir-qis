@@ -316,76 +316,111 @@ mod aux {
     struct CallSiteAnalysis<'ctx> {
         function: FunctionValue<'ctx>,
         basic_block: BasicBlock<'ctx>,
-        instruction: inkwell::values::InstructionValue<'ctx>,
         arg_count: usize,
         callee_name: String,
+        call_args: Option<Result<Vec<BasicValueEnum<'ctx>>, String>>,
     }
 
-    fn analyze_call_sites<'ctx>(module: &Module<'ctx>) -> Vec<CallSiteAnalysis<'ctx>> {
-        module
-            .get_functions()
-            .flat_map(|function| {
-                function.get_basic_blocks().into_iter().flat_map(move |bb| {
-                    bb.get_instructions().filter_map(move |instr| {
-                        let call = CallSiteValue::try_from(instr).ok()?;
-                        let callee_name = call.get_called_fn_value().and_then(|f| {
-                            f.as_global_value()
-                                .get_name()
-                                .to_str()
-                                .ok()
-                                .map(str::to_owned)
-                        })?;
-                        Some(CallSiteAnalysis {
-                            function,
-                            basic_block: bb,
-                            instruction: instr,
-                            arg_count: call.count_arguments() as usize,
-                            callee_name,
-                        })
-                    })
-                })
-            })
-            .collect()
+    struct CallSiteIndex<'ctx> {
+        sites: Vec<CallSiteAnalysis<'ctx>>,
+        by_function: HashMap<String, Vec<usize>>,
+        helper_order: Vec<String>,
+    }
+
+    fn analyze_call_sites<'ctx>(module: &Module<'ctx>) -> CallSiteIndex<'ctx> {
+        let mut sites = Vec::new();
+        let mut by_function: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut helper_order = Vec::new();
+        for function in module.get_functions() {
+            let function_name = function.get_name().to_str().ok().map(str::to_owned);
+            for bb in function.get_basic_blocks() {
+                for instr in bb.get_instructions() {
+                    let Ok(call) = CallSiteValue::try_from(instr) else {
+                        continue;
+                    };
+                    let Some(callee_name) = call.get_called_fn_value().and_then(|f| {
+                        f.as_global_value()
+                            .get_name()
+                            .to_str()
+                            .ok()
+                            .map(str::to_owned)
+                    }) else {
+                        continue;
+                    };
+                    let index = sites.len();
+                    let call_args = function_name.as_deref().and_then(|name| {
+                        (is_user_ir_defined_helper_name(name)
+                            || !direct_qubit_operand_positions(
+                                &callee_name,
+                                call.count_arguments() as usize,
+                            )
+                            .is_empty()
+                            || matches!(
+                                callee_name.as_str(),
+                                "__quantum__qis__mz__body"
+                                    | "__quantum__qis__m__body"
+                                    | "__quantum__qis__mresetz__body"
+                                    | "__quantum__rt__read_result"
+                                    | "__quantum__rt__result_record_output"
+                                    | "__quantum__rt__qubit_array_allocate"
+                                    | "__quantum__rt__qubit_array_release"
+                                    | "__quantum__rt__result_array_allocate"
+                                    | "__quantum__rt__result_array_release"
+                                    | "__quantum__rt__result_array_record_output"
+                            ))
+                        .then(|| extract_operands(instr))
+                    });
+                    sites.push(CallSiteAnalysis {
+                        function,
+                        basic_block: bb,
+                        arg_count: call.count_arguments() as usize,
+                        callee_name,
+                        call_args,
+                    });
+                    if let Some(name) = function_name.as_deref() {
+                        by_function.entry(name.to_owned()).or_default().push(index);
+                        if is_user_ir_defined_helper_name(name)
+                            && !helper_order.iter().any(|item| item == name)
+                        {
+                            helper_order.push(name.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        CallSiteIndex {
+            sites,
+            by_function,
+            helper_order,
+        }
     }
 
     fn infer_ir_defined_helper_qubit_params(
-        call_sites: &[CallSiteAnalysis<'_>],
+        call_site_index: &CallSiteIndex<'_>,
         errors: &mut Vec<String>,
     ) -> HashMap<String, BTreeSet<usize>> {
-        let mut sites_by_function: HashMap<String, Vec<usize>> = HashMap::new();
-        let mut helper_function_order = Vec::new();
-        for (index, call_site) in call_sites.iter().enumerate() {
-            let Ok(function_name) = call_site.function.get_name().to_str() else {
-                continue;
-            };
-            if is_user_ir_defined_helper_name(function_name) {
-                if !sites_by_function.contains_key(function_name) {
-                    helper_function_order.push(function_name.to_owned());
-                }
-                sites_by_function
-                    .entry(function_name.to_string())
-                    .or_default()
-                    .push(index);
-            }
-        }
-        let mut helper_qubit_params: HashMap<String, BTreeSet<usize>> = helper_function_order
+        let mut helper_qubit_params: HashMap<String, BTreeSet<usize>> = call_site_index
+            .helper_order
             .iter()
             .map(|name| (name.clone(), BTreeSet::new()))
             .collect();
 
         loop {
             let mut changed = false;
-            for function_name in &helper_function_order {
-                let site_indices = &sites_by_function[function_name];
-                let function = call_sites[site_indices[0]].function;
+            for function_name in &call_site_index.helper_order {
+                let site_indices = &call_site_index.by_function[function_name];
+                let function = call_site_index.sites[site_indices[0]].function;
                 let mut discovered = helper_qubit_params
                     .get(function_name)
                     .cloned()
                     .unwrap_or_default();
 
                 for &site_index in site_indices {
-                    let call_site = &call_sites[site_index];
-                    let call_args = match extract_operands(call_site.instruction) {
+                    let call_site = &call_site_index.sites[site_index];
+                    let Some(call_args) = call_site.call_args.as_ref() else {
+                        continue;
+                    };
+                    let call_args = match call_args {
                         Ok(args) => args,
                         Err(err) => {
                             errors.push(format!(
@@ -488,14 +523,17 @@ mod aux {
         };
 
         let previous_error_count = errors.len();
-        let call_sites = analyze_call_sites(module);
-        let helper_qubit_params = infer_ir_defined_helper_qubit_params(&call_sites, errors);
+        let call_site_index = analyze_call_sites(module);
+        let helper_qubit_params = infer_ir_defined_helper_qubit_params(&call_site_index, errors);
         if errors.len() > previous_error_count {
             return;
         }
 
-        for call_site in &call_sites {
-            let call_args = match extract_operands(call_site.instruction) {
+        for call_site in &call_site_index.sites {
+            let Some(call_args) = call_site.call_args.as_ref() else {
+                continue;
+            };
+            let call_args = match call_args {
                 Ok(args) => args,
                 Err(err) => {
                     errors.push(format!(
@@ -513,7 +551,7 @@ mod aux {
                     call_site.function,
                     &call_site.callee_name,
                     direct_positions,
-                    &call_args,
+                    call_args,
                     required_num_qubits,
                     false,
                     errors,
@@ -527,7 +565,7 @@ mod aux {
                     call_site.function,
                     &call_site.callee_name,
                     qubit_positions.iter().copied(),
-                    &call_args,
+                    call_args,
                     required_num_qubits,
                     true,
                     errors,
@@ -1061,7 +1099,7 @@ mod aux {
         // --- Setup shared by the per-call-site checks below (mirrors what each
         // individual pass computed before its own traversal). ---
         let required_num_qubits_for_barrier = get_required_num_qubits(entry_fn);
-        let call_sites = analyze_call_sites(module);
+        let call_site_index = analyze_call_sites(module);
 
         let required_num_results = if entry_fn
             .get_string_attribute(AttributeLoc::Function, "required_num_results")
@@ -1085,7 +1123,7 @@ mod aux {
                 Ok(required_num_qubits) => {
                     let mut infer_errors = Vec::new();
                     let helper_qubit_params =
-                        infer_ir_defined_helper_qubit_params(&call_sites, &mut infer_errors);
+                        infer_ir_defined_helper_qubit_params(&call_site_index, &mut infer_errors);
                     if infer_errors.is_empty() {
                         Some((required_num_qubits, helper_qubit_params))
                     } else {
@@ -1165,7 +1203,14 @@ mod aux {
                 None
             };
 
-            for call_site in call_sites.iter().filter(|site| site.function == fun) {
+            let function_name = fun.get_name().to_str().unwrap_or("");
+            for &site_index in call_site_index
+                .by_function
+                .get(function_name)
+                .into_iter()
+                .flatten()
+            {
+                let call_site = &call_site_index.sites[site_index];
                 let callee_name = &call_site.callee_name;
                 let bb = call_site.basic_block;
                 let arg_count = call_site.arg_count;
@@ -1259,8 +1304,11 @@ mod aux {
                     continue;
                 }
 
-                let mut call_args = match extract_operands(call_site.instruction) {
-                    Ok(args) => args,
+                let Some(cached_args) = call_site.call_args.as_ref() else {
+                    continue;
+                };
+                let call_args = match cached_args {
+                    Ok(args) => &args[..arg_count.min(args.len())],
                     Err(err) => {
                         if result_slot_relevant {
                             result_slot_errors
@@ -1277,8 +1325,6 @@ mod aux {
                         continue;
                     }
                 };
-                call_args.truncate(arg_count);
-
                 // --- validate_result_slot_usage ---
                 if let (Some(required_num_results), Some(result_operand_index)) =
                     (required_num_results, result_operand_index)
@@ -1316,7 +1362,7 @@ mod aux {
                             fun,
                             callee_name,
                             direct_positions,
-                            &call_args,
+                            call_args,
                             *required_num_qubits,
                             false,
                             &mut static_qubit_errors,
@@ -1329,7 +1375,7 @@ mod aux {
                             fun,
                             callee_name,
                             qubit_positions.iter().copied(),
-                            &call_args,
+                            call_args,
                             *required_num_qubits,
                             true,
                             &mut static_qubit_errors,
