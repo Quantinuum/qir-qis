@@ -315,6 +315,8 @@ mod aux {
 
     struct CallSiteAnalysis<'ctx> {
         function: FunctionValue<'ctx>,
+        basic_block: BasicBlock<'ctx>,
+        arg_count: usize,
         callee_name: String,
         call_args: Result<Vec<BasicValueEnum<'ctx>>, String>,
     }
@@ -336,6 +338,8 @@ mod aux {
                         let call_args = extract_operands(instr);
                         Some(CallSiteAnalysis {
                             function,
+                            basic_block: bb,
+                            arg_count: call.count_arguments() as usize,
                             callee_name,
                             call_args,
                         })
@@ -349,47 +353,34 @@ mod aux {
         call_sites: &[CallSiteAnalysis<'_>],
         errors: &mut Vec<String>,
     ) -> HashMap<String, BTreeSet<usize>> {
-        let mut helper_qubit_params: HashMap<String, BTreeSet<usize>> = call_sites
-            .iter()
-            .map(|call_site| call_site.function)
-            .filter(|function| function.count_basic_blocks() > 0)
-            .filter_map(|function| {
-                function
-                    .get_name()
-                    .to_str()
-                    .ok()
-                    .filter(|name| is_user_ir_defined_helper_name(name))
-                    .map(|name| (name.to_string(), BTreeSet::new()))
-            })
+        let mut sites_by_function: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, call_site) in call_sites.iter().enumerate() {
+            let Ok(function_name) = call_site.function.get_name().to_str() else {
+                continue;
+            };
+            if is_user_ir_defined_helper_name(function_name) {
+                sites_by_function
+                    .entry(function_name.to_string())
+                    .or_default()
+                    .push(index);
+            }
+        }
+        let mut helper_qubit_params: HashMap<String, BTreeSet<usize>> = sites_by_function
+            .keys()
+            .map(|name| (name.clone(), BTreeSet::new()))
             .collect();
 
         loop {
             let mut changed = false;
-            let helper_functions: Vec<_> = helper_qubit_params
-                .keys()
-                .filter_map(|name| {
-                    call_sites
-                        .iter()
-                        .find(|call_site| call_site.function.get_name().to_str().ok() == Some(name))
-                        .map(|call_site| call_site.function)
-                })
-                .collect();
-            for function in helper_functions {
-                let Ok(function_name) = function.get_name().to_str() else {
-                    continue;
-                };
-                if !is_user_ir_defined_helper_name(function_name) {
-                    continue;
-                }
+            for (function_name, site_indices) in &sites_by_function {
+                let function = call_sites[site_indices[0]].function;
                 let mut discovered = helper_qubit_params
                     .get(function_name)
                     .cloned()
                     .unwrap_or_default();
 
-                for call_site in call_sites
-                    .iter()
-                    .filter(|call_site| call_site.function == function)
-                {
+                for &site_index in site_indices {
+                    let call_site = &call_sites[site_index];
                     let call_args = match &call_site.call_args {
                         Ok(args) => args,
                         Err(err) => {
@@ -424,7 +415,7 @@ mod aux {
                 }
 
                 if helper_qubit_params.get(function_name) != Some(&discovered) {
-                    helper_qubit_params.insert(function_name.to_string(), discovered);
+                    helper_qubit_params.insert(function_name.clone(), discovered);
                     changed = true;
                 }
             }
@@ -1066,6 +1057,7 @@ mod aux {
         // --- Setup shared by the per-call-site checks below (mirrors what each
         // individual pass computed before its own traversal). ---
         let required_num_qubits_for_barrier = get_required_num_qubits(entry_fn);
+        let call_sites = analyze_call_sites(module);
 
         let required_num_results = if entry_fn
             .get_string_attribute(AttributeLoc::Function, "required_num_results")
@@ -1087,7 +1079,6 @@ mod aux {
         } else {
             match get_required_num_qubits_strict(entry_fn) {
                 Ok(required_num_qubits) => {
-                    let call_sites = analyze_call_sites(module);
                     let mut infer_errors = Vec::new();
                     let helper_qubit_params =
                         infer_ir_defined_helper_qubit_params(&call_sites, &mut infer_errors);
@@ -1170,240 +1161,223 @@ mod aux {
                 None
             };
 
-            for bb in fun.get_basic_blocks() {
-                for instr in bb.get_instructions() {
-                    let Ok(call) = CallSiteValue::try_from(instr) else {
-                        continue;
-                    };
-                    let Some(callee_name) = call.get_called_fn_value().and_then(|f| {
-                        f.as_global_value()
-                            .get_name()
-                            .to_str()
-                            .ok()
-                            .map(ToOwned::to_owned)
-                    }) else {
-                        continue;
-                    };
+            for call_site in call_sites.iter().filter(|site| site.function == fun) {
+                let callee_name = &call_site.callee_name;
+                let bb = call_site.basic_block;
+                let arg_count = call_site.arg_count;
 
-                    // --- validate_dynamic_result_allocation_placement ---
-                    if matches!(
-                        callee_name.as_str(),
-                        "__quantum__rt__result_allocate" | "__quantum__rt__result_array_allocate"
-                    ) && Some(bb) != allowed_result_alloc_block
-                    {
-                        dynamic_result_placement_errors.push(format!(
+                // --- validate_dynamic_result_allocation_placement ---
+                if matches!(
+                    callee_name.as_str(),
+                    "__quantum__rt__result_allocate" | "__quantum__rt__result_array_allocate"
+                ) && Some(bb) != allowed_result_alloc_block
+                {
+                    dynamic_result_placement_errors.push(format!(
                             "{callee_name} is only supported in the entry block because dynamic result slots are lowered to stack storage"
                         ));
-                    }
+                }
 
-                    // --- validate_capability_usage ---
-                    match callee_name.as_str() {
-                        "__quantum__rt__qubit_array_allocate"
-                        | "__quantum__rt__qubit_array_release"
-                            if !capability_flags.arrays
-                                || !capability_flags.dynamic_qubit_management =>
-                        {
-                            capability_errors.push(format!(
+                // --- validate_capability_usage ---
+                match callee_name.as_str() {
+                    "__quantum__rt__qubit_array_allocate"
+                    | "__quantum__rt__qubit_array_release"
+                        if !capability_flags.arrays
+                            || !capability_flags.dynamic_qubit_management =>
+                    {
+                        capability_errors.push(format!(
                                 "{callee_name} requires both `arrays=true` and `dynamic_qubit_management=true`"
                             ));
-                        }
-                        "__quantum__rt__result_array_allocate"
-                        | "__quantum__rt__result_array_release"
-                        | "__quantum__rt__result_array_record_output"
-                            if !capability_flags.arrays
-                                || !capability_flags.dynamic_result_management =>
-                        {
-                            capability_errors.push(format!(
+                    }
+                    "__quantum__rt__result_array_allocate"
+                    | "__quantum__rt__result_array_release"
+                    | "__quantum__rt__result_array_record_output"
+                        if !capability_flags.arrays
+                            || !capability_flags.dynamic_result_management =>
+                    {
+                        capability_errors.push(format!(
                                 "{callee_name} requires both `arrays=true` and `dynamic_result_management=true`"
                             ));
-                        }
-                        "__quantum__rt__qubit_allocate" | "__quantum__rt__qubit_release"
-                            if !capability_flags.dynamic_qubit_management =>
-                        {
-                            capability_errors.push(format!(
-                                "{callee_name} requires `dynamic_qubit_management=true`"
-                            ));
-                        }
-                        "__quantum__rt__result_allocate" | "__quantum__rt__result_release"
-                            if !capability_flags.dynamic_result_management =>
-                        {
-                            capability_errors.push(format!(
-                                "{callee_name} requires `dynamic_result_management=true`"
-                            ));
-                        }
-                        _ => {}
                     }
+                    "__quantum__rt__qubit_allocate" | "__quantum__rt__qubit_release"
+                        if !capability_flags.dynamic_qubit_management =>
+                    {
+                        capability_errors.push(format!(
+                            "{callee_name} requires `dynamic_qubit_management=true`"
+                        ));
+                    }
+                    "__quantum__rt__result_allocate" | "__quantum__rt__result_release"
+                        if !capability_flags.dynamic_result_management =>
+                    {
+                        capability_errors.push(format!(
+                            "{callee_name} requires `dynamic_result_management=true`"
+                        ));
+                    }
+                    _ => {}
+                }
 
-                    // Determine, without extracting operands, whether any check
-                    // below needs this call site's arguments.
-                    let result_operand_index = match callee_name.as_str() {
-                        "__quantum__qis__mz__body"
-                        | "__quantum__qis__m__body"
-                        | "__quantum__qis__mresetz__body" => Some(1),
-                        "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => {
-                            Some(0)
+                // Determine, without extracting operands, whether any check
+                // below needs this call site's arguments.
+                let result_operand_index = match callee_name.as_str() {
+                    "__quantum__qis__mz__body"
+                    | "__quantum__qis__m__body"
+                    | "__quantum__qis__mresetz__body" => Some(1),
+                    "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => Some(0),
+                    _ => None,
+                };
+                let result_slot_relevant = matches!(
+                    (required_num_results, result_operand_index),
+                    (Some(_), Some(_))
+                );
+                let direct_qubit_positions = static_qubit_ctx
+                    .as_ref()
+                    .map(|_| direct_qubit_operand_positions(callee_name, arg_count));
+                let helper_qubit_positions = static_qubit_ctx
+                    .as_ref()
+                    .and_then(|(_, helper_qubit_params)| helper_qubit_params.get(callee_name));
+                let static_qubit_operand_inspection_relevant = static_qubit_ctx.is_some();
+                let array_backing_relevant = matches!(
+                    callee_name.as_str(),
+                    "__quantum__rt__qubit_array_allocate"
+                        | "__quantum__rt__qubit_array_release"
+                        | "__quantum__rt__result_array_allocate"
+                        | "__quantum__rt__result_array_release"
+                        | "__quantum__rt__result_array_record_output"
+                );
+
+                if matches!(
+                    (
+                        result_slot_relevant,
+                        static_qubit_ctx.as_ref(),
+                        array_backing_relevant
+                    ),
+                    (false, None, false)
+                ) {
+                    continue;
+                }
+
+                let mut call_args = match &call_site.call_args {
+                    Ok(args) => args.clone(),
+                    Err(err) => {
+                        if result_slot_relevant {
+                            result_slot_errors
+                                .push(format!("Failed to inspect `{callee_name}` call: {err}"));
                         }
-                        _ => None,
-                    };
-                    let result_slot_relevant = matches!(
-                        (required_num_results, result_operand_index),
-                        (Some(_), Some(_))
-                    );
-                    let direct_qubit_positions = static_qubit_ctx.as_ref().map(|_| {
-                        direct_qubit_operand_positions(
-                            &callee_name,
-                            call.count_arguments() as usize,
-                        )
-                    });
-                    let helper_qubit_positions = static_qubit_ctx
-                        .as_ref()
-                        .and_then(|(_, helper_qubit_params)| helper_qubit_params.get(&callee_name));
-                    let static_qubit_operand_inspection_relevant = static_qubit_ctx.is_some();
-                    let array_backing_relevant = matches!(
-                        callee_name.as_str(),
-                        "__quantum__rt__qubit_array_allocate"
-                            | "__quantum__rt__qubit_array_release"
-                            | "__quantum__rt__result_array_allocate"
-                            | "__quantum__rt__result_array_release"
-                            | "__quantum__rt__result_array_record_output"
-                    );
-
-                    if matches!(
-                        (
-                            result_slot_relevant,
-                            static_qubit_ctx.as_ref(),
-                            array_backing_relevant
-                        ),
-                        (false, None, false)
-                    ) {
+                        if static_qubit_operand_inspection_relevant {
+                            static_qubit_errors
+                                .push(format!("Failed to inspect `{callee_name}` call: {err}"));
+                        }
+                        if array_backing_relevant {
+                            dynamic_array_backing_errors
+                                .push(format!("Failed to inspect {callee_name} operands: {err}"));
+                        }
                         continue;
                     }
+                };
+                call_args.truncate(arg_count);
 
-                    let mut call_args = match extract_operands(instr) {
-                        Ok(args) => args,
-                        Err(err) => {
-                            if result_slot_relevant {
-                                result_slot_errors
-                                    .push(format!("Failed to inspect `{callee_name}` call: {err}"));
-                            }
-                            if static_qubit_operand_inspection_relevant {
-                                static_qubit_errors
-                                    .push(format!("Failed to inspect `{callee_name}` call: {err}"));
-                            }
-                            if array_backing_relevant {
-                                dynamic_array_backing_errors.push(format!(
-                                    "Failed to inspect {callee_name} operands: {err}"
-                                ));
-                            }
-                            continue;
-                        }
-                    };
-                    call_args.truncate(call.count_arguments() as usize);
-
-                    // --- validate_result_slot_usage ---
-                    if let (Some(required_num_results), Some(result_operand_index)) =
-                        (required_num_results, result_operand_index)
-                    {
-                        match call_args.get(result_operand_index).copied() {
-                            None => result_slot_errors.push(format!(
-                                "Call to `{callee_name}` is missing a result operand"
-                            )),
-                            Some(BasicValueEnum::PointerValue(result_ptr)) => {
-                                match get_index(result_ptr) {
-                                    Ok(result_idx) => {
-                                        if let Err(err) =
-                                            checked_result_index(result_idx, required_num_results)
-                                        {
-                                            result_slot_errors.push(err);
-                                        }
+                // --- validate_result_slot_usage ---
+                if let (Some(required_num_results), Some(result_operand_index)) =
+                    (required_num_results, result_operand_index)
+                {
+                    match call_args.get(result_operand_index).copied() {
+                        None => result_slot_errors.push(format!(
+                            "Call to `{callee_name}` is missing a result operand"
+                        )),
+                        Some(BasicValueEnum::PointerValue(result_ptr)) => {
+                            match get_index(result_ptr) {
+                                Ok(result_idx) => {
+                                    if let Err(err) =
+                                        checked_result_index(result_idx, required_num_results)
+                                    {
+                                        result_slot_errors.push(err);
                                     }
-                                    Err(err) => result_slot_errors.push(format!(
-                                        "Failed to inspect result operand for `{callee_name}`: {err}"
-                                    )),
                                 }
+                                Err(err) => result_slot_errors.push(format!(
+                                    "Failed to inspect result operand for `{callee_name}`: {err}"
+                                )),
                             }
-                            Some(_) => result_slot_errors.push(format!(
-                                "Call to `{callee_name}` has a non-pointer result operand"
-                            )),
                         }
+                        Some(_) => result_slot_errors.push(format!(
+                            "Call to `{callee_name}` has a non-pointer result operand"
+                        )),
                     }
+                }
 
-                    // --- validate_static_qubit_helper_usage (per-call-site pass) ---
-                    if let Some((required_num_qubits, _)) = static_qubit_ctx.as_ref() {
-                        if let Some(direct_positions) = direct_qubit_positions
-                            && !direct_positions.is_empty()
-                        {
-                            validate_static_qubit_call_operands(
-                                fun,
-                                &callee_name,
-                                direct_positions,
-                                &call_args,
-                                *required_num_qubits,
-                                false,
-                                &mut static_qubit_errors,
-                            );
-                        }
-                        if let Some(qubit_positions) = helper_qubit_positions
-                            && !qubit_positions.is_empty()
-                        {
-                            validate_static_qubit_call_operands(
-                                fun,
-                                &callee_name,
-                                qubit_positions.iter().copied(),
-                                &call_args,
-                                *required_num_qubits,
-                                true,
-                                &mut static_qubit_errors,
-                            );
-                        }
+                // --- validate_static_qubit_helper_usage (per-call-site pass) ---
+                if let Some((required_num_qubits, _)) = static_qubit_ctx.as_ref() {
+                    if let Some(direct_positions) = direct_qubit_positions
+                        && !direct_positions.is_empty()
+                    {
+                        validate_static_qubit_call_operands(
+                            fun,
+                            callee_name,
+                            direct_positions,
+                            &call_args,
+                            *required_num_qubits,
+                            false,
+                            &mut static_qubit_errors,
+                        );
                     }
+                    if let Some(qubit_positions) = helper_qubit_positions
+                        && !qubit_positions.is_empty()
+                    {
+                        validate_static_qubit_call_operands(
+                            fun,
+                            callee_name,
+                            qubit_positions.iter().copied(),
+                            &call_args,
+                            *required_num_qubits,
+                            true,
+                            &mut static_qubit_errors,
+                        );
+                    }
+                }
 
-                    // --- validate_dynamic_array_allocation_backing ---
-                    if array_backing_relevant {
-                        let Some((length_operand, backing_operand)) =
-                            call_args.first().copied().zip(call_args.get(1).copied())
-                        else {
-                            dynamic_array_backing_errors.push(format!(
+                // --- validate_dynamic_array_allocation_backing ---
+                if array_backing_relevant {
+                    let Some((length_operand, backing_operand)) =
+                        call_args.first().copied().zip(call_args.get(1).copied())
+                    else {
+                        dynamic_array_backing_errors.push(format!(
                                 "{callee_name} requires a constant array length and backing array pointer"
                             ));
-                            continue;
-                        };
-                        if matches!(length_operand, BasicValueEnum::IntValue(_)) {
-                            match extract_const_len(length_operand, &callee_name) {
-                                Ok(requested_len) => {
-                                    let BasicValueEnum::PointerValue(backing_ptr) = backing_operand
-                                    else {
-                                        dynamic_array_backing_errors.push(format!(
+                        continue;
+                    };
+                    if matches!(length_operand, BasicValueEnum::IntValue(_)) {
+                        match extract_const_len(length_operand, callee_name) {
+                            Ok(requested_len) => {
+                                let BasicValueEnum::PointerValue(backing_ptr) = backing_operand
+                                else {
+                                    dynamic_array_backing_errors.push(format!(
                                             "{callee_name} requires a fixed-size backing array allocated as [N x ptr]"
                                         ));
-                                        continue;
-                                    };
-                                    match get_fixed_pointer_array_len(backing_ptr, &callee_name) {
-                                        Ok(backing_len) => {
-                                            if requested_len != backing_len {
-                                                dynamic_array_backing_errors.push(format!(
+                                    continue;
+                                };
+                                match get_fixed_pointer_array_len(backing_ptr, callee_name) {
+                                    Ok(backing_len) => {
+                                        if requested_len != backing_len {
+                                            dynamic_array_backing_errors.push(format!(
                                                     "{callee_name} requires a fixed-size backing array whose requested length {requested_len} does not match backing array length {backing_len}"
                                                 ));
-                                            }
-                                            if callee_name
-                                                == "__quantum__rt__result_array_record_output"
-                                                && requested_len > i32::MAX as u64
-                                            {
-                                                dynamic_array_backing_errors.push(format!(
+                                        }
+                                        if callee_name
+                                            == "__quantum__rt__result_array_record_output"
+                                            && requested_len > i32::MAX as u64
+                                        {
+                                            dynamic_array_backing_errors.push(format!(
                                                     "{callee_name} requires an array length that fits in i32 for RESULT_ARRAY output"
                                                 ));
-                                            }
                                         }
-                                        Err(err) => dynamic_array_backing_errors.push(err),
                                     }
+                                    Err(err) => dynamic_array_backing_errors.push(err),
                                 }
-                                Err(err) => dynamic_array_backing_errors.push(err),
                             }
-                        } else {
-                            dynamic_array_backing_errors.push(format!(
+                            Err(err) => dynamic_array_backing_errors.push(err),
+                        }
+                    } else {
+                        dynamic_array_backing_errors.push(format!(
                                 "{callee_name} requires a constant array length and backing array pointer"
                             ));
-                        }
                     }
                 }
             }
