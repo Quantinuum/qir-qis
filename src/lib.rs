@@ -324,8 +324,7 @@ mod aux {
             .get_functions()
             .flat_map(|function| {
                 function.get_basic_blocks().into_iter().flat_map(move |bb| {
-                    let instructions: Vec<_> = bb.get_instructions().collect();
-                    instructions.into_iter().filter_map(move |instr| {
+                    bb.get_instructions().filter_map(move |instr| {
                         let call = CallSiteValue::try_from(instr).ok()?;
                         let callee_name = call.get_called_fn_value().and_then(|f| {
                             f.as_global_value()
@@ -334,7 +333,7 @@ mod aux {
                                 .ok()
                                 .map(str::to_owned)
                         })?;
-                        let call_args = extract_operands(&instr);
+                        let call_args = extract_operands(instr);
                         Some(CallSiteAnalysis {
                             function,
                             callee_name,
@@ -972,7 +971,7 @@ mod aux {
                         continue;
                     }
 
-                    let mut call_args: Vec<BasicValueEnum> = match extract_operands(&instr) {
+                    let mut call_args: Vec<BasicValueEnum> = match extract_operands(instr) {
                         Ok(args) => args,
                         Err(err) => {
                             errors.push(format!("Failed to inspect {fn_name} operands: {err}"));
@@ -1280,7 +1279,7 @@ mod aux {
                         continue;
                     }
 
-                    let mut call_args = match extract_operands(&instr) {
+                    let mut call_args = match extract_operands(instr) {
                         Ok(args) => args,
                         Err(err) => {
                             if result_slot_relevant {
@@ -2762,7 +2761,7 @@ mod aux {
     fn lower_dynamic_qubit_allocate(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let builder = args.ctx.create_builder();
         builder.position_before(&args.instr);
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(args.instr)?;
         let helper = ensure_dynamic_qubit_allocate(args.ctx, module_ref(args));
         let value = call_basic_value(
             &builder,
@@ -2776,7 +2775,7 @@ mod aux {
     }
 
     fn lower_dynamic_qubit_release(args: &ProcessCallArgs<'_>) -> Result<(), String> {
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(args.instr)?;
         let helper = ensure_dynamic_qubit_release(args.ctx, module_ref(args));
         lower_void_helper_call(
             args.ctx,
@@ -2788,7 +2787,7 @@ mod aux {
     }
 
     fn lower_dynamic_qubit_array_allocate(args: &ProcessCallArgs<'_>) -> Result<(), String> {
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(args.instr)?;
         let helper = ensure_dynamic_qubit_array_allocate(args.ctx, module_ref(args));
         lower_void_helper_call(
             args.ctx,
@@ -2800,7 +2799,7 @@ mod aux {
     }
 
     fn lower_dynamic_qubit_array_release(args: &ProcessCallArgs<'_>) -> Result<(), String> {
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(args.instr)?;
         let helper = ensure_dynamic_qubit_array_release(args.ctx, module_ref(args));
         lower_void_helper_call(
             args.ctx,
@@ -3096,7 +3095,7 @@ mod aux {
     fn lower_dynamic_result_allocate(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let builder = args.ctx.create_builder();
         builder.position_before(&args.instr);
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(args.instr)?;
         let slot_ptr = builder
             .build_alloca(get_dynamic_result_slot_type(args.ctx), "dyn_result")
             .map_err(|e| format!("Failed to allocate dynamic result slot: {e}"))?;
@@ -3109,7 +3108,7 @@ mod aux {
     }
 
     fn lower_dynamic_result_release(args: &ProcessCallArgs<'_>) -> Result<(), String> {
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(args.instr)?;
         let helper = ensure_dynamic_result_release(args.ctx, module_ref(args));
         lower_void_helper_call(
             args.ctx,
@@ -3123,7 +3122,7 @@ mod aux {
     fn lower_dynamic_result_array_allocate(args: &mut ProcessCallArgs<'_>) -> Result<(), String> {
         let builder = args.ctx.create_builder();
         builder.position_before(&args.instr);
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(args.instr)?;
         let len = extract_const_len(call_args[0], "__quantum__rt__result_array_allocate")?;
         let array_ptr = call_args[1].into_pointer_value();
         let out_err = call_args[2].into_pointer_value();
@@ -3157,7 +3156,7 @@ mod aux {
     }
 
     fn lower_dynamic_result_array_release(args: &ProcessCallArgs<'_>) -> Result<(), String> {
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(args.instr)?;
         let helper = ensure_dynamic_result_array_release(args.ctx, module_ref(args));
         lower_void_helper_call(
             args.ctx,
@@ -3173,7 +3172,7 @@ mod aux {
     ) -> Result<(), String> {
         let builder = args.ctx.create_builder();
         builder.position_before(&args.instr);
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(args.instr)?;
         let old_name = parse_gep(call_args[2])?;
         let full_tag =
             if let Some(global) = unsafe { &mut *args.global_mapping }.get(old_name.as_str()) {
@@ -3246,7 +3245,7 @@ mod aux {
         builder.position_before(instr);
 
         // Extract qubit and result indices
-        let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(*instr)?;
         let qubit_ptr = call_args[0].into_pointer_value();
         let result_ptr = call_args[1].into_pointer_value();
 
@@ -3326,7 +3325,7 @@ mod aux {
             return Err("Malformed mz_leaked call: expected signature i64 (ptr)".to_string());
         }
 
-        let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(*instr)?;
         let qubit_ptr = mz_leaked_qubit_operand(&call_args)?;
 
         let q_handle = get_qubit_handle(
@@ -3413,7 +3412,7 @@ mod aux {
         builder.position_before(instr);
 
         // Extract qubit index
-        let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(*instr)?;
         let qubit_ptr = call_args[0].into_pointer_value();
 
         let q_handle = get_qubit_handle(
@@ -3459,7 +3458,7 @@ mod aux {
         let num_qubits = parse_barrier_arity(fn_name)?;
 
         // Extract qubit arguments (excluding the last operand which is the function pointer)
-        let all_operands: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let all_operands: Vec<BasicValueEnum> = extract_operands(*instr)?;
         let num_operands = all_operands
             .len()
             .checked_sub(1)
@@ -3575,7 +3574,7 @@ mod aux {
             &mut *result_ssa
                 .cast::<Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>>()
         };
-        let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(*instr)?;
         let result_ptr = call_args[0].into_pointer_value();
 
         let builder = ctx.create_builder();
@@ -3644,7 +3643,7 @@ mod aux {
         } = args;
         let module = unsafe { &*args.module };
         let global_mapping = unsafe { &mut *args.global_mapping };
-        let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(*instr)?;
         let (print_func_name, value, type_tag) = match fn_name.as_str() {
             "__quantum__rt__bool_record_output" => (
                 "print_bool",
@@ -3771,7 +3770,7 @@ mod aux {
     fn handle_random_seed(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
         let module = module_ref(args);
-        let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(*instr)?;
         let random_seed_func = get_or_create_function(
             module,
             "random_seed",
@@ -3821,7 +3820,7 @@ mod aux {
     fn handle_random_int_bounded(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
         let module = module_ref(args);
-        let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(*instr)?;
         let random_rng_func = get_or_create_function(
             module,
             "random_rng",
@@ -3841,7 +3840,7 @@ mod aux {
     fn handle_random_advance(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
         let module = module_ref(args);
-        let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
+        let call_args: Vec<BasicValueEnum> = extract_operands(*instr)?;
         let random_advance_func = get_or_create_function(
             module,
             "random_advance",
