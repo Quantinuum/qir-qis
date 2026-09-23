@@ -95,6 +95,21 @@ make lint
 - `prek` checks, including formatting, `typos`, and Rust lint/doc hooks
 - `ty` type checking
 
+### Benchmarks
+
+Run the static-gate validation benchmark with:
+
+```sh
+cargo bench --bench static_gate_validation
+```
+
+The generated workload validates a QIR module with 10,000 static `h` calls. On
+Apple Silicon macOS, a 30-sample release run measured `validate_qir` at
+3.4386-4.0857 ms before removing direct-call operand-position allocations and
+3.0747-3.0987 ms after: a Criterion-estimated 9.69-19.15% improvement
+(13.99% median). Repeat the benchmark on the target environment before relying
+on these figures.
+
 ### Robustness Tooling
 
 The repo also supports three complementary robustness checks:
