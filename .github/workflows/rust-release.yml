@@ -13,16 +13,16 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7
 
       - name: Install hugrenv LLVM
         uses: Quantinuum/hugrverse-env/install-hugrenv-action@e90a8802bbc6190de0d434eeabc2461160aa6a2a # v1.0.0
         with:
           packages: "llvm"
 
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - uses: Swatinem/rust-cache@v2
 
       - name: Verify package
         run: cargo publish --dry-run
