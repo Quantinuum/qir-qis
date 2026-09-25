@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12](https://github.com/Quantinuum/qir-qis/compare/v0.1.11...v0.1.12) (2026-09-25)
+
+
+### Bug Fixes
+
+* **deps:** bump bpaf from 0.9.27 to 0.9.28 ([#165](https://github.com/Quantinuum/qir-qis/issues/165)) ([31ea2df](https://github.com/Quantinuum/qir-qis/commit/31ea2df9e897089d5cf91b7bfb762fc9f72fbd31))
+* **deps:** bump rstest from 0.26.1 to 0.27.0 ([#161](https://github.com/Quantinuum/qir-qis/issues/161)) ([fe85a41](https://github.com/Quantinuum/qir-qis/commit/fe85a41c5a145cb4f291a8de4635c96d41920621))
+* **deps:** bump the wasm group with 2 updates ([#155](https://github.com/Quantinuum/qir-qis/issues/155)) ([d6cdb06](https://github.com/Quantinuum/qir-qis/commit/d6cdb06d8b93ea47afb5068c610bd87d66a4d58d))
+* **deps:** bump the wasm group with 2 updates ([#162](https://github.com/Quantinuum/qir-qis/issues/162)) ([9b74036](https://github.com/Quantinuum/qir-qis/commit/9b74036003bd750e63c4a109ce86ba2f96c61394))
+* **deps:** bump wasm-encoder from 0.258.0 to 0.259.0 in /fuzz in the wasm group ([#163](https://github.com/Quantinuum/qir-qis/issues/163)) ([b0036af](https://github.com/Quantinuum/qir-qis/commit/b0036af1b92c008d9546edeef29dbd4e47f8742e))
+* **deps:** bump wasm-encoder in /fuzz in the wasm group ([#156](https://github.com/Quantinuum/qir-qis/issues/156)) ([2488bf5](https://github.com/Quantinuum/qir-qis/commit/2488bf5b89486bc3b46a1c4586e4690123daf33b))
+
+
+### Performance Improvements
+
+* **validation:** avoid direct operand position allocations ([#164](https://github.com/Quantinuum/qir-qis/issues/164)) ([256bc7f](https://github.com/Quantinuum/qir-qis/commit/256bc7f337c326a940253acf3504a437ab54725c))
+
 ## [0.1.11](https://github.com/Quantinuum/qir-qis/compare/v0.1.10...v0.1.11) (2026-09-01)
 
 
