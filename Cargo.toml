@@ -111,7 +111,12 @@ unused_result_ok = "deny"
 wildcard_enum_match_arm = "deny"
 
 [dev-dependencies]
+criterion = "0.5"
 insta = { version = "1", features = ["filters"] }
 proptest = "1"
 tempfile = "3"
 wasm-encoder = "0.259"
+
+[[bench]]
+name = "static_gate_validation"
+harness = false
