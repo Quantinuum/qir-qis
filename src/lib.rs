@@ -6711,11 +6711,17 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
-    fn test_validate_qir_rejects_out_of_range_static_handle_passed_to_ir_defined_helper() {
+    fn test_validate_qir_rejects_out_of_range_static_handle_through_nested_ir_defined_helper() {
         let ll_text = r#"
 %Qubit = type opaque
 
-define internal void @helper(%Qubit* %qubit) {
+define internal void @outer_helper(%Qubit* %qubit) {
+entry:
+  call void @inner_helper(%Qubit* %qubit)
+  ret void
+}
+
+define internal void @inner_helper(%Qubit* %qubit) {
 entry:
   call void @__quantum__qis__h__body(%Qubit* %qubit)
   ret void
@@ -6724,7 +6730,7 @@ entry:
 define i64 @Entry_Point_Name() #0 {
 entry:
   %q1 = inttoptr i64 1 to %Qubit*
-  call void @helper(%Qubit* %q1)
+  call void @outer_helper(%Qubit* %q1)
   ret i64 0
 }
 
@@ -6740,9 +6746,10 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
 "#;
 
         let bc_bytes = qir_ll_to_bc(ll_text).expect("Failed to convert inline QIR to bitcode");
-        let err = validate_qir(&bc_bytes, None)
-            .expect_err("helper calls with out-of-range static handles should fail validation");
-        assert!(err.contains("Invalid static qubit handle passed to `helper`"));
+        let err = validate_qir(&bc_bytes, None).expect_err(
+            "nested helper calls with out-of-range static handles should fail validation",
+        );
+        assert!(err.contains("Invalid static qubit handle passed to `outer_helper`"));
         assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
     }
 
