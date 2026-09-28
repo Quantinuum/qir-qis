@@ -256,19 +256,71 @@ mod aux {
         // Windows Arm64 on March 23, 2026 reproduced STATUS_ACCESS_VIOLATION.
     }
 
-    fn direct_qubit_operand_positions(fn_name: &str, arg_count: usize) -> Vec<usize> {
+    enum DirectQubitOperandPositions {
+        Positions(&'static [usize]),
+        Barrier(std::ops::Range<usize>),
+        Unknown,
+    }
+
+    impl DirectQubitOperandPositions {
+        const fn is_empty(&self) -> bool {
+            match self {
+                Self::Positions(positions) => positions.is_empty(),
+                Self::Barrier(positions) => positions.start == positions.end,
+                Self::Unknown => true,
+            }
+        }
+    }
+
+    enum DirectQubitOperandPositionIter {
+        Positions(std::iter::Copied<std::slice::Iter<'static, usize>>),
+        Barrier(std::ops::Range<usize>),
+        Unknown,
+    }
+
+    impl Iterator for DirectQubitOperandPositionIter {
+        type Item = usize;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            match self {
+                Self::Positions(positions) => positions.next(),
+                Self::Barrier(positions) => positions.next(),
+                Self::Unknown => None,
+            }
+        }
+    }
+
+    impl IntoIterator for DirectQubitOperandPositions {
+        type Item = usize;
+        type IntoIter = DirectQubitOperandPositionIter;
+
+        fn into_iter(self) -> Self::IntoIter {
+            match self {
+                Self::Positions(positions) => {
+                    DirectQubitOperandPositionIter::Positions(positions.iter().copied())
+                }
+                Self::Barrier(positions) => DirectQubitOperandPositionIter::Barrier(positions),
+                Self::Unknown => DirectQubitOperandPositionIter::Unknown,
+            }
+        }
+    }
+
+    fn direct_qubit_operand_positions(
+        fn_name: &str,
+        arg_count: usize,
+    ) -> DirectQubitOperandPositions {
         match fn_name {
-            "__quantum__qis__rxy__body" | "__quantum__qis__u1q__body" => vec![2],
+            "__quantum__qis__rxy__body" | "__quantum__qis__u1q__body" => {
+                DirectQubitOperandPositions::Positions(&[2])
+            }
             "__quantum__qis__rz__body"
             | "__quantum__qis__rx__body"
-            | "__quantum__qis__ry__body" => {
-                vec![1]
-            }
-            "__quantum__qis__rzz__body" => vec![1, 2],
+            | "__quantum__qis__ry__body" => DirectQubitOperandPositions::Positions(&[1]),
+            "__quantum__qis__rzz__body" => DirectQubitOperandPositions::Positions(&[1, 2]),
             "__quantum__qis__cz__body"
             | "__quantum__qis__cx__body"
-            | "__quantum__qis__cnot__body" => vec![0, 1],
-            "__quantum__qis__ccx__body" => vec![0, 1, 2],
+            | "__quantum__qis__cnot__body" => DirectQubitOperandPositions::Positions(&[0, 1]),
+            "__quantum__qis__ccx__body" => DirectQubitOperandPositions::Positions(&[0, 1, 2]),
             "__quantum__qis__h__body"
             | "__quantum__qis__x__body"
             | "__quantum__qis__y__body"
@@ -281,11 +333,36 @@ mod aux {
             | "__quantum__qis__m__body"
             | "__quantum__qis__mz_leaked__body"
             | "__quantum__qis__reset__body"
-            | "__quantum__qis__mresetz__body" => vec![0],
+            | "__quantum__qis__mresetz__body" => DirectQubitOperandPositions::Positions(&[0]),
             name if name.starts_with("__quantum__qis__barrier") && name.ends_with("__body") => {
-                (0..arg_count).collect()
+                DirectQubitOperandPositions::Barrier(0..arg_count)
             }
-            _ => Vec::new(),
+            _ => DirectQubitOperandPositions::Unknown,
+        }
+    }
+
+    #[cfg(test)]
+    mod direct_qubit_operand_positions_tests {
+        use super::{DirectQubitOperandPositions, direct_qubit_operand_positions};
+
+        #[test]
+        fn returns_static_positions_and_dynamic_barrier_ranges_without_allocating() {
+            assert_eq!(
+                direct_qubit_operand_positions("__quantum__qis__rzz__body", 3)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                vec![1, 2]
+            );
+            assert_eq!(
+                direct_qubit_operand_positions("__quantum__qis__barrier3__body", 3)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                vec![0, 1, 2]
+            );
+            assert!(matches!(
+                direct_qubit_operand_positions("unrelated_call", 0),
+                DirectQubitOperandPositions::Unknown
+            ));
         }
     }
 
@@ -372,27 +449,32 @@ mod aux {
                             }
                         };
 
-                        let qubit_positions = {
-                            let direct_positions =
-                                direct_qubit_operand_positions(&callee_name, call_args.len());
-                            if direct_positions.is_empty() {
-                                helper_qubit_params
-                                    .get(&callee_name)
-                                    .map(|positions| positions.iter().copied().collect())
-                                    .unwrap_or_default()
-                            } else {
-                                direct_positions
+                        let direct_positions =
+                            direct_qubit_operand_positions(&callee_name, call_args.len());
+                        if matches!(direct_positions, DirectQubitOperandPositions::Unknown) {
+                            if let Some(qubit_positions) = helper_qubit_params.get(&callee_name) {
+                                for &pos in qubit_positions {
+                                    let Some(BasicValueEnum::PointerValue(ptr)) =
+                                        call_args.get(pos).copied()
+                                    else {
+                                        continue;
+                                    };
+                                    if let Some(param_idx) = find_pointer_param_index(function, ptr)
+                                    {
+                                        discovered.insert(param_idx);
+                                    }
+                                }
                             }
-                        };
-
-                        for pos in qubit_positions {
-                            let Some(BasicValueEnum::PointerValue(ptr)) =
-                                call_args.get(pos).copied()
-                            else {
-                                continue;
-                            };
-                            if let Some(param_idx) = find_pointer_param_index(function, ptr) {
-                                discovered.insert(param_idx);
+                        } else {
+                            for pos in direct_positions {
+                                let Some(BasicValueEnum::PointerValue(ptr)) =
+                                    call_args.get(pos).copied()
+                                else {
+                                    continue;
+                                };
+                                if let Some(param_idx) = find_pointer_param_index(function, ptr) {
+                                    discovered.insert(param_idx);
+                                }
                             }
                         }
                     }
