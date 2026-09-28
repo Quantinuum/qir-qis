@@ -6669,15 +6669,15 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let ll_text = r#"
 %Qubit = type opaque
 
-define internal void @inner_helper(%Qubit* %qubit) {
-entry:
-  call void @__quantum__qis__h__body(%Qubit* %qubit)
-  ret void
-}
-
 define internal void @outer_helper(%Qubit* %qubit) {
 entry:
   call void @inner_helper(%Qubit* %qubit)
+  ret void
+}
+
+define internal void @inner_helper(%Qubit* %qubit) {
+entry:
+  call void @__quantum__qis__h__body(%Qubit* %qubit)
   ret void
 }
 
