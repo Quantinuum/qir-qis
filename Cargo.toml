@@ -111,7 +111,7 @@ unused_result_ok = "deny"
 wildcard_enum_match_arm = "deny"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 insta = { version = "1", features = ["filters"] }
 proptest = "1"
 tempfile = "3"
