@@ -907,8 +907,8 @@ mod tests {
         let rx = call_signatures("__quantum__qis__rx__body");
         let ry = call_signatures("__quantum__qis__ry__body");
 
-        assert!(!rx.is_empty());
-        assert!(!ry.is_empty());
+        assert_eq!(rx.len(), 1);
+        assert_eq!(ry.len(), 1);
     }
 
     #[cfg(windows)]

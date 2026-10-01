@@ -3,9 +3,10 @@
     reason = "the fixed benchmark fixture must fail loudly when construction or validation changes"
 )]
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use qir_qis::{qir_ll_to_bc, validate_qir};
 use std::fmt::Write;
+use std::hint::black_box;
 
 const GATE_COUNT: usize = 10_000;
 
