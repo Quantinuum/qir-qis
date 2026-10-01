@@ -5190,7 +5190,7 @@ declare void @__quantum__qis__h__body(%Qubit*)",
         let err = qir_to_qis_with_passthrough_calls(&bc_bytes, 0, "native", Some(&[0x00]), &[])
             .expect_err("invalid wasm bytes should be rejected");
 
-        assert_ne!(err, "");
+        assert!(err.starts_with("Failed to parse WASM:"));
     }
 
     fn module_contains_direct_call(module: &Module<'_>, callee: FunctionValue<'_>) -> bool {
@@ -5264,8 +5264,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     fn test_qir_ll_to_bc_accepts_legacy_typed_pointers() {
         let ll_text =
             std::fs::read_to_string("tests/data/base.ll").expect("Failed to read base.ll");
-        let bc_bytes = qir_ll_to_bc(&ll_text).unwrap();
-        assert_ne!(bc_bytes, Vec::<u8>::new());
+        qir_ll_to_bc(&ll_text).expect("legacy typed pointers should parse");
     }
 
     #[test]
