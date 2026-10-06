@@ -343,7 +343,24 @@ mod aux {
 
     #[cfg(test)]
     mod direct_qubit_operand_positions_tests {
+        use rstest::rstest;
+
         use super::{DirectQubitOperandPositions, direct_qubit_operand_positions};
+
+        #[rstest]
+        #[case("unrelated_call", 0, true)]
+        #[case("unrelated_call", 3, true)]
+        #[case("__quantum__qis__barrier0__body", 0, true)]
+        #[case("__quantum__qis__barrier3__body", 3, false)]
+        #[case("__quantum__qis__rzz__body", 3, false)]
+        fn reports_whether_direct_qubit_operands_are_empty(
+            #[case] fn_name: &str,
+            #[case] arg_count: usize,
+            #[case] expected_empty: bool,
+        ) {
+            let positions = direct_qubit_operand_positions(fn_name, arg_count);
+            assert_eq!(positions.is_empty(), expected_empty);
+        }
 
         #[test]
         fn returns_static_positions_and_dynamic_barrier_ranges_without_allocating() {
