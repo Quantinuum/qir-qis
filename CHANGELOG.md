@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12](https://github.com/Quantinuum/qir-qis/compare/v0.1.11...v0.1.12) (2026-10-08)
+
+
+### Performance Improvements
+
+* **validation:** avoid direct operand position allocations ([#164](https://github.com/Quantinuum/qir-qis/issues/164)) ([256bc7f](https://github.com/Quantinuum/qir-qis/commit/256bc7f337c326a940253acf3504a437ab54725c))
+
 ## [0.1.11](https://github.com/Quantinuum/qir-qis/compare/v0.1.10...v0.1.11) (2026-09-01)
 
 
