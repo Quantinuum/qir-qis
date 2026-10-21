@@ -34,11 +34,14 @@ dev = [
     "maturin~=1.13.1",
     "qir-formatter~=0.2",
     "rich>=14.0",
-    "selene-sim~=0.2.15",
+    "selene-sim~=0.3.7",
 ]
 
 [tool.uv]
 prerelease = "allow"
+# Zig 0.17 changes linker ordering and breaks Selene's macOS panic handling.
+constraint-dependencies = ["ziglang~=0.16.0"]
+required-environments = ["sys_platform == 'win32' and platform_machine == 'AMD64'"]
 # Rebuild package when any rust files change
 cache-keys = [{ file = "src/**/*.rs" }]
 

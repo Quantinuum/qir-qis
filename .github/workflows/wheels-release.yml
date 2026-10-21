@@ -84,12 +84,12 @@ jobs:
           ref: ${{ needs.prepare_release_context.outputs.checkout_ref }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
 
       - name: Install hugrenv LLVM
-        uses: Quantinuum/hugrverse-env/install-hugrenv-action@e90a8802bbc6190de0d434eeabc2461160aa6a2a # v1.0.0
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@e8b183a5a583c37ef20ec94b5eaf257e9616cddc # v1.1.1
         with:
           packages: "llvm"
 
@@ -98,7 +98,7 @@ jobs:
         run: echo "HUGRENV_PATH=${LLVM_SYS_211_PREFIX}" >>"$GITHUB_ENV"
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.1
+        uses: pypa/cibuildwheel@v4.3
 
       - uses: actions/upload-artifact@v7
         with:

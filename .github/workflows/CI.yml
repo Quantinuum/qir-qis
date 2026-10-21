@@ -54,7 +54,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install hugrenv LLVM
-        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.1.1
         with:
           packages: "llvm"
       - name: Configure linker flags for test
@@ -91,7 +91,7 @@ jobs:
         run: >-
           cargo nextest run --release --lib --all-features
           -E 'test(/test_(qir2_base_fixture_validate_and_compile|qir_to_qis_output_parses_with_raw_llvm_buffer)$/)'
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.3.0
       - name: Rust API example smoke
         if: runner.os != 'Linux'
         run: cargo run --example rust_api --all-features --profile test
@@ -118,7 +118,7 @@ jobs:
             lib_rs:
               - 'src/lib.rs'
       - name: Install hugrenv LLVM
-        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.0.0
+        uses: Quantinuum/hugrverse-env/install-hugrenv-action@v1.1.1
         with:
           packages: "llvm"
       - name: Configure linker flags for lint
@@ -129,9 +129,9 @@ jobs:
           echo "CXX=${llvm_root}/bin/clang++" >>"$GITHUB_ENV"
           echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${llvm_root}/bin/clang" >>"$GITHUB_ENV"
           echo "RUSTFLAGS=-D warnings -C link-arg=-fuse-ld=lld" >>"$GITHUB_ENV"
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.3.0
       - uses: dtolnay/rust-toolchain@stable
-      - uses: cargo-bins/cargo-binstall@v1.21.1
+      - uses: cargo-bins/cargo-binstall@v1.26.0
       - name: Install lint tools
         # `cargo-binstall` may fall back to `cargo install` when GitHub API
         # rate limiting prevents fetching a prebuilt `sccache` release.
@@ -177,7 +177,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
-      - uses: cargo-bins/cargo-binstall@v1.21.1
+      - uses: cargo-bins/cargo-binstall@v1.26.0
       - name: Install cargo-audit
         run: cargo binstall --no-confirm --force cargo-audit
       - name: Audit Rust dependencies
