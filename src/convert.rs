@@ -54,6 +54,8 @@ pub(crate) static RESERVED_PASSTHROUGH_EXACT_NAMES: phf::Set<&'static str> = phf
     "print_bool",
     "print_float",
     "print_bool_arr",
+    "heap_alloc",
+    "heap_free",
     "get_current_shot",
     "random_seed",
     "random_int",
@@ -1387,6 +1389,8 @@ fn native_qir_to_qis_call<'a>(
                 required_num_qubits,
             )?;
         }
+        // Shared result lowering has already translated measurements in user helpers.
+        "___lazy_measure" => {}
         "___qalloc"
         | "___qfree"
         | "___reset"
@@ -1396,10 +1400,13 @@ fn native_qir_to_qis_call<'a>(
         | "print_int"
         | "print_bool"
         | "print_float"
-        | "print_bool_arr" => {
+        | "print_bool_arr"
+        | "heap_alloc"
+        | "heap_free" => {
             let defined_name = defined_fn.get_name().to_str().ok();
             if defined_name != Some(INIT_QARRAY_FN)
                 && !defined_name.is_some_and(|name| name.starts_with("qir_qis."))
+                && fn_name != "___reset"
             {
                 log::error!(
                     "Unexpected call to internal function: {fn_name} in function {}",
@@ -1539,12 +1546,14 @@ mod tests {
 
     // Subset of `RESERVED_PASSTHROUGH_EXACT_NAMES` that is rejected by the
     // explicit internal-helper guard in `native_qir_to_qis_call`.
-    const RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS: [&str; 5] = [
+    const RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS: [&str; 7] = [
         "panic",
         "print_int",
         "print_bool",
         "print_float",
         "print_bool_arr",
+        "heap_alloc",
+        "heap_free",
     ];
 
     #[test]

@@ -213,7 +213,11 @@ Support boundary:
 - Fixed-size LLVM pointer arrays are supported via `alloca`, `getelementptr`, `load`, `store`, `extractvalue`, and `insertvalue`.
 - `required_num_qubits` is optional when `dynamic_qubit_management=true`.
 - `required_num_results` is optional when `dynamic_result_management=true`.
-- `__quantum__rt__result_array_record_output` currently requires an array length that fits in `i32` for the downstream `print_bool_arr(...)` ABI.
+- Result-array output requires only `arrays=true`; it supports static result IDs independently of dynamic allocation, preserving memory order and repeated IDs.
+- Dynamic result allocation is supported in later blocks, conditionals, loops, and IR-defined helpers. Slots remain valid until release, including when a helper stores an allocated result into caller-owned storage. Pointer-returning helpers remain unsupported.
+- Dynamic result slots use the downstream `heap_alloc(i64) -> ptr` and `heap_free(ptr) -> void` runtime APIs. Release frees slot storage and any pending measurement future. Scalar and bulk allocation set a non-null `out_err` to false on success or true on failure; failure with null `out_err` terminates execution. Bulk failure rolls back allocations made by that call.
+- Static result-array programs use a bounds-checked result table initialized on entry; pending futures are cleaned up on overwrite and entry return.
+- `__quantum__rt__result_array_record_output` requires an array length that fits in `i32` for the downstream `print_bool_arr(...)` ABI.
 - Runtime-sized classical buffers remain out of scope.
 
 ## Platform Utilities

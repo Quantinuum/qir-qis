@@ -1,6 +1,5 @@
 ---
 source: src/convert.rs
-assertion_line: 2705
 expression: qis_text.to_string()
 ---
 ; ModuleID = 'qis_module'
@@ -12,6 +11,7 @@ target triple = "aarch64-unknown-linux-gnu"
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
 @e_load_qubit_oob = private constant [38 x i8] c"%EXIT:INT:Invalid static qubit handle."
 @res_r0 = private constant [15 x i8] c"\0EUSER:RESULT:r0"
+@qir_qis.error = private constant [53 x i8] c".EXIT:INT:No memory available for result allocation.\00"
 @gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
 @gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
@@ -19,21 +19,65 @@ define noundef i64 @___user_qir_Entry_Point_Name() local_unnamed_addr {
 entry:
   %qalloc.i = tail call i64 @___qalloc()
   %is_fail.i = icmp eq i64 %qalloc.i, -1
-  br i1 %is_fail.i, label %qalloc_fail.i, label %qir_qis.result_read.exit
+  br i1 %is_fail.i, label %qalloc_fail.i, label %qir_qis.init_qubit.exit
 
 qalloc_fail.i:                                    ; preds = %entry
   tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
   unreachable
 
-qir_qis.result_read.exit:                         ; preds = %entry
+qir_qis.init_qubit.exit:                          ; preds = %entry
   tail call void @___reset(i64 %qalloc.i)
   store i64 %qalloc.i, ptr @qis_qs.0, align 8
-  tail call void @___rxy(i64 %qalloc.i, double 0x400921FB54442D18, double 0.000000e+00)
+  %slot.i = tail call ptr @heap_alloc(i64 16)
+  %failed.i = icmp eq ptr %slot.i, null
+  br i1 %failed.i, label %failure.i, label %body.i.i
+
+failure.i:                                        ; preds = %qir_qis.init_qubit.exit
+  tail call void @panic(i32 1001, ptr nonnull @qir_qis.error)
+  unreachable
+
+body.i.i:                                         ; preds = %qir_qis.init_qubit.exit
+  %cached.i = getelementptr inbounds nuw i8, ptr %slot.i, i64 1
+  %future.i = getelementptr inbounds nuw i8, ptr %slot.i, i64 8
+  store i8 0, ptr %slot.i, align 1
+  store i1 false, ptr %cached.i, align 1
+  store i64 0, ptr %future.i, align 4
+  %qbit.i.i = load i64, ptr @qis_qs.0, align 8
+  tail call void @___rxy(i64 %qbit.i.i, double 0x400921FB54442D18, double 0.000000e+00)
   %qbit = load i64, ptr @qis_qs.0, align 8
   %meas = tail call i64 @___lazy_measure(i64 %qbit)
+  %state1.i.i = load i8, ptr %slot.i, align 1
+  %is_pending.i.i = icmp eq i8 %state1.i.i, 1
+  br i1 %is_pending.i.i, label %dec_future.i.i, label %body.i.i6
+
+dec_future.i.i:                                   ; preds = %body.i.i
+  %future2.i.i = load i64, ptr %future.i, align 4
+  tail call void @___dec_future_refcount(i64 %future2.i.i)
+  br label %body.i.i6
+
+body.i.i6:                                        ; preds = %dec_future.i.i, %body.i.i
+  store i1 false, ptr %cached.i, align 1
+  store i8 1, ptr %slot.i, align 1
+  store i64 %meas, ptr %future.i, align 4
   %bool.i = tail call i1 @___read_future_bool(i64 %meas)
   tail call void @___dec_future_refcount(i64 %meas)
+  store i1 %bool.i, ptr %cached.i, align 1
+  store i8 2, ptr %slot.i, align 1
   tail call void @print_bool(ptr nonnull @res_r0, i64 14, i1 %bool.i)
+  %state1.i.i9 = load i8, ptr %slot.i, align 1
+  %is_pending.i.i10 = icmp eq i8 %state1.i.i9, 1
+  br i1 %is_pending.i.i10, label %dec_future.i.i12, label %qir_qis.result_release.exit
+
+dec_future.i.i12:                                 ; preds = %body.i.i6
+  %future2.i.i13 = load i64, ptr %future.i, align 4
+  tail call void @___dec_future_refcount(i64 %future2.i.i13)
+  br label %qir_qis.result_release.exit
+
+qir_qis.result_release.exit:                      ; preds = %dec_future.i.i12, %body.i.i6
+  store i8 0, ptr %slot.i, align 1
+  store i1 false, ptr %cached.i, align 1
+  store i64 0, ptr %future.i, align 4
+  tail call void @heap_free(ptr nonnull %slot.i)
   %qbit1 = load i64, ptr @qis_qs.0, align 8
   tail call void @___qfree(i64 %qbit1)
   ret i64 0
@@ -59,13 +103,17 @@ load_qubit_invalid:                               ; preds = %entry
   unreachable
 }
 
-declare i64 @___lazy_measure(i64) local_unnamed_addr
+declare ptr @heap_alloc(i64) local_unnamed_addr
 
-declare i1 @___read_future_bool(i64) local_unnamed_addr
+declare i64 @___lazy_measure(i64) local_unnamed_addr
 
 declare void @___dec_future_refcount(i64) local_unnamed_addr
 
+declare i1 @___read_future_bool(i64) local_unnamed_addr
+
 declare void @print_bool(ptr, i64, i1) local_unnamed_addr
+
+declare void @heap_free(ptr) local_unnamed_addr
 
 declare void @___rxy(i64, double, double) local_unnamed_addr
 

@@ -33,8 +33,12 @@ pub fn add_generator_metadata<'c>(
 ///
 /// # Errors
 /// Returns an error if the operands could not be extracted.
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "retain the existing instruction-borrowing interface while returning context-owned operands"
+)]
 pub fn extract_operands<'a>(
-    instr: &'a InstructionValue<'a>,
+    instr: &InstructionValue<'a>,
 ) -> Result<Vec<BasicValueEnum<'a>>, String> {
     (0..instr.get_num_operands())
         .map(|i| {

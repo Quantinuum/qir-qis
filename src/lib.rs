@@ -7,6 +7,7 @@ pub mod convert;
 mod decompose;
 mod llvm_verify;
 pub mod opt;
+mod result_runtime;
 mod utils;
 
 #[cfg(windows)]
@@ -53,6 +54,10 @@ mod aux {
             replace_rz_call, replace_rzz_call,
         },
         decode_llvm_bytes,
+        result_runtime::{
+            ensure_dynamic_result_allocate, ensure_dynamic_result_array_allocate,
+            ensure_dynamic_result_release, result_read_function, result_slot_pointer,
+        },
         utils::extract_operands,
     };
 
@@ -160,7 +165,7 @@ mod aux {
             .map_or(full_tag, |(_, label)| label)
     }
 
-    fn validate_dynamic_rt_signature(
+    pub fn validate_dynamic_rt_signature(
         fn_name: &str,
         fn_type: FunctionType<'_>,
     ) -> Result<(), String> {
@@ -1027,10 +1032,8 @@ mod aux {
         Err(array_backing_error())
     }
 
-    /// Standalone dynamic-array-allocation-backing check, retained for narrow
-    /// targeted unit tests. Production validation runs this same logic as part
-    /// of the single consolidated traversal in [`validate_qir_call_sites`].
-    #[cfg(test)]
+    /// Backing check used by direct translation and targeted unit tests.
+    /// Public validation performs these checks in [`validate_qir_call_sites`].
     pub fn validate_dynamic_array_allocation_backing(module: &Module, errors: &mut Vec<String>) {
         for fun in module.get_functions() {
             for bb in fun.get_basic_blocks() {
@@ -1114,11 +1117,30 @@ mod aux {
         }
     }
 
+    /// Capability requirements from QIR `Memory_Management.md`, independently of storage lowering.
+    pub fn result_capability_error(name: &str, flags: CapabilityFlags) -> Option<String> {
+        let requirement = match name {
+            "__quantum__rt__result_array_record_output" if !flags.arrays => "`arrays=true`",
+            "__quantum__rt__result_array_allocate" | "__quantum__rt__result_array_release"
+                if !flags.arrays || !flags.dynamic_result_management =>
+            {
+                "both `arrays=true` and `dynamic_result_management=true`"
+            }
+            "__quantum__rt__result_allocate" | "__quantum__rt__result_release"
+                if !flags.dynamic_result_management =>
+            {
+                "`dynamic_result_management=true`"
+            }
+            _ => return None,
+        };
+        Some(format!("{name} requires {requirement}"))
+    }
+
     /// Single-pass validation used by [`crate::validate_qir`], replacing what
     /// were previously five separate full-module traversals: function-level
     /// checks (allow-listed QIS/RT/Qtm functions, barrier arity, IR-defined
     /// function shape), result-slot usage, the per-call-site half of static
-    /// qubit-helper usage, dynamic result-allocation placement, dynamic
+    /// qubit-helper usage, dynamic
     /// array-allocation backing, and capability-gated runtime function usage.
     ///
     /// Each of those checks used to independently walk every function, basic
@@ -1145,7 +1167,6 @@ mod aux {
         let mut functions_errors = Vec::new();
         let mut result_slot_errors = Vec::new();
         let mut static_qubit_errors = Vec::new();
-        let mut dynamic_result_placement_errors = Vec::new();
         let mut dynamic_array_backing_errors = Vec::new();
         let mut capability_errors = Vec::new();
 
@@ -1153,9 +1174,10 @@ mod aux {
         // individual pass computed before its own traversal). ---
         let required_num_qubits_for_barrier = get_required_num_qubits(entry_fn);
 
-        let required_num_results = if entry_fn
-            .get_string_attribute(AttributeLoc::Function, "required_num_results")
-            .is_some()
+        let required_num_results = if !capability_flags.dynamic_result_management
+            && entry_fn
+                .get_string_attribute(AttributeLoc::Function, "required_num_results")
+                .is_some()
         {
             match get_required_num_results(entry_fn) {
                 Ok(required) => Some(required),
@@ -1249,12 +1271,6 @@ mod aux {
                 }
             }
 
-            let allowed_result_alloc_block = if fun == entry_fn {
-                fun.get_first_basic_block()
-            } else {
-                None
-            };
-
             for bb in fun.get_basic_blocks() {
                 for instr in bb.get_instructions() {
                     let Ok(call) = CallSiteValue::try_from(instr) else {
@@ -1270,50 +1286,23 @@ mod aux {
                         continue;
                     };
 
-                    // --- validate_dynamic_result_allocation_placement ---
-                    if matches!(
-                        callee_name.as_str(),
-                        "__quantum__rt__result_allocate" | "__quantum__rt__result_array_allocate"
-                    ) && Some(bb) != allowed_result_alloc_block
-                    {
-                        dynamic_result_placement_errors.push(format!(
-                            "{callee_name} is only supported in the entry block because dynamic result slots are lowered to stack storage"
-                        ));
-                    }
-
                     // --- validate_capability_usage ---
+                    if let Some(error) = result_capability_error(&callee_name, capability_flags) {
+                        capability_errors.push(error);
+                    }
                     match callee_name.as_str() {
                         "__quantum__rt__qubit_array_allocate"
                         | "__quantum__rt__qubit_array_release"
                             if !capability_flags.arrays
                                 || !capability_flags.dynamic_qubit_management =>
                         {
-                            capability_errors.push(format!(
-                                "{callee_name} requires both `arrays=true` and `dynamic_qubit_management=true`"
-                            ));
-                        }
-                        "__quantum__rt__result_array_allocate"
-                        | "__quantum__rt__result_array_release"
-                        | "__quantum__rt__result_array_record_output"
-                            if !capability_flags.arrays
-                                || !capability_flags.dynamic_result_management =>
-                        {
-                            capability_errors.push(format!(
-                                "{callee_name} requires both `arrays=true` and `dynamic_result_management=true`"
-                            ));
+                            capability_errors.push(format!("{callee_name} requires both `arrays=true` and `dynamic_qubit_management=true`"));
                         }
                         "__quantum__rt__qubit_allocate" | "__quantum__rt__qubit_release"
                             if !capability_flags.dynamic_qubit_management =>
                         {
                             capability_errors.push(format!(
                                 "{callee_name} requires `dynamic_qubit_management=true`"
-                            ));
-                        }
-                        "__quantum__rt__result_allocate" | "__quantum__rt__result_release"
-                            if !capability_flags.dynamic_result_management =>
-                        {
-                            capability_errors.push(format!(
-                                "{callee_name} requires `dynamic_result_management=true`"
                             ));
                         }
                         _ => {}
@@ -1330,10 +1319,11 @@ mod aux {
                         }
                         _ => None,
                     };
-                    let result_slot_relevant = matches!(
-                        (required_num_results, result_operand_index),
-                        (Some(_), Some(_))
-                    );
+                    let result_slot_relevant = !capability_flags.dynamic_result_management
+                        && matches!(
+                            (required_num_results, result_operand_index),
+                            (Some(_), Some(_))
+                        );
                     let direct_qubit_positions = static_qubit_ctx.as_ref().map(|_| {
                         direct_qubit_operand_positions(
                             &callee_name,
@@ -1401,6 +1391,9 @@ mod aux {
                                         {
                                             result_slot_errors.push(err);
                                         }
+                                    }
+                                    Err(_) if crate::result_runtime::uses_static_results(module, capability_flags.dynamic_result_management) => {
+                                        // Loaded/selected static IDs are guarded by the runtime table lookup.
                                     }
                                     Err(err) => result_slot_errors.push(format!(
                                         "Failed to inspect result operand for `{callee_name}`: {err}"
@@ -1497,7 +1490,6 @@ mod aux {
         errors.extend(functions_errors);
         errors.extend(result_slot_errors);
         errors.extend(static_qubit_errors);
-        errors.extend(dynamic_result_placement_errors);
         errors.extend(dynamic_array_backing_errors);
         capability_errors
     }
@@ -1550,39 +1542,68 @@ mod aux {
             )
         };
 
-        for bb in entry_fn.get_basic_blocks() {
-            // Snapshot instructions before rewriting calls. Some rewrite paths
-            // erase/replace instructions, which can invalidate in-place iterators.
-            let instructions: Vec<_> = bb.get_instructions().collect();
-            for instr in instructions {
-                let Ok(call) = CallSiteValue::try_from(instr) else {
-                    continue;
-                };
-                if let Some(fn_name) = call.get_called_fn_value().and_then(|f| {
-                    f.as_global_value()
-                        .get_name()
-                        .to_str()
-                        .ok()
-                        .map(ToOwned::to_owned)
-                }) {
-                    let args = ProcessCallArgs {
-                        ctx,
-                        module,
-                        instr,
-                        fn_name,
-                        wasm_fns: std::ptr::from_ref(wasm_fns),
-                        passthrough_calls: std::ptr::from_ref(passthrough_calls),
-                        qubit_array,
-                        qubit_array_type,
-                        capability_flags,
-                        global_mapping: &raw mut global_mapping,
-                        result_ssa: &raw mut result_ssa,
+        let functions: Vec<_> = module
+            .get_functions()
+            .filter(|f| {
+                f.count_basic_blocks() > 0
+                    && (*f == entry_fn || !f.get_name().to_bytes().starts_with(b"qir_qis."))
+            })
+            .collect();
+        for function in functions {
+            for bb in function.get_basic_blocks() {
+                // Snapshot instructions before rewriting calls. Some rewrite paths
+                // erase/replace instructions, which can invalidate in-place iterators.
+                let instructions: Vec<_> = bb.get_instructions().collect();
+                for instr in instructions {
+                    let Ok(call) = CallSiteValue::try_from(instr) else {
+                        continue;
                     };
-                    process_call_instruction(args)?;
+                    if let Some(fn_name) = call.get_called_fn_value().and_then(|f| {
+                        f.as_global_value()
+                            .get_name()
+                            .to_str()
+                            .ok()
+                            .map(ToOwned::to_owned)
+                    }) {
+                        if function != entry_fn
+                            && !capability_flags.dynamic_result_management
+                            && module.get_global("qir_qis.static_results").is_none()
+                        {
+                            continue;
+                        }
+                        if function != entry_fn
+                            && !matches!(
+                                fn_name.as_str(),
+                                "__quantum__rt__result_allocate"
+                                    | "__quantum__rt__result_release"
+                                    | "__quantum__rt__result_array_allocate"
+                                    | "__quantum__rt__result_array_release"
+                                    | "__quantum__rt__read_result"
+                                    | "__quantum__qis__mz__body"
+                                    | "__quantum__qis__m__body"
+                                    | "__quantum__qis__mresetz__body"
+                            )
+                        {
+                            continue;
+                        }
+                        let args = ProcessCallArgs {
+                            ctx,
+                            module,
+                            instr,
+                            fn_name,
+                            wasm_fns: std::ptr::from_ref(wasm_fns),
+                            passthrough_calls: std::ptr::from_ref(passthrough_calls),
+                            qubit_array,
+                            qubit_array_type,
+                            capability_flags,
+                            global_mapping: &raw mut global_mapping,
+                            result_ssa: &raw mut result_ssa,
+                        };
+                        process_call_instruction(args)?;
+                    }
                 }
             }
         }
-
         Ok(())
     }
 
@@ -1902,6 +1923,7 @@ mod aux {
 
     fn get_qubit_handle<'ctx>(
         ctx: &'ctx Context,
+        module: &Module<'ctx>,
         capability_flags: CapabilityFlags,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
@@ -1919,8 +1941,21 @@ mod aux {
         let qubit_array_type =
             qubit_array_type.ok_or("Missing static qubit array type for qubit lookup")?;
         let i64_type = ctx.i64_type();
-        let index = get_index(qubit_ptr)?;
-        let index = checked_qubit_index(index, qubit_array_type.len())?;
+        let index = if let Ok(index) = get_index(qubit_ptr) {
+            checked_qubit_index(index, qubit_array_type.len())?
+        } else {
+            let load = module
+                .get_function(crate::convert::LOAD_QUBIT_FN)
+                .ok_or("Missing static qubit lookup helper")?;
+            return call_basic_value(
+                builder,
+                load,
+                &[qubit_ptr.into()],
+                "qbit",
+                "Failed to load static qubit",
+                "Static qubit helper did not return a handle",
+            );
+        };
         let index_val = i64_type.const_int(index, false);
         let elem_ptr = unsafe {
             builder.build_gep(
@@ -2327,8 +2362,9 @@ mod aux {
         capability_flags: CapabilityFlags,
         result_ssa: &mut [Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>],
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        if capability_flags.dynamic_result_management {
-            let read_func = ensure_dynamic_result_read(ctx, module);
+        if let Some(read_func) =
+            result_read_function(ctx, module, capability_flags.dynamic_result_management)
+        {
             return call_basic_value(
                 builder,
                 read_func,
@@ -2413,7 +2449,7 @@ mod aux {
         Ok(new_global)
     }
 
-    fn get_dynamic_result_slot_type(ctx: &Context) -> inkwell::types::StructType<'_> {
+    pub fn get_dynamic_result_slot_type(ctx: &Context) -> inkwell::types::StructType<'_> {
         ctx.struct_type(
             &[
                 ctx.i8_type().into(),   // state: 0=false, 1=pending future, 2=cached bool
@@ -2540,7 +2576,7 @@ mod aux {
         function
     }
 
-    fn build_dynamic_array_loop<'ctx, F>(
+    pub fn build_dynamic_array_loop<'ctx, F>(
         ctx: &'ctx Context,
         function: FunctionValue<'ctx>,
         builder: &inkwell::builder::Builder<'ctx>,
@@ -2772,7 +2808,7 @@ mod aux {
         Ok(())
     }
 
-    fn initialize_dynamic_result_slot<'ctx>(
+    pub fn initialize_dynamic_result_slot<'ctx>(
         ctx: &'ctx Context,
         builder: &inkwell::builder::Builder<'ctx>,
         slot_ptr: PointerValue<'ctx>,
@@ -2782,7 +2818,7 @@ mod aux {
         clear_dynamic_result_slot(ctx, builder, &slot_ptrs);
     }
 
-    fn ensure_out_err_success<'ctx>(
+    pub fn ensure_out_err_success<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
     ) -> FunctionValue<'ctx> {
@@ -2918,13 +2954,17 @@ mod aux {
             .expect("result")
             .into_pointer_value();
         let future = function.get_nth_param(1).expect("future").into_int_value();
+        let clear = ensure_result_slot_clear(ctx, module);
+        builder
+            .build_call(clear, &[result_ptr.into()], "")
+            .expect("clear previous measurement");
         let slot_ptrs = get_dynamic_result_slot_ptrs(&builder, slot_type, result_ptr);
         set_dynamic_result_pending(ctx, &builder, &slot_ptrs, future);
         builder.build_return(None).expect("ret");
         function
     }
 
-    fn ensure_dynamic_result_read<'ctx>(
+    pub fn ensure_dynamic_result_read<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
     ) -> FunctionValue<'ctx> {
@@ -3012,17 +3052,17 @@ mod aux {
         function
     }
 
-    fn ensure_dynamic_result_release<'ctx>(
+    pub fn ensure_result_slot_clear<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
     ) -> FunctionValue<'ctx> {
-        if let Some(existing) = module.get_function("qir_qis.result_release") {
+        if let Some(existing) = module.get_function("qir_qis.result_clear") {
             return existing;
         }
         let ptr_type = ctx.ptr_type(AddressSpace::default());
         let slot_type = get_dynamic_result_slot_type(ctx);
         let function = module.add_function(
-            "qir_qis.result_release",
+            "qir_qis.result_clear",
             ctx.void_type().fn_type(&[ptr_type.into()], false),
             Some(Linkage::Private),
         );
@@ -3080,7 +3120,7 @@ mod aux {
         function
     }
 
-    fn ensure_dynamic_result_array_release<'ctx>(
+    pub fn ensure_dynamic_result_array_release<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
     ) -> FunctionValue<'ctx> {
@@ -3144,6 +3184,14 @@ mod aux {
             ),
             Some(Linkage::Private),
         );
+        // Keep variable-size output scratch in its own call frame inside loops.
+        function.add_attribute(
+            AttributeLoc::Function,
+            ctx.create_enum_attribute(
+                inkwell::attributes::Attribute::get_named_enum_kind_id("noinline"),
+                0,
+            ),
+        );
         let builder = ctx.create_builder();
         let entry = ctx.append_basic_block(function, "entry");
         builder.position_at_end(entry);
@@ -3162,7 +3210,8 @@ mod aux {
                 false,
             ),
         );
-        let read_fn = ensure_dynamic_result_read(ctx, module);
+        let read_fn =
+            result_read_function(ctx, module, true).ok_or("Missing result array reader")?;
         let bool_arr =
             build_dynamic_result_array_values(ctx, function, &builder, len, array_ptr, read_fn)?;
         let array_desc = build_dynamic_result_array_descriptor(ctx, &builder, len, bool_arr)?;
@@ -3180,16 +3229,17 @@ mod aux {
     fn lower_dynamic_result_allocate(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let builder = args.ctx.create_builder();
         builder.position_before(&args.instr);
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
-        let slot_ptr = builder
-            .build_alloca(get_dynamic_result_slot_type(args.ctx), "dyn_result")
-            .map_err(|e| format!("Failed to allocate dynamic result slot: {e}"))?;
-        initialize_dynamic_result_slot(args.ctx, &builder, slot_ptr);
-        let helper = ensure_out_err_success(args.ctx, module_ref(args));
-        let _ = builder
-            .build_call(helper, &[call_args[0].into()], "")
-            .map_err(|e| format!("Failed to store dynamic result out_err success flag: {e}"))?;
-        replace_call_with_value(args.instr, slot_ptr.as_basic_value_enum())
+        let call_args = extract_operands(&args.instr)?;
+        let helper = ensure_dynamic_result_allocate(args.ctx, module_ref(args));
+        let value = call_basic_value(
+            &builder,
+            helper,
+            &[call_args[0].into()],
+            "dyn_result",
+            "Failed to allocate dynamic result",
+            "Result allocation helper did not return a pointer",
+        )?;
+        replace_call_with_value(args.instr, value)
     }
 
     fn lower_dynamic_result_release(args: &ProcessCallArgs<'_>) -> Result<(), String> {
@@ -3204,40 +3254,16 @@ mod aux {
         )
     }
 
-    fn lower_dynamic_result_array_allocate(args: &mut ProcessCallArgs<'_>) -> Result<(), String> {
-        let builder = args.ctx.create_builder();
-        builder.position_before(&args.instr);
-        let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
-        let len = extract_const_len(call_args[0], "__quantum__rt__result_array_allocate")?;
-        let array_ptr = call_args[1].into_pointer_value();
-        let out_err = call_args[2].into_pointer_value();
-        let ptr_type = args.ctx.ptr_type(AddressSpace::default());
-        for idx in 0..len {
-            let elem_ptr = unsafe {
-                builder.build_gep(
-                    ptr_type,
-                    array_ptr,
-                    &[args.ctx.i64_type().const_int(idx, false)],
-                    "result_elem_ptr",
-                )
-            }
-            .map_err(|e| format!("Failed to build result array element GEP: {e}"))?;
-            let slot_ptr = builder
-                .build_alloca(get_dynamic_result_slot_type(args.ctx), "dyn_result")
-                .map_err(|e| format!("Failed to allocate dynamic result slot: {e}"))?;
-            initialize_dynamic_result_slot(args.ctx, &builder, slot_ptr);
-            let _ = builder
-                .build_store(elem_ptr, slot_ptr)
-                .map_err(|e| format!("Failed to store dynamic result slot in array: {e}"))?;
-        }
-        let helper = ensure_out_err_success(args.ctx, module_ref(args));
-        let _ = builder
-            .build_call(helper, &[out_err.into()], "")
-            .map_err(|e| {
-                format!("Failed to store dynamic result array out_err success flag: {e}")
-            })?;
-        args.instr.erase_from_basic_block();
-        Ok(())
+    fn lower_dynamic_result_array_allocate(args: &ProcessCallArgs<'_>) -> Result<(), String> {
+        let call_args = extract_operands(&args.instr)?;
+        let helper = ensure_dynamic_result_array_allocate(args.ctx, module_ref(args));
+        lower_void_helper_call(
+            args.ctx,
+            args.instr,
+            helper,
+            &call_args[..3],
+            "Failed to lower dynamic result array allocation",
+        )
     }
 
     fn lower_dynamic_result_array_release(args: &ProcessCallArgs<'_>) -> Result<(), String> {
@@ -3272,7 +3298,6 @@ mod aux {
         new_global.set_initializer(&new_const);
         new_global.set_linkage(Linkage::Private);
         new_global.set_constant(true);
-        unsafe { &mut *args.global_mapping }.insert(old_name, new_global);
         let helper = ensure_dynamic_result_array_record_output(args.ctx, module_ref(args))?;
         let tag_len = args.ctx.i64_type().const_int(
             u64::from(new_const.get_type().len()).saturating_sub(1),
@@ -3336,6 +3361,7 @@ mod aux {
 
         let q_handle = get_qubit_handle(
             ctx,
+            module,
             capability_flags,
             qubit_array,
             qubit_array_type,
@@ -3363,7 +3389,10 @@ mod aux {
         };
 
         // Store measurement result
-        if capability_flags.dynamic_result_management {
+        if capability_flags.dynamic_result_management
+            || module.get_global("qir_qis.static_results").is_some()
+        {
+            let result_ptr = result_slot_pointer(ctx, module, &builder, result_ptr)?;
             let set_result_fn = ensure_dynamic_result_setter(ctx, module);
             let _ = builder
                 .build_call(set_result_fn, &[result_ptr.into(), meas.into()], "")
@@ -3391,6 +3420,7 @@ mod aux {
 
     fn handle_mz_leaked_call(args: &ProcessCallArgs) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
+        let ctx = *ctx;
         let module = module_ref(args);
         let builder = ctx.create_builder();
         builder.position_before(instr);
@@ -3414,7 +3444,8 @@ mod aux {
         let qubit_ptr = mz_leaked_qubit_operand(&call_args)?;
 
         let q_handle = get_qubit_handle(
-            ctx,
+            args.ctx,
+            module,
             args.capability_flags,
             args.qubit_array,
             args.qubit_array_type,
@@ -3492,6 +3523,7 @@ mod aux {
 
     fn handle_reset_call(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
+        let ctx = *ctx;
         let module = module_ref(args);
         let builder = ctx.create_builder();
         builder.position_before(instr);
@@ -3501,7 +3533,8 @@ mod aux {
         let qubit_ptr = call_args[0].into_pointer_value();
 
         let q_handle = get_qubit_handle(
-            ctx,
+            args.ctx,
+            module,
             args.capability_flags,
             args.qubit_array,
             args.qubit_array_type,
@@ -3569,7 +3602,8 @@ mod aux {
         for (i, arg) in call_args.iter().enumerate() {
             let qubit_ptr = arg.into_pointer_value();
             let q_handle = get_qubit_handle(
-                ctx,
+                args.ctx,
+                module,
                 args.capability_flags,
                 args.qubit_array,
                 args.qubit_array_type,
@@ -3800,6 +3834,7 @@ mod aux {
 
     fn handle_get_current_shot(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
+        let ctx = *ctx;
         let module = module_ref(args);
         let get_shot_func = get_or_create_function(
             module,
@@ -3854,6 +3889,7 @@ mod aux {
 
     fn handle_random_seed(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
+        let ctx = *ctx;
         let module = module_ref(args);
         let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
         let random_seed_func = get_or_create_function(
@@ -3872,6 +3908,7 @@ mod aux {
 
     fn handle_random_int(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
+        let ctx = *ctx;
         let module = module_ref(args);
         let random_int_func =
             get_or_create_function(module, "random_int", ctx.i32_type().fn_type(&[], false));
@@ -3888,6 +3925,7 @@ mod aux {
 
     fn handle_random_float(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
+        let ctx = *ctx;
         let module = module_ref(args);
         let random_float_func =
             get_or_create_function(module, "random_float", ctx.f64_type().fn_type(&[], false));
@@ -3904,6 +3942,7 @@ mod aux {
 
     fn handle_random_int_bounded(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
+        let ctx = *ctx;
         let module = module_ref(args);
         let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
         let random_rng_func = get_or_create_function(
@@ -3924,6 +3963,7 @@ mod aux {
 
     fn handle_random_advance(args: &ProcessCallArgs<'_>) -> Result<(), String> {
         let ProcessCallArgs { ctx, instr, .. } = args;
+        let ctx = *ctx;
         let module = module_ref(args);
         let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
         let random_advance_func = get_or_create_function(
@@ -4087,6 +4127,10 @@ pub fn qir_to_qis(
 ///
 /// # Errors
 /// Returns an error string if the translation fails.
+#[allow(
+    clippy::too_many_lines,
+    reason = "ordered translation pipeline keeps validation, storage initialization, lowering, and cleanup together"
+)]
 pub fn qir_to_qis_with_passthrough_calls(
     bc_bytes: &[u8],
     opt_level: u32,
@@ -4117,6 +4161,11 @@ pub fn qir_to_qis_with_passthrough_calls(
         .map(ToOwned::to_owned)
         .collect();
     for name in &passthrough_calls {
+        if crate::convert::is_reserved_passthrough_name(name) {
+            return Err(format!(
+                "Pass-through function `{name}` uses a reserved converter output name"
+            ));
+        }
         if module
             .get_function(name)
             .is_some_and(|function| function.count_basic_blocks() > 0)
@@ -4127,6 +4176,7 @@ pub fn qir_to_qis_with_passthrough_calls(
         }
     }
 
+    crate::result_runtime::validate_translation_input(&ctx, &module)?;
     add_decompositions(&ctx, &module)
         .map_err(|e| format!("Failed to add QIR decompositions: {e}"))?;
     let entry_fn = find_entry_function(&module)
@@ -4154,6 +4204,12 @@ pub fn qir_to_qis_with_passthrough_calls(
         Some(create_qubit_array(&ctx, &module, entry_fn)?)
     };
 
+    crate::result_runtime::initialize_static_results(
+        &ctx,
+        &module,
+        entry_fn,
+        capability_flags.dynamic_result_management,
+    )?;
     let wasm_fns = get_wasm_functions(wasm_bytes)?;
     process_entry_function(
         &ctx,
@@ -4316,6 +4372,9 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
 
     let wasm_fns = get_wasm_functions(wasm_bytes)?;
 
+    if let Err(error) = crate::result_runtime::validate_input_symbols(&ctx, &module) {
+        errors.push(error);
+    }
     let capability_errors =
         validate_qir_call_sites(&module, entry_fn, &wasm_fns, capability_flags, &mut errors);
 
@@ -7770,7 +7829,7 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
     }
 
     #[test]
-    fn test_validate_dynamic_result_allocate_outside_entry_block_fails() {
+    fn test_validate_dynamic_result_allocate_outside_entry_block_succeeds() {
         let ll_text = r#"
 define i64 @Entry_Point_Name() #0 {
 entry:
@@ -7795,14 +7854,12 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
 !4 = !{i32 1, !"arrays", i1 false}
 "#;
         let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
-        let err = validate_qir(&bc_bytes, None).expect_err("fixture should fail validation");
-        assert!(
-            err.contains("__quantum__rt__result_allocate is only supported in the entry block")
-        );
+        validate_qir(&bc_bytes, None).expect("allocation placement is unrestricted");
+        qir_to_qis(&bc_bytes, 0, "native", None).expect("lifetime-safe allocation should compile");
     }
 
     #[test]
-    fn test_validate_dynamic_result_allocate_in_helper_fails() {
+    fn test_validate_dynamic_result_allocate_in_helper_succeeds() {
         let ll_text = r#"
 define void @helper() {
 entry:
@@ -7830,10 +7887,8 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
 !4 = !{i32 1, !"arrays", i1 false}
 "#;
         let bc_bytes = qir_ll_to_bc(ll_text).unwrap();
-        let err = validate_qir(&bc_bytes, None).expect_err("fixture should fail validation");
-        assert!(
-            err.contains("__quantum__rt__result_allocate is only supported in the entry block")
-        );
+        validate_qir(&bc_bytes, None).expect("allocation placement is unrestricted");
+        qir_to_qis(&bc_bytes, 0, "native", None).expect("lifetime-safe allocation should compile");
     }
 
     #[test]
