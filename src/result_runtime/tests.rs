@@ -282,6 +282,11 @@ fn result_capabilities_follow_spec_matrix() {
                     expected,
                     "{call}, arrays={arrays}, dynamic={dynamic}"
                 );
+                assert_eq!(
+                    qir_to_qis(&qir_ll_to_bc(&ll).unwrap(), 0, "native", None).is_ok(),
+                    expected,
+                    "direct translation: {call}, arrays={arrays}, dynamic={dynamic}"
+                );
             }
         }
     }

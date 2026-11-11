@@ -1608,6 +1608,9 @@ mod aux {
     }
 
     fn process_call_instruction(mut args: ProcessCallArgs<'_>) -> Result<(), String> {
+        if let Some(error) = result_capability_error(&args.fn_name, args.capability_flags) {
+            return Err(error);
+        }
         let call = CallSiteValue::try_from(args.instr)
             .map_err(|()| "Instruction is not a call site".to_string())?;
         if let Some(f) = call.get_called_fn_value() {
