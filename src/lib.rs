@@ -49,15 +49,16 @@ mod aux {
             INIT_QARRAY_FN, ResultOutputGlobals, add_print_call, build_result_global,
             checked_qubit_index, convert_globals_with_results, create_reset_call, get_index,
             get_or_create_function, get_required_num_qubits, get_required_num_qubits_strict,
-            get_required_num_results, get_result_vars, get_string_label,
-            handle_tuple_or_array_output, is_reserved_passthrough_name, parse_gep,
-            record_classical_output, replace_rxy_call, replace_rz_call, replace_rzz_call,
-            resolve_output_tag,
+            get_result_vars, get_string_label, handle_tuple_or_array_output,
+            is_reserved_passthrough_name, parse_gep, record_classical_output, replace_rxy_call,
+            replace_rz_call, replace_rzz_call, resolve_output_tag,
         },
         decode_llvm_bytes,
         result_runtime::{
-            STATIC_RESULTS, ensure_dynamic_result_allocate, ensure_dynamic_result_array_allocate,
-            ensure_dynamic_result_release, result_read_function, result_slot_pointer,
+            ResultOp, STATIC_RESULTS, ensure_dynamic_result_allocate,
+            ensure_dynamic_result_array_allocate, ensure_dynamic_result_array_record_output,
+            ensure_dynamic_result_array_release, ensure_dynamic_result_release,
+            ensure_dynamic_result_setter, result_read_function, result_slot_pointer,
         },
         utils::extract_operands,
     };
@@ -125,18 +126,15 @@ mod aux {
     }
 
     fn is_capability_gated_rt_function(fn_name: &str) -> bool {
-        matches!(
-            fn_name,
-            "__quantum__rt__qubit_allocate"
-                | "__quantum__rt__qubit_release"
-                | "__quantum__rt__result_allocate"
-                | "__quantum__rt__result_release"
-                | "__quantum__rt__qubit_array_allocate"
-                | "__quantum__rt__qubit_array_release"
-                | "__quantum__rt__result_array_allocate"
-                | "__quantum__rt__result_array_release"
-                | "__quantum__rt__result_array_record_output"
-        )
+        ResultOp::from_name(fn_name)
+            .is_some_and(|op| op.is_array() || matches!(op, ResultOp::Allocate | ResultOp::Release))
+            || matches!(
+                fn_name,
+                "__quantum__rt__qubit_allocate"
+                    | "__quantum__rt__qubit_release"
+                    | "__quantum__rt__qubit_array_allocate"
+                    | "__quantum__rt__qubit_array_release"
+            )
     }
 
     fn is_i64_type(type_: BasicMetadataTypeEnum<'_>) -> bool {
@@ -172,17 +170,15 @@ mod aux {
     ) -> Result<(), String> {
         let params = fn_type.get_param_types();
         let valid = match fn_name {
-            "__quantum__rt__qubit_allocate" | "__quantum__rt__result_allocate" => {
+            "__quantum__rt__qubit_allocate" => {
                 is_ptr_return(fn_type)
                     && matches!(params.as_slice(), [param] if is_ptr_type(*param))
             }
-            "__quantum__rt__qubit_release" | "__quantum__rt__result_release" => {
+            "__quantum__rt__qubit_release" => {
                 is_void_return(fn_type)
                     && matches!(params.as_slice(), [param] if is_ptr_type(*param))
             }
-            "__quantum__rt__qubit_array_allocate"
-            | "__quantum__rt__result_array_allocate"
-            | "__quantum__rt__result_array_record_output" => {
+            "__quantum__rt__qubit_array_allocate" => {
                 is_void_return(fn_type)
                     && matches!(
                         params.as_slice(),
@@ -192,7 +188,7 @@ mod aux {
                                 && is_ptr_type(*second_ptr)
                     )
             }
-            "__quantum__rt__qubit_array_release" | "__quantum__rt__result_array_release" => {
+            "__quantum__rt__qubit_array_release" => {
                 is_void_return(fn_type)
                     && matches!(params.as_slice(), [len, ptr] if is_i64_type(*len) && is_ptr_type(*ptr))
             }
@@ -203,30 +199,6 @@ mod aux {
             Ok(())
         } else {
             Err(format!("Malformed QIR RT function declaration: {fn_name}"))
-        }
-    }
-
-    pub fn validate_result_signature(name: &str, ty: FunctionType<'_>) -> Result<(), String> {
-        let params = ty.get_param_types();
-        let valid = match name {
-            "__quantum__rt__read_result" => {
-                ty.get_return_type().is_some_and(|result| {
-                    result.is_int_type() && result.into_int_type().get_bit_width() == 1
-                }) && matches!(params.as_slice(), [pointer] if is_ptr_type(*pointer))
-            }
-            "__quantum__rt__result_record_output"
-            | "__quantum__qis__mz__body"
-            | "__quantum__qis__m__body"
-            | "__quantum__qis__mresetz__body" => {
-                is_void_return(ty)
-                    && matches!(params.as_slice(), [first, second] if is_ptr_type(*first) && is_ptr_type(*second))
-            }
-            _ => return validate_dynamic_rt_signature(name, ty),
-        };
-        if valid && !ty.is_var_arg() {
-            Ok(())
-        } else {
-            Err(format!("Malformed QIR result function declaration: {name}"))
         }
     }
 
@@ -996,65 +968,85 @@ mod aux {
         errors.push_message(format!("Unsupported {flag_name}: expected {expected}"));
     }
 
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "backing views accept only alloca, pointer casts, and zero-index GEPs; all other opcodes must fail"
+    )]
     fn get_fixed_pointer_array_len(
-        array_ptr: PointerValue<'_>,
+        mut array_ptr: PointerValue<'_>,
         opname: &str,
     ) -> Result<u64, String> {
-        let array_backing_error =
+        let error =
             || format!("{opname} requires a fixed-size backing array allocated as [N x ptr]");
-        let Some(instr) = array_ptr.as_instruction_value() else {
-            return Err(array_backing_error());
-        };
-        let opcode = instr.get_opcode();
-
-        if opcode == InstructionOpcode::Alloca {
-            let allocated_type = instr
-                .get_allocated_type()
-                .map_err(|_err| array_backing_error())?;
-            let BasicTypeEnum::ArrayType(array_type) = allocated_type else {
-                return Err(array_backing_error());
-            };
-            if !matches!(array_type.get_element_type(), BasicTypeEnum::PointerType(_)) {
-                return Err(array_backing_error());
+        let mut visited = HashSet::new();
+        loop {
+            if !visited.insert(array_ptr) {
+                return Err(error());
             }
-            return Ok(u64::from(array_type.len()));
-        }
-
-        if opcode == InstructionOpcode::BitCast || opcode == InstructionOpcode::AddrSpaceCast {
-            return instr
-                .get_operand(0)
-                .and_then(inkwell::values::Operand::value)
-                .map(BasicValueEnum::into_pointer_value)
-                .ok_or_else(array_backing_error)
-                .and_then(|backing_ptr| get_fixed_pointer_array_len(backing_ptr, opname));
-        }
-
-        if opcode == InstructionOpcode::GetElementPtr {
-            for operand_idx in 1..instr.get_num_operands() {
-                let Some(operand) = instr.get_operand(operand_idx) else {
-                    return Err(array_backing_error());
-                };
-                let inkwell::values::Operand::Value(value) = operand else {
-                    return Err(array_backing_error());
-                };
-                let idx = value
-                    .into_int_value()
-                    .get_zero_extended_constant()
-                    .ok_or_else(array_backing_error)?;
-                if idx != 0 {
-                    return Err(array_backing_error());
+            let instr = array_ptr.as_instruction_value().ok_or_else(error)?;
+            match instr.get_opcode() {
+                InstructionOpcode::Alloca => {
+                    let BasicTypeEnum::ArrayType(array) = instr
+                        .get_allocated_type()
+                        .map_err(|_allocation_error| error())?
+                    else {
+                        return Err(error());
+                    };
+                    if !array.get_element_type().is_pointer_type() {
+                        return Err(error());
+                    }
+                    return Ok(u64::from(array.len()));
                 }
+                InstructionOpcode::BitCast | InstructionOpcode::AddrSpaceCast => {}
+                InstructionOpcode::GetElementPtr => {
+                    for index in 1..instr.get_num_operands() {
+                        let Some(BasicValueEnum::IntValue(value)) = instr
+                            .get_operand(index)
+                            .and_then(inkwell::values::Operand::value)
+                        else {
+                            return Err(error());
+                        };
+                        if value.get_zero_extended_constant() != Some(0) {
+                            return Err(error());
+                        }
+                    }
+                }
+                _ => return Err(error()),
             }
-
-            return instr
+            let Some(BasicValueEnum::PointerValue(pointer)) = instr
                 .get_operand(0)
                 .and_then(inkwell::values::Operand::value)
-                .map(BasicValueEnum::into_pointer_value)
-                .ok_or_else(array_backing_error)
-                .and_then(|backing_ptr| get_fixed_pointer_array_len(backing_ptr, opname));
+            else {
+                return Err(error());
+            };
+            array_ptr = pointer;
         }
+    }
 
-        Err(array_backing_error())
+    pub fn validate_pointer_array_call(
+        name: &str,
+        args: &[BasicValueEnum<'_>],
+    ) -> Result<(), String> {
+        let Some((BasicValueEnum::IntValue(length), BasicValueEnum::PointerValue(backing))) =
+            args.first().copied().zip(args.get(1).copied())
+        else {
+            return Err(format!(
+                "{name} requires a constant array length and backing array pointer"
+            ));
+        };
+        let length = extract_const_len(length.into(), name)?;
+        let backing_length = get_fixed_pointer_array_len(backing, name)?;
+        if length != backing_length {
+            return Err(format!(
+                "{name} requires a fixed-size backing array whose requested length {length} does not match backing array length {backing_length}"
+            ));
+        }
+        if ResultOp::from_name(name) == Some(ResultOp::ArrayOutput) && length > i32::MAX as u64 {
+            return Err(format!(
+                "{name} requires an array length that fits in i32 for RESULT_ARRAY output"
+            ));
+        }
+        Ok(())
     }
 
     /// Backing check used by direct translation and targeted unit tests.
@@ -1074,68 +1066,22 @@ mod aux {
                     let Some(fn_name) = callee_name.to_str().ok() else {
                         continue;
                     };
-                    if !matches!(
-                        fn_name,
-                        "__quantum__rt__qubit_array_allocate"
-                            | "__quantum__rt__qubit_array_release"
-                            | "__quantum__rt__result_array_allocate"
-                            | "__quantum__rt__result_array_release"
-                            | "__quantum__rt__result_array_record_output"
-                    ) {
-                        continue;
-                    }
-
-                    let mut call_args: Vec<BasicValueEnum> = match extract_operands(&instr) {
-                        Ok(args) => args,
-                        Err(err) => {
-                            errors.push(format!("Failed to inspect {fn_name} operands: {err}"));
-                            continue;
-                        }
-                    };
-                    call_args.truncate(call.count_arguments() as usize);
-                    if call_args.len() < 2 {
-                        errors.push(format!(
-                            "{fn_name} requires a constant array length and backing array pointer"
-                        ));
-                        continue;
-                    }
-                    let BasicValueEnum::IntValue(_) = call_args[0] else {
-                        errors.push(format!(
-                            "{fn_name} requires a constant array length and backing array pointer"
-                        ));
-                        continue;
-                    };
-                    let requested_len = match extract_const_len(call_args[0], fn_name) {
-                        Ok(len) => len,
-                        Err(err) => {
-                            errors.push(err);
-                            continue;
-                        }
-                    };
-                    let BasicValueEnum::PointerValue(backing_ptr) = call_args[1] else {
-                        errors.push(format!(
-                            "{fn_name} requires a fixed-size backing array allocated as [N x ptr]"
-                        ));
-                        continue;
-                    };
-                    let backing_len = match get_fixed_pointer_array_len(backing_ptr, fn_name) {
-                        Ok(len) => len,
-                        Err(err) => {
-                            errors.push(err);
-                            continue;
-                        }
-                    };
-                    if requested_len != backing_len {
-                        errors.push(format!(
-                            "{fn_name} requires a fixed-size backing array whose requested length {requested_len} does not match backing array length {backing_len}"
-                        ));
-                    }
-                    if fn_name == "__quantum__rt__result_array_record_output"
-                        && requested_len > i32::MAX as u64
+                    if ResultOp::from_name(fn_name).is_some_and(ResultOp::is_array)
+                        || matches!(
+                            fn_name,
+                            "__quantum__rt__qubit_array_allocate"
+                                | "__quantum__rt__qubit_array_release"
+                        )
                     {
-                        errors.push(format!(
-                            "{fn_name} requires an array length that fits in i32 for RESULT_ARRAY output"
-                        ));
+                        match extract_operands(&instr) {
+                            Ok(mut args) => {
+                                args.truncate(call.count_arguments() as usize);
+                                if let Err(error) = validate_pointer_array_call(fn_name, &args) {
+                                    errors.push(error);
+                                }
+                            }
+                            Err(error) => errors.push(error),
+                        }
                     }
                 }
             }
@@ -1144,42 +1090,17 @@ mod aux {
 
     /// Capability requirements from QIR `Memory_Management.md`, independently of storage lowering.
     pub fn result_capability_error(name: &str, flags: CapabilityFlags) -> Option<String> {
-        let requirement = match name {
-            "__quantum__rt__result_array_record_output" if !flags.arrays => "`arrays=true`",
-            "__quantum__rt__result_array_allocate" | "__quantum__rt__result_array_release"
-                if !flags.arrays || !flags.dynamic_result_management =>
-            {
-                "both `arrays=true` and `dynamic_result_management=true`"
-            }
-            "__quantum__rt__result_allocate" | "__quantum__rt__result_release"
-                if !flags.dynamic_result_management =>
-            {
-                "`dynamic_result_management=true`"
-            }
-            _ => return None,
-        };
-        Some(format!("{name} requires {requirement}"))
+        ResultOp::from_name(name).and_then(|op| op.capability_error(name, flags))
     }
 
-    /// Single-pass validation used by [`crate::validate_qir`], replacing what
-    /// were previously five separate full-module traversals: function-level
-    /// checks (allow-listed QIS/RT/Qtm functions, barrier arity, IR-defined
-    /// function shape), result-slot usage, the per-call-site half of static
-    /// qubit-helper usage, dynamic
-    /// array-allocation backing, and capability-gated runtime function usage.
-    ///
-    /// Each of those checks used to independently walk every function, basic
-    /// block, and instruction in the module, re-deriving the same call-site
-    /// data (callee name and call arguments) each time. This function performs
-    /// a single walk and shares that per-call-site data across all of the
-    /// checks, while producing the same errors (grouped in the same relative
-    /// order per check) that calling the individual passes in sequence used to
-    /// produce.
+    /// Validate general function, qubit, and capability contracts. Result contracts
+    /// are checked separately by the same preflight used for direct translation.
     #[allow(
         clippy::too_many_lines,
-        reason = "single consolidated validation pass mirrors five previously-separate functions"
+        reason = "general function and static-qubit checks share one instruction walk"
     )]
     pub fn validate_qir_call_sites(
+        ctx: &Context,
         module: &Module,
         entry_fn: FunctionValue,
         _wasm_fns: &BTreeMap<String, u64>,
@@ -1190,12 +1111,6 @@ mod aux {
         // `errors`, they preserve the same relative grouping/order that the
         // previously-separate sequential passes produced.
         let mut functions_errors = Vec::new();
-        let mut result_slot_errors = Vec::new();
-        let needs_static_results = crate::result_runtime::uses_static_results(
-            module,
-            entry_fn,
-            capability_flags.dynamic_result_management,
-        );
         let mut static_qubit_errors = Vec::new();
         let mut dynamic_array_backing_errors = Vec::new();
         let mut capability_errors = Vec::new();
@@ -1203,22 +1118,6 @@ mod aux {
         // --- Setup shared by the per-call-site checks below (mirrors what each
         // individual pass computed before its own traversal). ---
         let required_num_qubits_for_barrier = get_required_num_qubits(entry_fn);
-
-        let required_num_results = if !capability_flags.dynamic_result_management
-            && entry_fn
-                .get_string_attribute(AttributeLoc::Function, "required_num_results")
-                .is_some()
-        {
-            match get_required_num_results(entry_fn) {
-                Ok(required) => Some(required),
-                Err(err) => {
-                    result_slot_errors.push(err);
-                    None
-                }
-            }
-        } else {
-            None
-        };
 
         let static_qubit_ctx = if capability_flags.dynamic_qubit_management {
             None
@@ -1272,6 +1171,7 @@ mod aux {
                     {
                         functions_errors.push(format!("Unsupported QIR RT function: {fn_name}"));
                     } else if is_capability_gated_rt_function(fn_name)
+                        && ResultOp::from_name(fn_name).is_none()
                         && let Err(err) = validate_dynamic_rt_signature(fn_name, fun.get_type())
                     {
                         functions_errors.push(err);
@@ -1317,9 +1217,6 @@ mod aux {
                     };
 
                     // --- validate_capability_usage ---
-                    if let Some(error) = result_capability_error(&callee_name, capability_flags) {
-                        capability_errors.push(error);
-                    }
                     match callee_name.as_str() {
                         "__quantum__rt__qubit_array_allocate"
                         | "__quantum__rt__qubit_array_release"
@@ -1340,20 +1237,6 @@ mod aux {
 
                     // Determine, without extracting operands, whether any check
                     // below needs this call site's arguments.
-                    let result_operand_index = match callee_name.as_str() {
-                        "__quantum__qis__mz__body"
-                        | "__quantum__qis__m__body"
-                        | "__quantum__qis__mresetz__body" => Some(1),
-                        "__quantum__rt__read_result" | "__quantum__rt__result_record_output" => {
-                            Some(0)
-                        }
-                        _ => None,
-                    };
-                    let result_slot_relevant = !capability_flags.dynamic_result_management
-                        && matches!(
-                            (required_num_results, result_operand_index),
-                            (Some(_), Some(_))
-                        );
                     let direct_qubit_positions = static_qubit_ctx.as_ref().map(|_| {
                         direct_qubit_operand_positions(
                             &callee_name,
@@ -1368,29 +1251,14 @@ mod aux {
                         callee_name.as_str(),
                         "__quantum__rt__qubit_array_allocate"
                             | "__quantum__rt__qubit_array_release"
-                            | "__quantum__rt__result_array_allocate"
-                            | "__quantum__rt__result_array_release"
-                            | "__quantum__rt__result_array_record_output"
                     );
-
-                    if matches!(
-                        (
-                            result_slot_relevant,
-                            static_qubit_ctx.as_ref(),
-                            array_backing_relevant
-                        ),
-                        (false, None, false)
-                    ) {
+                    if static_qubit_ctx.is_none() && !array_backing_relevant {
                         continue;
                     }
 
                     let mut call_args = match extract_operands(&instr) {
                         Ok(args) => args,
                         Err(err) => {
-                            if result_slot_relevant {
-                                result_slot_errors
-                                    .push(format!("Failed to inspect `{callee_name}` call: {err}"));
-                            }
                             if static_qubit_operand_inspection_relevant {
                                 static_qubit_errors
                                     .push(format!("Failed to inspect `{callee_name}` call: {err}"));
@@ -1404,37 +1272,6 @@ mod aux {
                         }
                     };
                     call_args.truncate(call.count_arguments() as usize);
-
-                    // --- validate_result_slot_usage ---
-                    if let (Some(required_num_results), Some(result_operand_index)) =
-                        (required_num_results, result_operand_index)
-                    {
-                        match call_args.get(result_operand_index).copied() {
-                            None => result_slot_errors.push(format!(
-                                "Call to `{callee_name}` is missing a result operand"
-                            )),
-                            Some(BasicValueEnum::PointerValue(result_ptr)) => {
-                                match get_index(result_ptr) {
-                                    Ok(result_idx) => {
-                                        if let Err(err) =
-                                            checked_result_index(result_idx, required_num_results)
-                                        {
-                                            result_slot_errors.push(err);
-                                        }
-                                    }
-                                    Err(_) if needs_static_results && required_num_results > 0 => {
-                                        // Loaded/selected static IDs are guarded by the runtime table lookup.
-                                    }
-                                    Err(err) => result_slot_errors.push(format!(
-                                        "Failed to inspect result operand for `{callee_name}`: {err}"
-                                    )),
-                                }
-                            }
-                            Some(_) => result_slot_errors.push(format!(
-                                "Call to `{callee_name}` has a non-pointer result operand"
-                            )),
-                        }
-                    }
 
                     // --- validate_static_qubit_helper_usage (per-call-site pass) ---
                     if let Some((required_num_qubits, _)) = static_qubit_ctx.as_ref() {
@@ -1466,59 +1303,19 @@ mod aux {
                         }
                     }
 
-                    // --- validate_dynamic_array_allocation_backing ---
-                    if array_backing_relevant {
-                        let Some((length_operand, backing_operand)) =
-                            call_args.first().copied().zip(call_args.get(1).copied())
-                        else {
-                            dynamic_array_backing_errors.push(format!(
-                                "{callee_name} requires a constant array length and backing array pointer"
-                            ));
-                            continue;
-                        };
-                        if matches!(length_operand, BasicValueEnum::IntValue(_)) {
-                            match extract_const_len(length_operand, &callee_name) {
-                                Ok(requested_len) => {
-                                    let BasicValueEnum::PointerValue(backing_ptr) = backing_operand
-                                    else {
-                                        dynamic_array_backing_errors.push(format!(
-                                            "{callee_name} requires a fixed-size backing array allocated as [N x ptr]"
-                                        ));
-                                        continue;
-                                    };
-                                    match get_fixed_pointer_array_len(backing_ptr, &callee_name) {
-                                        Ok(backing_len) => {
-                                            if requested_len != backing_len {
-                                                dynamic_array_backing_errors.push(format!(
-                                                    "{callee_name} requires a fixed-size backing array whose requested length {requested_len} does not match backing array length {backing_len}"
-                                                ));
-                                            }
-                                            if callee_name
-                                                == "__quantum__rt__result_array_record_output"
-                                                && requested_len > i32::MAX as u64
-                                            {
-                                                dynamic_array_backing_errors.push(format!(
-                                                    "{callee_name} requires an array length that fits in i32 for RESULT_ARRAY output"
-                                                ));
-                                            }
-                                        }
-                                        Err(err) => dynamic_array_backing_errors.push(err),
-                                    }
-                                }
-                                Err(err) => dynamic_array_backing_errors.push(err),
-                            }
-                        } else {
-                            dynamic_array_backing_errors.push(format!(
-                                "{callee_name} requires a constant array length and backing array pointer"
-                            ));
-                        }
+                    if array_backing_relevant
+                        && let Err(error) = validate_pointer_array_call(&callee_name, &call_args)
+                    {
+                        dynamic_array_backing_errors.push(error);
                     }
                 }
             }
         }
 
         errors.extend(functions_errors);
-        errors.extend(result_slot_errors);
+        let result_checks = crate::result_runtime::validate_result_calls(ctx, module);
+        errors.extend(result_checks.errors);
+        capability_errors.extend(result_checks.capabilities);
         errors.extend(static_qubit_errors);
         errors.extend(dynamic_array_backing_errors);
         capability_errors
@@ -1526,7 +1323,7 @@ mod aux {
 
     // SAFETY: `ProcessCallArgs` is created and consumed synchronously within a single
     // `process_call_instruction` invocation. The raw pointers below point at
-    // stack-owned state from `process_entry_function` that outlives the handler
+    // stack-owned state from `process_original_calls` that outlives the handler
     // call, and handlers never persist those pointers beyond the call.
     struct ProcessCallArgs<'ctx> {
         ctx: &'ctx Context,
@@ -1544,16 +1341,17 @@ mod aux {
         result_ssa: *mut Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>,
     }
 
-    /// Lower entry calls and result operations in helpers, tracking emitted helper calls.
-    pub fn process_entry_function<'ctx>(
+    /// Lower only the captured original calls; generated runtime calls are never revisited.
+    pub fn process_original_calls<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
         entry_fn: FunctionValue<'ctx>,
         wasm_fns: &BTreeMap<String, u64>,
         passthrough_calls: &BTreeSet<String>,
         qubit_array: Option<PointerValue<'ctx>>,
-        capability_flags: CapabilityFlags,
-    ) -> Result<HashSet<inkwell::values::InstructionValue<'ctx>>, String> {
+        original_calls: &[(FunctionValue<'ctx>, inkwell::values::InstructionValue<'ctx>)],
+    ) -> Result<(), String> {
+        let capability_flags = get_capability_flags(module);
         let (mut global_mapping, mut result_output_globals) =
             convert_globals_with_results(ctx, module)?;
 
@@ -1565,6 +1363,11 @@ mod aux {
         } else {
             get_result_vars(entry_fn)?
         };
+        let required_num_qubits = if capability_flags.dynamic_qubit_management {
+            0
+        } else {
+            get_required_num_qubits_strict(entry_fn)?
+        };
         let qubit_array_type = if capability_flags.dynamic_qubit_management {
             None
         } else {
@@ -1574,81 +1377,42 @@ mod aux {
             )
         };
 
-        let mut generated_calls = HashSet::new();
-        let functions: Vec<_> = module
-            .get_functions()
-            .filter(|f| {
-                f.count_basic_blocks() > 0
-                    && (*f == entry_fn || !f.get_name().to_bytes().starts_with(b"qir_qis."))
-            })
-            .collect();
-        for function in functions {
-            for bb in function.get_basic_blocks() {
-                // Snapshot instructions before rewriting calls. Some rewrite paths
-                // erase/replace instructions, which can invalidate in-place iterators.
-                let instructions: Vec<_> = bb.get_instructions().collect();
-                for instr in instructions {
-                    let Ok(call) = CallSiteValue::try_from(instr) else {
-                        continue;
-                    };
-                    if let Some(fn_name) = call.get_called_fn_value().and_then(|f| {
-                        f.as_global_value()
-                            .get_name()
-                            .to_str()
-                            .ok()
-                            .map(ToOwned::to_owned)
-                    }) {
-                        if function != entry_fn
-                            && !matches!(
-                                fn_name.as_str(),
-                                "__quantum__rt__result_allocate"
-                                    | "__quantum__rt__result_release"
-                                    | "__quantum__rt__result_array_allocate"
-                                    | "__quantum__rt__result_array_release"
-                                    | "__quantum__rt__read_result"
-                                    | "__quantum__rt__result_record_output"
-                                    | "__quantum__rt__result_array_record_output"
-                                    | "__quantum__qis__mz__body"
-                                    | "__quantum__qis__m__body"
-                                    | "__quantum__qis__mresetz__body"
-                            )
-                        {
-                            continue;
-                        }
-                        let args = ProcessCallArgs {
-                            ctx,
-                            module,
-                            instr,
-                            fn_name,
-                            wasm_fns: std::ptr::from_ref(wasm_fns),
-                            passthrough_calls: std::ptr::from_ref(passthrough_calls),
-                            qubit_array,
-                            qubit_array_type,
-                            capability_flags,
-                            global_mapping: &raw mut global_mapping,
-                            result_output_globals: &raw mut result_output_globals,
-                            result_ssa: &raw mut result_ssa,
-                        };
-                        let previous = instr.get_previous_instruction();
-                        let next = instr.get_next_instruction();
-                        process_call_instruction(args)?;
-                        if function != entry_fn {
-                            // Record inserted calls, rather than exempting native names in user input.
-                            let mut cursor = previous
-                                .and_then(inkwell::values::InstructionValue::get_next_instruction)
-                                .or_else(|| bb.get_first_instruction());
-                            while let Some(inserted) = cursor.filter(|i| Some(*i) != next) {
-                                if inserted != instr && CallSiteValue::try_from(inserted).is_ok() {
-                                    generated_calls.insert(inserted);
-                                }
-                                cursor = inserted.get_next_instruction();
-                            }
-                        }
-                    }
-                }
+        for &(function, instr) in original_calls {
+            let call = CallSiteValue::try_from(instr).map_err(|()| "Expected original call")?;
+            let fn_name = call
+                .get_called_fn_value()
+                .and_then(|f| f.get_name().to_str().ok().map(ToOwned::to_owned))
+                .ok_or("Function call must have a name and matching signature")?;
+            if function != entry_fn && ResultOp::from_name(&fn_name).is_none() {
+                crate::convert::native_qir_to_qis_call(
+                    ctx,
+                    module,
+                    instr,
+                    &fn_name,
+                    function,
+                    capability_flags.dynamic_qubit_management,
+                    required_num_qubits,
+                    passthrough_calls,
+                )?;
+            } else {
+                let args = ProcessCallArgs {
+                    ctx,
+                    module,
+                    instr,
+                    fn_name,
+                    wasm_fns: std::ptr::from_ref(wasm_fns),
+                    passthrough_calls: std::ptr::from_ref(passthrough_calls),
+                    qubit_array,
+                    qubit_array_type,
+                    capability_flags,
+                    global_mapping: &raw mut global_mapping,
+                    result_output_globals: &raw mut result_output_globals,
+                    result_ssa: &raw mut result_ssa,
+                };
+                process_call_instruction(args)?;
             }
         }
-        Ok(generated_calls)
+        Ok(())
     }
 
     fn process_call_instruction(mut args: ProcessCallArgs<'_>) -> Result<(), String> {
@@ -2020,13 +1784,13 @@ mod aux {
 
     const fn module_ref<'ctx>(args: &ProcessCallArgs<'ctx>) -> &'ctx Module<'ctx> {
         // SAFETY: `args.module` points to the borrowed module passed into
-        // `process_entry_function`, which outlives all handler calls.
+        // `process_original_calls`, which outlives all handler calls.
         unsafe { &*args.module }
     }
 
     const fn passthrough_calls_ref<'a>(args: &'a ProcessCallArgs<'_>) -> &'a BTreeSet<String> {
         // SAFETY: `args.passthrough_calls` points to the borrowed set passed into
-        // `process_entry_function`, which outlives all handler calls.
+        // `process_original_calls`, which outlives all handler calls.
         unsafe { &*args.passthrough_calls }
     }
 
@@ -2196,173 +1960,6 @@ mod aux {
             .expect("jump rollback_done");
     }
 
-    fn get_bool_cl_array_type(ctx: &Context) -> inkwell::types::StructType<'_> {
-        ctx.struct_type(
-            &[
-                ctx.i32_type().into(),
-                ctx.i32_type().into(),
-                ctx.ptr_type(AddressSpace::default()).into(),
-                ctx.ptr_type(AddressSpace::default()).into(),
-            ],
-            true,
-        )
-    }
-
-    fn build_dynamic_result_array_values<'ctx>(
-        ctx: &'ctx Context,
-        function: FunctionValue<'ctx>,
-        builder: &inkwell::builder::Builder<'ctx>,
-        len: inkwell::values::IntValue<'ctx>,
-        array_ptr: PointerValue<'ctx>,
-        read_fn: FunctionValue<'ctx>,
-    ) -> Result<PointerValue<'ctx>, String> {
-        let ptr_type = ctx.ptr_type(AddressSpace::default());
-        let bool_arr = builder
-            .build_array_alloca(ctx.bool_type(), len, "result_arr_data")
-            .map_err(|e| format!("Failed to allocate result array data: {e}"))?;
-        build_dynamic_array_loop(ctx, function, builder, len, |builder, idx| {
-            let elem_ptr = unsafe { builder.build_gep(ptr_type, array_ptr, &[idx], "elem_ptr") }
-                .map_err(|e| format!("Failed to build result record array GEP: {e}"))?;
-            let result_ptr = builder
-                .build_load(ptr_type, elem_ptr, "result_ptr")
-                .map_err(|e| format!("Failed to load result pointer: {e}"))?;
-            let bool_call = builder
-                .build_call(read_fn, &[result_ptr.into()], "result_bool")
-                .map_err(|e| format!("Failed to read result array element: {e}"))?;
-            let bool_val = match bool_call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(bv) => bv,
-                inkwell::values::ValueKind::Instruction(_) => {
-                    return Err("Dynamic result read helper did not return a bool".to_string());
-                }
-            };
-            let out_ptr =
-                unsafe { builder.build_gep(ctx.bool_type(), bool_arr, &[idx], "result_bool_ptr") }
-                    .map_err(|e| format!("Failed to index result bool array: {e}"))?;
-            let _ = builder
-                .build_store(out_ptr, bool_val)
-                .map_err(|e| format!("Failed to store result bool array element: {e}"))?;
-            Ok(())
-        })?;
-        Ok(bool_arr)
-    }
-
-    fn build_dynamic_result_array_descriptor<'ctx>(
-        ctx: &'ctx Context,
-        builder: &inkwell::builder::Builder<'ctx>,
-        len: inkwell::values::IntValue<'ctx>,
-        bool_arr: PointerValue<'ctx>,
-    ) -> Result<PointerValue<'ctx>, String> {
-        let ptr_type = ctx.ptr_type(AddressSpace::default());
-        let array_desc_type = get_bool_cl_array_type(ctx);
-        let array_desc = builder
-            .build_alloca(array_desc_type, "result_arr_desc")
-            .map_err(|e| format!("Failed to allocate result array descriptor: {e}"))?;
-        let x_ptr = builder
-            .build_struct_gep(array_desc_type, array_desc, 0, "result_arr_x")
-            .map_err(|e| format!("Failed to build result array length GEP: {e}"))?;
-        let y_ptr = builder
-            .build_struct_gep(array_desc_type, array_desc, 1, "result_arr_y")
-            .map_err(|e| format!("Failed to build result array rank GEP: {e}"))?;
-        let data_ptr = builder
-            .build_struct_gep(array_desc_type, array_desc, 2, "result_arr_data_ptr")
-            .map_err(|e| format!("Failed to build result array data GEP: {e}"))?;
-        let mask_ptr = builder
-            .build_struct_gep(array_desc_type, array_desc, 3, "result_arr_mask_ptr")
-            .map_err(|e| format!("Failed to build result array mask GEP: {e}"))?;
-        let mask_zero = builder
-            .build_alloca(ctx.i32_type(), "result_arr_mask")
-            .map_err(|e| format!("Failed to allocate result array mask: {e}"))?;
-        let _ = builder
-            .build_store(mask_zero, ctx.i32_type().const_zero())
-            .map_err(|e| format!("Failed to initialize result array mask: {e}"))?;
-        let len_i32 = builder
-            .build_int_truncate(len, ctx.i32_type(), "result_arr_len")
-            .map_err(|e| format!("Failed to truncate result array length: {e}"))?;
-        let _ = builder
-            .build_store(x_ptr, len_i32)
-            .map_err(|e| format!("Failed to store result array length: {e}"))?;
-        let _ = builder
-            .build_store(y_ptr, ctx.i32_type().const_int(1, false))
-            .map_err(|e| format!("Failed to store result array rank: {e}"))?;
-        let data_as_ptr = builder
-            .build_bit_cast(bool_arr, ptr_type, "result_arr_data_cast")
-            .map_err(|e| format!("Failed to cast result array data pointer: {e}"))?;
-        let _ = builder
-            .build_store(data_ptr, data_as_ptr)
-            .map_err(|e| format!("Failed to store result array data pointer: {e}"))?;
-        let mask_as_ptr = builder
-            .build_bit_cast(mask_zero, ptr_type, "result_arr_mask_cast")
-            .map_err(|e| format!("Failed to cast result array mask pointer: {e}"))?;
-        let _ = builder
-            .build_store(mask_ptr, mask_as_ptr)
-            .map_err(|e| format!("Failed to store result array mask pointer: {e}"))?;
-        Ok(array_desc)
-    }
-
-    struct DynamicResultSlotPtrs<'ctx> {
-        state: PointerValue<'ctx>,
-        cached: PointerValue<'ctx>,
-        future: PointerValue<'ctx>,
-    }
-
-    fn get_dynamic_result_slot_ptrs<'ctx>(
-        builder: &inkwell::builder::Builder<'ctx>,
-        slot_type: inkwell::types::StructType<'ctx>,
-        result_ptr: PointerValue<'ctx>,
-    ) -> DynamicResultSlotPtrs<'ctx> {
-        DynamicResultSlotPtrs {
-            state: builder
-                .build_struct_gep(slot_type, result_ptr, 0, "state")
-                .expect("state gep"),
-            cached: builder
-                .build_struct_gep(slot_type, result_ptr, 1, "cached")
-                .expect("cached gep"),
-            future: builder
-                .build_struct_gep(slot_type, result_ptr, 2, "future")
-                .expect("future gep"),
-        }
-    }
-
-    #[allow(
-        clippy::unreachable,
-        reason = "a runtime helper returning no basic value indicates a broken lowering invariant"
-    )]
-    fn build_dynamic_result_pending_return<'ctx>(
-        ctx: &'ctx Context,
-        module: &Module<'ctx>,
-        builder: &inkwell::builder::Builder<'ctx>,
-        future_ptr: PointerValue<'ctx>,
-        cached_ptr: PointerValue<'ctx>,
-        state_ptr: PointerValue<'ctx>,
-    ) {
-        let future = builder
-            .build_load(ctx.i64_type(), future_ptr, "future")
-            .expect("load future");
-        let read_fn = get_or_create_function(
-            module,
-            "___read_future_bool",
-            ctx.bool_type().fn_type(&[ctx.i64_type().into()], false),
-        );
-        let dec_fn = get_or_create_function(
-            module,
-            "___dec_future_refcount",
-            ctx.void_type().fn_type(&[ctx.i64_type().into()], false),
-        );
-        let bool_call = builder
-            .build_call(read_fn, &[future.into()], "bool")
-            .expect("read future");
-        let bool_val = match bool_call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(bv) => bv,
-            inkwell::values::ValueKind::Instruction(_) => unreachable!(),
-        };
-        let _ = builder.build_call(dec_fn, &[future.into()], "");
-        let _ = builder.build_store(cached_ptr, bool_val);
-        let _ = builder.build_store(state_ptr, ctx.i8_type().const_int(2, false));
-        builder
-            .build_return(Some(&bool_val.into_int_value()))
-            .expect("ret pending");
-    }
-
     fn call_basic_value<'ctx>(
         builder: &inkwell::builder::Builder<'ctx>,
         callee: FunctionValue<'ctx>,
@@ -2379,26 +1976,6 @@ mod aux {
             inkwell::values::ValueKind::Basic(bv) => Ok(bv),
             inkwell::values::ValueKind::Instruction(_) => Err(value_error.to_string()),
         }
-    }
-
-    fn clear_dynamic_result_slot<'ctx>(
-        ctx: &'ctx Context,
-        builder: &inkwell::builder::Builder<'ctx>,
-        slot_ptrs: &DynamicResultSlotPtrs<'ctx>,
-    ) {
-        let _ = builder.build_store(slot_ptrs.state, ctx.i8_type().const_zero());
-        let _ = builder.build_store(slot_ptrs.cached, ctx.bool_type().const_zero());
-        let _ = builder.build_store(slot_ptrs.future, ctx.i64_type().const_zero());
-    }
-
-    fn set_dynamic_result_pending<'ctx>(
-        ctx: &'ctx Context,
-        builder: &inkwell::builder::Builder<'ctx>,
-        slot_ptrs: &DynamicResultSlotPtrs<'ctx>,
-        future: inkwell::values::IntValue<'ctx>,
-    ) {
-        let _ = builder.build_store(slot_ptrs.state, ctx.i8_type().const_int(1, false));
-        let _ = builder.build_store(slot_ptrs.future, future);
     }
 
     fn read_result_bool<'ctx>(
@@ -2499,18 +2076,7 @@ mod aux {
         Ok(new_global)
     }
 
-    pub fn get_dynamic_result_slot_type(ctx: &Context) -> inkwell::types::StructType<'_> {
-        ctx.struct_type(
-            &[
-                ctx.i8_type().into(),   // state: 0=false, 1=pending future, 2=cached bool
-                ctx.bool_type().into(), // cached bool
-                ctx.i64_type().into(),  // future handle
-            ],
-            false,
-        )
-    }
-
-    fn build_ptr_is_null<'ctx>(
+    pub fn build_ptr_is_null<'ctx>(
         ctx: &'ctx Context,
         builder: &inkwell::builder::Builder<'ctx>,
         ptr: PointerValue<'ctx>,
@@ -2858,16 +2424,6 @@ mod aux {
         Ok(())
     }
 
-    pub fn initialize_dynamic_result_slot<'ctx>(
-        ctx: &'ctx Context,
-        builder: &inkwell::builder::Builder<'ctx>,
-        slot_ptr: PointerValue<'ctx>,
-    ) {
-        let slot_type = get_dynamic_result_slot_type(ctx);
-        let slot_ptrs = get_dynamic_result_slot_ptrs(builder, slot_type, slot_ptr);
-        clear_dynamic_result_slot(ctx, builder, &slot_ptrs);
-    }
-
     pub fn ensure_out_err_success<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
@@ -2979,301 +2535,6 @@ mod aux {
             &call_args[..2],
             "Failed to lower dynamic qubit array release",
         )
-    }
-
-    fn ensure_dynamic_result_setter<'ctx>(
-        ctx: &'ctx Context,
-        module: &Module<'ctx>,
-    ) -> FunctionValue<'ctx> {
-        if let Some(existing) = module.get_function("qir_qis.result_set_pending") {
-            return existing;
-        }
-        let ptr_type = ctx.ptr_type(AddressSpace::default());
-        let slot_type = get_dynamic_result_slot_type(ctx);
-        let function = module.add_function(
-            "qir_qis.result_set_pending",
-            ctx.void_type()
-                .fn_type(&[ptr_type.into(), ctx.i64_type().into()], false),
-            Some(Linkage::Private),
-        );
-        let builder = ctx.create_builder();
-        let entry = ctx.append_basic_block(function, "entry");
-        builder.position_at_end(entry);
-        let result_ptr = function
-            .get_nth_param(0)
-            .expect("result")
-            .into_pointer_value();
-        let future = function.get_nth_param(1).expect("future").into_int_value();
-        let clear = ensure_result_slot_clear(ctx, module);
-        builder
-            .build_call(clear, &[result_ptr.into()], "")
-            .expect("clear previous measurement");
-        let slot_ptrs = get_dynamic_result_slot_ptrs(&builder, slot_type, result_ptr);
-        set_dynamic_result_pending(ctx, &builder, &slot_ptrs, future);
-        builder.build_return(None).expect("ret");
-        function
-    }
-
-    pub fn ensure_dynamic_result_read<'ctx>(
-        ctx: &'ctx Context,
-        module: &Module<'ctx>,
-    ) -> FunctionValue<'ctx> {
-        if let Some(existing) = module.get_function("qir_qis.result_read") {
-            return existing;
-        }
-        let ptr_type = ctx.ptr_type(AddressSpace::default());
-        let slot_type = get_dynamic_result_slot_type(ctx);
-        let function = module.add_function(
-            "qir_qis.result_read",
-            ctx.bool_type().fn_type(&[ptr_type.into()], false),
-            Some(Linkage::Private),
-        );
-        let builder = ctx.create_builder();
-        let entry = ctx.append_basic_block(function, "entry");
-        let ret_false = ctx.append_basic_block(function, "ret_false");
-        let pending = ctx.append_basic_block(function, "pending");
-        let cached = ctx.append_basic_block(function, "cached");
-        builder.position_at_end(entry);
-        let result_ptr = function
-            .get_first_param()
-            .expect("result")
-            .into_pointer_value();
-        let is_null =
-            build_ptr_is_null(ctx, &builder, result_ptr, "result_int").expect("null check");
-        let read_state = ctx.append_basic_block(function, "read_state");
-        builder
-            .build_conditional_branch(is_null, ret_false, read_state)
-            .expect("branch");
-
-        builder.position_at_end(read_state);
-        let slot_ptrs = get_dynamic_result_slot_ptrs(&builder, slot_type, result_ptr);
-        let state = builder
-            .build_load(ctx.i8_type(), slot_ptrs.state, "state")
-            .expect("load state")
-            .into_int_value();
-        let is_pending = builder
-            .build_int_compare(
-                inkwell::IntPredicate::EQ,
-                state,
-                ctx.i8_type().const_int(1, false),
-                "is_pending",
-            )
-            .expect("cmp");
-        let is_cached = builder
-            .build_int_compare(
-                inkwell::IntPredicate::EQ,
-                state,
-                ctx.i8_type().const_int(2, false),
-                "is_cached",
-            )
-            .expect("cmp");
-        let check_cached = ctx.append_basic_block(function, "check_cached");
-        builder
-            .build_conditional_branch(is_pending, pending, check_cached)
-            .expect("branch");
-
-        builder.position_at_end(check_cached);
-        builder
-            .build_conditional_branch(is_cached, cached, ret_false)
-            .expect("branch");
-
-        builder.position_at_end(pending);
-        build_dynamic_result_pending_return(
-            ctx,
-            module,
-            &builder,
-            slot_ptrs.future,
-            slot_ptrs.cached,
-            slot_ptrs.state,
-        );
-
-        builder.position_at_end(cached);
-        let cached_val = builder
-            .build_load(ctx.bool_type(), slot_ptrs.cached, "cached")
-            .expect("cached load");
-        builder
-            .build_return(Some(&cached_val.into_int_value()))
-            .expect("ret cached");
-
-        builder.position_at_end(ret_false);
-        builder
-            .build_return(Some(&ctx.bool_type().const_zero()))
-            .expect("ret false");
-        function
-    }
-
-    pub fn ensure_result_slot_clear<'ctx>(
-        ctx: &'ctx Context,
-        module: &Module<'ctx>,
-    ) -> FunctionValue<'ctx> {
-        if let Some(existing) = module.get_function("qir_qis.result_clear") {
-            return existing;
-        }
-        let ptr_type = ctx.ptr_type(AddressSpace::default());
-        let slot_type = get_dynamic_result_slot_type(ctx);
-        let function = module.add_function(
-            "qir_qis.result_clear",
-            ctx.void_type().fn_type(&[ptr_type.into()], false),
-            Some(Linkage::Private),
-        );
-        let builder = ctx.create_builder();
-        let entry = ctx.append_basic_block(function, "entry");
-        let ret = ctx.append_basic_block(function, "ret");
-        let body = ctx.append_basic_block(function, "body");
-        builder.position_at_end(entry);
-        let result_ptr = function
-            .get_first_param()
-            .expect("result")
-            .into_pointer_value();
-        let is_null =
-            build_ptr_is_null(ctx, &builder, result_ptr, "result_int").expect("null check");
-        builder
-            .build_conditional_branch(is_null, ret, body)
-            .expect("branch");
-        builder.position_at_end(body);
-        let slot_ptrs = get_dynamic_result_slot_ptrs(&builder, slot_type, result_ptr);
-        let state = builder
-            .build_load(ctx.i8_type(), slot_ptrs.state, "state")
-            .expect("load state")
-            .into_int_value();
-        let is_pending = builder
-            .build_int_compare(
-                inkwell::IntPredicate::EQ,
-                state,
-                ctx.i8_type().const_int(1, false),
-                "is_pending",
-            )
-            .expect("cmp");
-        let dec_block = ctx.append_basic_block(function, "dec_future");
-        let clear_block = ctx.append_basic_block(function, "clear");
-        builder
-            .build_conditional_branch(is_pending, dec_block, clear_block)
-            .expect("branch");
-        builder.position_at_end(dec_block);
-        let future = builder
-            .build_load(ctx.i64_type(), slot_ptrs.future, "future")
-            .expect("load future");
-        let dec_fn = get_or_create_function(
-            module,
-            "___dec_future_refcount",
-            ctx.void_type().fn_type(&[ctx.i64_type().into()], false),
-        );
-        let _ = builder.build_call(dec_fn, &[future.into()], "");
-        builder
-            .build_unconditional_branch(clear_block)
-            .expect("jump");
-        builder.position_at_end(clear_block);
-        clear_dynamic_result_slot(ctx, &builder, &slot_ptrs);
-        builder.build_unconditional_branch(ret).expect("jump");
-        builder.position_at_end(ret);
-        builder.build_return(None).expect("ret");
-        function
-    }
-
-    pub fn ensure_dynamic_result_array_release<'ctx>(
-        ctx: &'ctx Context,
-        module: &Module<'ctx>,
-    ) -> FunctionValue<'ctx> {
-        if let Some(existing) = module.get_function("qir_qis.result_array_release") {
-            return existing;
-        }
-        let ptr_type = ctx.ptr_type(AddressSpace::default());
-        let function = module.add_function(
-            "qir_qis.result_array_release",
-            ctx.void_type()
-                .fn_type(&[ctx.i64_type().into(), ptr_type.into()], false),
-            Some(Linkage::Private),
-        );
-        let builder = ctx.create_builder();
-        let entry = ctx.append_basic_block(function, "entry");
-        builder.position_at_end(entry);
-        let len = function.get_nth_param(0).expect("len").into_int_value();
-        let array_ptr = function
-            .get_nth_param(1)
-            .expect("array")
-            .into_pointer_value();
-        let release_fn = ensure_dynamic_result_release(ctx, module);
-        let ptr_elem_type = ctx.ptr_type(AddressSpace::default());
-        build_pointer_array_release_helper(
-            ctx,
-            &builder,
-            &PointerArrayReleaseHelperArgs {
-                function,
-                len,
-                array_ptr,
-                release_fn,
-                ptr_elem_type,
-                gep_error: "Failed to build result array GEP",
-                load_error: "Failed to load dynamic result pointer",
-                release_error: "Failed to release dynamic result",
-            },
-        )
-        .expect("build dynamic result release loop");
-        builder.build_return(None).expect("ret");
-        function
-    }
-
-    fn ensure_dynamic_result_array_record_output<'ctx>(
-        ctx: &'ctx Context,
-        module: &Module<'ctx>,
-    ) -> Result<FunctionValue<'ctx>, String> {
-        if let Some(existing) = module.get_function("qir_qis.result_array_record_output") {
-            return Ok(existing);
-        }
-        let ptr_type = ctx.ptr_type(AddressSpace::default());
-        let function = module.add_function(
-            "qir_qis.result_array_record_output",
-            ctx.void_type().fn_type(
-                &[
-                    ctx.i64_type().into(),
-                    ptr_type.into(),
-                    ptr_type.into(),
-                    ctx.i64_type().into(),
-                ],
-                false,
-            ),
-            Some(Linkage::Private),
-        );
-        // Keep variable-size output scratch in its own call frame inside loops.
-        function.add_attribute(
-            AttributeLoc::Function,
-            ctx.create_enum_attribute(
-                inkwell::attributes::Attribute::get_named_enum_kind_id("noinline"),
-                0,
-            ),
-        );
-        let builder = ctx.create_builder();
-        let entry = ctx.append_basic_block(function, "entry");
-        builder.position_at_end(entry);
-        let len = function.get_nth_param(0).expect("len").into_int_value();
-        let array_ptr = function
-            .get_nth_param(1)
-            .expect("array")
-            .into_pointer_value();
-        let tag_ptr = function.get_nth_param(2).expect("tag").into_pointer_value();
-        let tag_len = function.get_nth_param(3).expect("tag_len").into_int_value();
-        let print_bool_arr = get_or_create_function(
-            module,
-            "print_bool_arr",
-            ctx.void_type().fn_type(
-                &[ptr_type.into(), ctx.i64_type().into(), ptr_type.into()],
-                false,
-            ),
-        );
-        let read_fn =
-            result_read_function(ctx, module, true).ok_or("Missing result array reader")?;
-        let bool_arr =
-            build_dynamic_result_array_values(ctx, function, &builder, len, array_ptr, read_fn)?;
-        let array_desc = build_dynamic_result_array_descriptor(ctx, &builder, len, bool_arr)?;
-        let _ = builder
-            .build_call(
-                print_bool_arr,
-                &[tag_ptr.into(), tag_len.into(), array_desc.into()],
-                "",
-            )
-            .map_err(|e| format!("Failed to print result array: {e}"))?;
-        builder.build_return(None).expect("ret");
-        Ok(function)
     }
 
     fn lower_dynamic_result_allocate(args: &ProcessCallArgs<'_>) -> Result<(), String> {
@@ -4183,11 +3444,10 @@ pub fn qir_to_qis_with_passthrough_calls(
     passthrough_calls: &[&str],
 ) -> Result<Vec<u8>, String> {
     use crate::{
-        aux::{get_capability_flags, process_entry_function, validate_static_qubit_helper_usage},
+        aux::{get_capability_flags, process_original_calls, validate_static_qubit_helper_usage},
         convert::{
             add_qmain_wrapper, create_qubit_array, find_entry_function, free_all_qubits,
-            get_string_attrs, process_ir_defined_q_fns_with_generated_calls,
-            prune_unused_ir_qis_helpers, validate_declared_resource_limits,
+            get_string_attrs, prune_unused_ir_qis_helpers, validate_declared_resource_limits,
         },
         decompose::add_decompositions,
         opt::optimize,
@@ -4238,6 +3498,9 @@ pub fn qir_to_qis_with_passthrough_calls(
         return Err(validation_errors.join("; "));
     }
 
+    let original_calls = crate::result_runtime::snapshot_calls(&module);
+    crate::result_runtime::clear_result_effect_attributes(&ctx, &module, &original_calls);
+
     log::trace!("Entry function: {entry_fn_name}");
     let new_name = format!("___user_qir_{entry_fn_name}");
     entry_fn.as_global_value().set_name(&new_name);
@@ -4255,24 +3518,14 @@ pub fn qir_to_qis_with_passthrough_calls(
         capability_flags.dynamic_result_management,
     )?;
     let wasm_fns = get_wasm_functions(wasm_bytes)?;
-    let generated_calls = process_entry_function(
+    process_original_calls(
         &ctx,
         &module,
         entry_fn,
         &wasm_fns,
         &passthrough_calls,
         qubit_array,
-        capability_flags,
-    )?;
-
-    // Handle IR defined functions that take qubits
-    process_ir_defined_q_fns_with_generated_calls(
-        &ctx,
-        &module,
-        entry_fn,
-        capability_flags.dynamic_qubit_management,
-        &passthrough_calls,
-        &generated_calls,
+        &original_calls,
     )?;
 
     if let Some(qubit_array) = qubit_array {
@@ -4420,8 +3673,14 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
     if let Err(error) = crate::result_runtime::validate_input_symbols(&ctx, &module) {
         errors.push(error);
     }
-    let capability_errors =
-        validate_qir_call_sites(&module, entry_fn, &wasm_fns, capability_flags, &mut errors);
+    let capability_errors = validate_qir_call_sites(
+        &ctx,
+        &module,
+        entry_fn,
+        &wasm_fns,
+        capability_flags,
+        &mut errors,
+    );
 
     validate_module_flags(&module, &mut errors);
     errors.extend(capability_errors);
@@ -4541,13 +3800,13 @@ mod exceptions {
         qir_qis,
         ValidationError,
         PyException,
-        "QIR ValidationError.\n\nRaised when the QIR is invalid."
+        "QIR `ValidationError`.\n\nRaised when the QIR is invalid."
     );
     create_exception!(
         qir_qis,
         CompilerError,
         PyException,
-        "QIR CompilerError.\n\nRaised when QIR to QIS compilation fails."
+        "QIR `CompilerError`.\n\nRaised when QIR to QIS compilation fails."
     );
 }
 

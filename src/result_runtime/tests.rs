@@ -14,6 +14,7 @@
 use crate::{qir_ll_to_bc, qir_to_qis, validate_qir};
 use inkwell::{
     OptimizationLevel,
+    attributes::{Attribute, AttributeLoc},
     context::Context,
     memory_buffer::MemoryBuffer,
     module::Module,
@@ -181,7 +182,312 @@ attributes #1 = {{ "irreversible" }}
     )
 }
 
+fn assert_rejected(ll: &str, expected: &str) {
+    let bc = qir_ll_to_bc(ll).expect("LLVM-valid rejection fixture");
+    for result in [
+        validate_qir(&bc, None),
+        qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+    ] {
+        let error = result.expect_err("both public APIs must reject the input");
+        assert!(
+            error.contains(expected),
+            "expected {expected:?}, got {error}"
+        );
+    }
+}
+
+#[test]
+fn result_calls_must_match_their_correct_declarations() {
+    // Independent of ResultOp: changing the production catalog must not change
+    // the expected QIR signatures in this contract test.
+    for (name, result, arguments) in [
+        ("result_allocate", "ptr", "ptr null"),
+        ("result_release", "void", "ptr null"),
+        ("result_array_allocate", "void", "i64 0, ptr null, ptr null"),
+        ("result_array_release", "void", "i64 0, ptr null"),
+        (
+            "result_array_record_output",
+            "void",
+            "i64 0, ptr null, ptr null",
+        ),
+        ("read_result", "i1", "ptr null"),
+        ("result_record_output", "void", "ptr null, ptr null"),
+        ("mz__body", "void", "ptr null, ptr null"),
+        ("m__body", "void", "ptr null, ptr null"),
+        ("mresetz__body", "void", "ptr null, ptr null"),
+    ] {
+        let namespace = if name.ends_with("__body") {
+            "qis"
+        } else {
+            "rt"
+        };
+        let name = format!("__quantum__{namespace}__{name}");
+        let wrong_result = if result == "void" { "i64" } else { "void" };
+        let kinds = arguments.replace(" null", "").replace(" 0", "");
+        let wrong_kind = if arguments.starts_with("ptr") {
+            arguments.replacen("ptr null", "i64 0", 1)
+        } else {
+            arguments.replacen("i64 0", "ptr null", 1)
+        };
+        let wrong_width = arguments
+            .replacen("i64 0", "i32 0", 1)
+            .replacen("ptr null", "i32 0", 1);
+        for call in [
+            format!("call {wrong_result} @{name}({arguments})"),
+            format!("call {result} @{name}()"),
+            format!("call {result} @{name}({arguments}, ptr null)"),
+            format!("call {result} @{name}({wrong_kind})"),
+            format!("call {result} @{name}({wrong_width})"),
+            format!("call {result} ({kinds}, ...) @{name}({arguments})"),
+        ] {
+            let extra = if name.contains("__m__") || name.contains("__mresetz__") {
+                format!("declare {result} @{name}({kinds})")
+            } else {
+                String::new()
+            };
+            let ll = qir(&format!("entry:\n {call}\n ret i64 0"), &extra, true, true);
+            assert_rejected(&ll, "Malformed QIR result call");
+        }
+    }
+}
+
+#[test]
+fn backing_pointer_walks_handle_cycles_and_long_valid_chains() {
+    for call in [
+        "call void @__quantum__rt__result_array_allocate(i64 0, ptr %p, ptr null)",
+        "call void @__quantum__rt__result_array_release(i64 0, ptr %p)",
+        "call void @__quantum__rt__result_array_record_output(i64 0, ptr %p, ptr @tag)",
+    ] {
+        for views in [
+            "%p = getelementptr i8, ptr %p, i64 0",
+            "%p = getelementptr i8, ptr %q, i64 0\n %q = getelementptr i8, ptr %p, i64 0",
+            "%p = bitcast ptr %q to ptr\n %q = getelementptr i8, ptr %p, i64 0",
+            "%p = addrspacecast ptr addrspace(1) %q to ptr\n %q = addrspacecast ptr %p to ptr addrspace(1)",
+        ] {
+            let ll = qir(
+                "entry:\n ret i64 0",
+                &format!(
+                    "define void @helper() {{\n ret void\ndead:\n {views}\n {call}\n unreachable\n}}"
+                ),
+                true,
+                true,
+            );
+            assert_rejected(&ll, "requires a fixed-size backing array");
+        }
+        let mut body = String::from("entry:\n %v0 = alloca [0 x ptr]\n");
+        for index in 1..=2048 {
+            writeln!(
+                body,
+                " %v{index} = getelementptr i8, ptr %v{}, i64 0",
+                index - 1
+            )
+            .unwrap();
+        }
+        write!(body, " %p = bitcast ptr %v2048 to ptr\n {call}\n ret i64 0").unwrap();
+        let bc = qir_ll_to_bc(&qir(&body, "", true, true)).unwrap();
+        validate_qir(&bc, None).unwrap();
+        qir_to_qis(&bc, 0, "native", None).unwrap();
+    }
+}
+
+#[test]
+fn static_constant_bounds_are_checked_even_with_table_storage() {
+    for operation in [
+        "call void @__quantum__qis__mz__body(ptr null, ptr inttoptr (i64 2 to ptr))",
+        "%v = call i1 @__quantum__rt__read_result(ptr inttoptr (i64 2 to ptr))",
+        "call void @__quantum__rt__result_record_output(ptr inttoptr (i64 2 to ptr), ptr @tag)",
+    ] {
+        for helper in [false, true] {
+            let setup = "%a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr @tag)";
+            let (body, helpers) = if helper {
+                (
+                    format!("entry:\n {setup}\n call void @helper()\n ret i64 0"),
+                    format!("define void @helper() {{\n {operation}\n ret void\n}}"),
+                )
+            } else {
+                (
+                    format!("entry:\n {setup}\n {operation}\n ret i64 0"),
+                    String::new(),
+                )
+            };
+            assert_rejected(
+                &qir(&body, &helpers, false, true),
+                "Result index 2 exceeds required_num_results (2)",
+            );
+        }
+    }
+}
+
+#[test]
+fn annotated_helpers_and_transitive_callers_preserve_slot_effects() {
+    let helpers = r"
+define void @measure(ptr writeonly %r) memory(argmem: write) nofree nosync willreturn {
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr %r)
+  ret void
+}
+define i1 @read(ptr noundef readonly %r) noinline nounwind memory(argmem: read) nofree nosync willreturn {
+  %v = call i1 @__quantum__rt__read_result(ptr %r)
+  ret i1 %v
+}
+define i1 @outer(ptr readonly %r) memory(argmem: read) nofree nosync willreturn {
+  %v = call i1 @read(ptr readonly %r) memory(argmem: read) nofree nosync willreturn
+  ret i1 %v
+}
+";
+    for dynamic in [false, true] {
+        let (allocate, result, release) = if dynamic {
+            (
+                "%r = call ptr @__quantum__rt__result_allocate(ptr null)",
+                "%r",
+                "call void @__quantum__rt__result_release(ptr %r)",
+            )
+        } else {
+            ("", "null", "")
+        };
+        let body = format!(
+            r"entry:
+  {allocate}
+  call void @measure(ptr writeonly {result}) memory(argmem: write) nofree nosync willreturn
+  %a = call i1 @outer(ptr readonly {result}) memory(argmem: read) nofree nosync willreturn
+  %b = call i1 @outer(ptr readonly {result}) memory(argmem: read) nofree nosync willreturn
+  call void @measure(ptr writeonly {result}) memory(argmem: write) nofree nosync willreturn
+  call void @measure(ptr writeonly {result}) memory(argmem: write) nofree nosync willreturn
+  %c = call i1 @outer(ptr readonly {result}) memory(argmem: read) nofree nosync willreturn
+  {release}
+  %ab = and i1 %a, %b
+  %abc = and i1 %ab, %c
+  %answer = zext i1 %abc to i64
+  ret i64 %answer"
+        );
+        let ll = qir(&body, helpers, dynamic, false);
+        let output = qir_to_qis(&qir_ll_to_bc(&ll).unwrap(), 0, "native", None).unwrap();
+        let ctx = Context::create();
+        let module = Module::parse_bitcode_from_buffer(
+            &MemoryBuffer::create_from_memory_range_copy(&output, "qis"),
+            &ctx,
+        )
+        .unwrap();
+        for name in ["read", "outer", "measure"] {
+            let function = module.get_function(name).unwrap();
+            for effect in ["memory", "nofree", "nosync", "willreturn"] {
+                assert!(
+                    function
+                        .get_enum_attribute(
+                            AttributeLoc::Function,
+                            Attribute::get_named_enum_kind_id(effect)
+                        )
+                        .is_none()
+                );
+            }
+            for effect in ["readonly", "writeonly"] {
+                assert!(
+                    function
+                        .get_enum_attribute(
+                            AttributeLoc::Param(0),
+                            Attribute::get_named_enum_kind_id(effect)
+                        )
+                        .is_none()
+                );
+            }
+        }
+        let reader = module.get_function("read").unwrap();
+        for preserved in ["noinline", "nounwind"] {
+            assert!(
+                reader
+                    .get_enum_attribute(
+                        AttributeLoc::Function,
+                        Attribute::get_named_enum_kind_id(preserved)
+                    )
+                    .is_some()
+            );
+        }
+        assert!(
+            reader
+                .get_enum_attribute(
+                    AttributeLoc::Param(0),
+                    Attribute::get_named_enum_kind_id("noundef")
+                )
+                .is_some()
+        );
+        for level in 0..=3 {
+            let rt = execute(&ll, level, None, 1);
+            assert_eq!((rt.reads, rt.decrements), (2, 3));
+            assert_eq!(
+                (rt.allocated, rt.freed),
+                if dynamic { (1, 1) } else { (0, 0) }
+            );
+        }
+    }
+}
+
+#[test]
+fn reused_runtime_declarations_do_not_constrain_generated_calls() {
+    let ll = qir(
+        r"entry:
+  %r = call ptr @__quantum__rt__result_allocate(ptr null)
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr %r)
+  %a = call i1 @__quantum__rt__read_result(ptr %r)
+  %b = call i1 @__quantum__rt__read_result(ptr %r)
+  call void @__quantum__rt__result_release(ptr %r)
+  %both = and i1 %a, %b
+  %answer = zext i1 %both to i64
+  ret i64 %answer",
+        r"declare i1 @___read_future_bool(i64) memory(none) nofree nosync speculatable willreturn
+declare void @___dec_future_refcount(i64) memory(none) nofree nosync willreturn",
+        true,
+        false,
+    );
+    // Direct translation accepts these existing runtime declarations; public QIR
+    // validation intentionally keeps its narrower external-function policy.
+    for level in 0..=3 {
+        let rt = execute_inner(&ll, level, None, 1, false);
+        assert_eq!(
+            (rt.reads, rt.decrements, rt.allocated, rt.freed),
+            (1, 1, 1, 1)
+        );
+    }
+}
+
+#[test]
+fn fixture_lowering_has_expected_storage_without_snapshotting_entire_modules() {
+    for (ll, dynamic) in [
+        (
+            include_str!("../../tests/data/static_result_array.ll"),
+            false,
+        ),
+        (
+            include_str!("../../tests/data/dynamic_result_lifetimes.ll"),
+            true,
+        ),
+    ] {
+        let bc = qir_ll_to_bc(ll).unwrap();
+        validate_qir(&bc, None).unwrap();
+        let output = qir_to_qis(&bc, 0, "native", None).unwrap();
+        let ctx = Context::create();
+        let module = Module::parse_bitcode_from_buffer(
+            &MemoryBuffer::create_from_memory_range_copy(&output, "qis"),
+            &ctx,
+        )
+        .unwrap();
+        module.verify().unwrap();
+        assert_eq!(module.get_function("heap_alloc").is_some(), dynamic);
+        assert_eq!(module.get_function("heap_free").is_some(), dynamic);
+        assert_eq!(module.get_global(super::STATIC_RESULTS).is_some(), !dynamic);
+        assert!(module.get_function("qir_qis.result_read").is_some());
+    }
+}
+
 fn execute(ll: &str, optimization: u32, fail_after: Option<usize>, expected_exit: u64) -> Runtime {
+    execute_inner(ll, optimization, fail_after, expected_exit, true)
+}
+
+fn execute_inner(
+    ll: &str,
+    optimization: u32,
+    fail_after: Option<usize>,
+    expected_exit: u64,
+    validate: bool,
+) -> Runtime {
     let _guard = JIT_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -192,7 +498,9 @@ fn execute(ll: &str, optimization: u32, fail_after: Option<usize>, expected_exit
         }
     });
     let bc = qir_ll_to_bc(ll).expect("parse QIR");
-    validate_qir(&bc, None).expect("spec-valid QIR");
+    if validate {
+        validate_qir(&bc, None).expect("spec-valid QIR");
+    }
     let target = if cfg!(windows) && optimization > 0 {
         "x86-64"
     } else {
@@ -1130,6 +1438,7 @@ fn reserved_aliases_cannot_hide_result_storage_or_runtime_symbols() {
         "___read_future_bool",
         "___dec_future_refcount",
         "___lazy_measure",
+        "___reset",
         "print_bool",
         "print_bool_arr",
     ] {
@@ -1140,32 +1449,17 @@ fn reserved_aliases_cannot_hide_result_storage_or_runtime_symbols() {
             false,
             true,
         );
-        let bc = qir_ll_to_bc(&ll).unwrap();
-        for error in [
-            validate_qir(&bc, None),
-            qir_to_qis(&bc, 0, "native", None).map(|_| ()),
-        ] {
-            assert!(
-                error
-                    .expect_err("aliases must not bypass reserved symbols")
-                    .contains("reserved symbol")
-            );
-        }
+        assert_rejected(&ll, "reserved symbol");
+        let indirect = qir(
+            "entry:\n ret i64 0",
+            &format!(
+                "@{symbol} = ifunc i1 (ptr), ptr @resolver\ndefine ptr @resolver() {{ ret ptr @actual }}\ndefine i1 @actual(ptr %r) {{ ret i1 false }}"
+            ),
+            true,
+            false,
+        );
+        assert_rejected(&indirect, "reserved symbol");
     }
-    let ll = qir(
-        "entry:\n ret i64 0",
-        r"@qir_qis.result_read = ifunc i1 (ptr), ptr @resolver
-define ptr @resolver() { ret ptr @actual }
-define i1 @actual(ptr %r) { ret i1 false }",
-        true,
-        false,
-    );
-    let bc = qir_ll_to_bc(&ll).unwrap();
-    assert!(
-        qir_to_qis(&bc, 0, "native", None)
-            .expect_err("indirect functions also reserve names")
-            .contains("reserved symbol")
-    );
 }
 
 #[test]
@@ -1378,6 +1672,8 @@ fn downstream_result_runtime_signatures_are_checked_before_lowering() {
         ("___read_future_bool", "i1", "i64", "ret i1 false"),
         ("___dec_future_refcount", "void", "i64", "ret void"),
         ("___lazy_measure", "i64", "i64", "ret i64 0"),
+        ("___reset", "void", "i64", "ret void"),
+        ("panic", "void", "i32, ptr", "ret void"),
         ("print_bool", "void", "ptr, i64, i1", "ret void"),
         ("print_bool_arr", "void", "ptr, i64, ptr", "ret void"),
     ] {
@@ -1390,7 +1686,10 @@ fn downstream_result_runtime_signatures_are_checked_before_lowering() {
         let mut declarations = vec![
             format!("declare {wrong_result} @{name}({params})"),
             format!("declare {result} @{name}()"),
-            format!("declare {result} @{name}({})", params.replace("i64", "i32")),
+            format!(
+                "declare {result} @{name}({})",
+                params.replace("i64", "i32").replace("i32", "i16")
+            ),
             format!("declare {result} @{name}({wrong_kind})"),
             format!("declare {result} @{name}({params}, ...)"),
             format!("define {result} @{name}({params}) {{ {returned} }}"),
@@ -1406,17 +1705,10 @@ fn downstream_result_runtime_signatures_are_checked_before_lowering() {
             ));
         }
         for declaration in declarations {
-            let bc = qir_ll_to_bc(&qir("entry:\n ret i64 0", &declaration, true, true)).unwrap();
-            for error in [
-                validate_qir(&bc, None),
-                qir_to_qis(&bc, 0, "native", None).map(|_| ()),
-            ] {
-                let error = error.unwrap_err();
-                assert!(
-                    error.contains(&format!("Invalid downstream runtime declaration: {name}")),
-                    "{error}"
-                );
-            }
+            assert_rejected(
+                &qir("entry:\n ret i64 0", &declaration, true, true),
+                &format!("Invalid downstream runtime declaration: {name}"),
+            );
         }
         let valid = format!("declare {result} @{name}({params})");
         let bc = qir_ll_to_bc(&qir("entry:\n ret i64 0", &valid, true, true)).unwrap();

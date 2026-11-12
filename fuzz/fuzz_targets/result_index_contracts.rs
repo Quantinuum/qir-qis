@@ -30,6 +30,11 @@ fn build_result_index_fixture(data: &[u8]) -> String {
             "measure_record",
             "measure_read_record",
             "cyclic_record",
+            "cyclic_backing_allocate",
+            "cyclic_backing_release",
+            "cyclic_backing_output",
+            "mismatched_read",
+            "mismatched_allocate",
         ],
     );
 
@@ -53,6 +58,26 @@ fn build_result_index_fixture(data: &[u8]) -> String {
         );
     }
 
+    if mode == "mismatched_read" {
+        let argument = pick(
+            data,
+            &mut cursor,
+            &["i64 0", "i32 0", "ptr null, ptr null", ""],
+        );
+        body.push(format!("  call i1 @__quantum__rt__read_result({argument})"));
+    }
+    if mode == "mismatched_allocate" {
+        declarations.push("declare ptr @__quantum__rt__result_allocate(ptr)");
+        let argument = pick(
+            data,
+            &mut cursor,
+            &["i64 0", "i32 0", "ptr null, ptr null", ""],
+        );
+        body.push(format!(
+            "  call ptr @__quantum__rt__result_allocate({argument})"
+        ));
+    }
+
     let result_label = if mode.contains("record") {
         "@result_label = private constant [2 x i8] c\"r\\00\"\n\n"
     } else {
@@ -73,6 +98,34 @@ fn build_result_index_fixture(data: &[u8]) -> String {
         dead.push_str("  call void @__quantum__rt__result_record_output(%Result* null, ptr %tag0)\n  unreachable\n");
     }
 
+    let dynamic = mode.starts_with("cyclic_backing");
+    if dynamic {
+        let count = pick_u8_inclusive(data, &mut cursor, 1, 8);
+        dead.push_str("dead:\n");
+        for index in 0..count {
+            let next = (index + 1) % count;
+            dead.push_str(&format!(
+                "  %buffer{index} = getelementptr i8, ptr %buffer{next}, i64 0\n"
+            ));
+        }
+        let (declaration, call) = match mode {
+            "cyclic_backing_allocate" => (
+                "declare void @__quantum__rt__result_array_allocate(i64, ptr, ptr)",
+                "call void @__quantum__rt__result_array_allocate(i64 0, ptr %buffer0, ptr null)",
+            ),
+            "cyclic_backing_release" => (
+                "declare void @__quantum__rt__result_array_release(i64, ptr)",
+                "call void @__quantum__rt__result_array_release(i64 0, ptr %buffer0)",
+            ),
+            _ => (
+                "declare void @__quantum__rt__result_array_record_output(i64, ptr, ptr)",
+                "call void @__quantum__rt__result_array_record_output(i64 0, ptr %buffer0, ptr null)",
+            ),
+        };
+        declarations.push(declaration);
+        dead.push_str(&format!("  {call}\n  unreachable\n"));
+    }
+
     format!(
         r#"%Qubit = type opaque
 %Result = type opaque
@@ -88,11 +141,12 @@ entry:
 
 attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="{required_num_qubits}" "required_num_results"="{required_num_results}" }}
 
-!llvm.module.flags = !{{!0, !1, !2, !3}}
+!llvm.module.flags = !{{!0, !1, !2, !3, !4}}
 !0 = !{{i32 1, !"qir_major_version", i32 {qir_major}}}
 !1 = !{{i32 7, !"qir_minor_version", i32 0}}
 !2 = !{{i32 1, !"dynamic_qubit_management", i1 false}}
-!3 = !{{i32 1, !"dynamic_result_management", i1 false}}
+!3 = !{{i32 1, !"dynamic_result_management", i1 {dynamic}}}
+!4 = !{{i32 1, !"arrays", i1 true}}
 "#,
         declarations.join("\n"),
         body.join("\n")

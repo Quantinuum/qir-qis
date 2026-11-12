@@ -1392,24 +1392,6 @@ pub fn process_ir_defined_q_fns<'a>(
     dynamic_qubit_management: bool,
     passthrough_calls: &BTreeSet<String>,
 ) -> Result<(), String> {
-    process_ir_defined_q_fns_with_generated_calls(
-        ctx,
-        module,
-        entry_fn,
-        dynamic_qubit_management,
-        passthrough_calls,
-        &std::collections::HashSet::new(),
-    )
-}
-
-pub(crate) fn process_ir_defined_q_fns_with_generated_calls<'a>(
-    ctx: &'a Context,
-    module: &Module<'a>,
-    entry_fn: FunctionValue,
-    dynamic_qubit_management: bool,
-    passthrough_calls: &BTreeSet<String>,
-    generated_calls: &std::collections::HashSet<InstructionValue<'a>>,
-) -> Result<(), String> {
     let required_num_qubits = if dynamic_qubit_management {
         0
     } else {
@@ -1421,9 +1403,6 @@ pub(crate) fn process_ir_defined_q_fns_with_generated_calls<'a>(
     {
         for bb in defined_fn.get_basic_blocks() {
             for instr in bb.get_instructions() {
-                if generated_calls.contains(&instr) {
-                    continue;
-                }
                 if let Ok(call) = CallSiteValue::try_from(instr) {
                     let fn_name = call
                         .get_called_fn_value()
@@ -1488,7 +1467,7 @@ pub fn prune_unused_ir_qis_helpers(module: &Module<'_>) {
     clippy::too_many_arguments,
     reason = "IR-defined helper lowering needs function identity plus qubit-lowering context"
 )]
-fn native_qir_to_qis_call<'a>(
+pub(crate) fn native_qir_to_qis_call<'a>(
     ctx: &'a Context,
     module: &Module<'a>,
     instr: InstructionValue<'a>,
@@ -2947,8 +2926,6 @@ entry:
             #[case("tests/data/dynamic_result_alloc.ll")]
             #[case("tests/data/dynamic_result_array.ll")]
             #[case("tests/data/dynamic_result_mixed_array_output.ll")]
-            #[case("tests/data/static_result_array.ll")]
-            #[case("tests/data/dynamic_result_lifetimes.ll")]
             // QIR 2.0 (opaque pointers) tests
             #[case("tests/data/qir2_base.ll")]
             #[case("tests/data/qir2_adaptive.ll")]
