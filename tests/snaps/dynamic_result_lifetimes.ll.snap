@@ -1,0 +1,332 @@
+---
+source: src/convert.rs
+expression: qis_text.to_string()
+---
+; ModuleID = 'qis_module'
+source_filename = "qir"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
+target triple = "aarch64-unknown-linux-gnu"
+
+@qis_qs = private unnamed_addr global [2 x i64] zeroinitializer
+@e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
+@e_load_qubit_oob = private constant [38 x i8] c"%EXIT:INT:Invalid static qubit handle."
+@qir_qis.result_allocation_error = private constant [52 x i8] c"3EXIT:INT:No memory available for result allocation."
+@res_life.1 = private constant [23 x i8] c"\16USER:RESULT_ARRAY:life"
+@gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
+@gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
+
+define void @allocate_and_measure(ptr writeonly captures(none) %out, ptr %q) local_unnamed_addr {
+entry:
+  %slot.i = tail call ptr @heap_alloc(i64 16)
+  %failed.i = icmp eq ptr %slot.i, null
+  br i1 %failed.i, label %failure.i, label %qir_qis.result_allocate.exit
+
+failure.i:                                        ; preds = %entry
+  tail call void @panic(i32 1001, ptr nonnull @qir_qis.result_allocation_error)
+  unreachable
+
+qir_qis.result_allocate.exit:                     ; preds = %entry
+  %cached.i = getelementptr inbounds nuw i8, ptr %slot.i, i64 1
+  %future.i = getelementptr inbounds nuw i8, ptr %slot.i, i64 8
+  store i8 0, ptr %slot.i, align 1
+  store i1 false, ptr %cached.i, align 1
+  store i64 0, ptr %future.i, align 4
+  %valid_static_qubit_index.i = icmp ult ptr %q, inttoptr (i64 2 to ptr)
+  br i1 %valid_static_qubit_index.i, label %body.i.i, label %load_qubit_invalid.i
+
+load_qubit_invalid.i:                             ; preds = %qir_qis.result_allocate.exit
+  tail call void @panic(i32 1001, ptr nonnull @e_load_qubit_oob)
+  unreachable
+
+body.i.i:                                         ; preds = %qir_qis.result_allocate.exit
+  %idx.i = ptrtoint ptr %q to i64
+  %qbit_ptr.i = getelementptr [2 x i64], ptr @qis_qs, i64 0, i64 %idx.i
+  %qbit.i = load i64, ptr %qbit_ptr.i, align 8
+  %meas = tail call i64 @___lazy_measure(i64 %qbit.i)
+  %state1.i.i = load i8, ptr %slot.i, align 1
+  %is_pending.i.i = icmp eq i8 %state1.i.i, 1
+  br i1 %is_pending.i.i, label %dec_future.i.i, label %qir_qis.result_set_pending.exit
+
+dec_future.i.i:                                   ; preds = %body.i.i
+  %future2.i.i = load i64, ptr %future.i, align 4
+  tail call void @___dec_future_refcount(i64 %future2.i.i)
+  br label %qir_qis.result_set_pending.exit
+
+qir_qis.result_set_pending.exit:                  ; preds = %dec_future.i.i, %body.i.i
+  store i1 false, ptr %cached.i, align 1
+  store i8 1, ptr %slot.i, align 1
+  store i64 %meas, ptr %future.i, align 4
+  store ptr %slot.i, ptr %out, align 8
+  ret void
+}
+
+define noundef i64 @___user_qir_Entry_Point_Name() local_unnamed_addr {
+entry:
+  %qalloc.i = tail call i64 @___qalloc()
+  %is_fail.i = icmp eq i64 %qalloc.i, -1
+  br i1 %is_fail.i, label %qalloc_fail.i, label %qir_qis.init_qubit.exit
+
+qalloc_fail.i:                                    ; preds = %entry
+  tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
+  unreachable
+
+qir_qis.init_qubit.exit:                          ; preds = %entry
+  tail call void @___reset(i64 %qalloc.i)
+  store i64 %qalloc.i, ptr @qis_qs, align 8
+  %qalloc.i2 = tail call i64 @___qalloc()
+  %is_fail.i3 = icmp eq i64 %qalloc.i2, -1
+  br i1 %is_fail.i3, label %qalloc_fail.i4, label %qir_qis.init_qubit.exit5
+
+qalloc_fail.i4:                                   ; preds = %qir_qis.init_qubit.exit
+  tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
+  unreachable
+
+qir_qis.init_qubit.exit5:                         ; preds = %qir_qis.init_qubit.exit
+  tail call void @___reset(i64 %qalloc.i2)
+  store i64 %qalloc.i2, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %results = alloca [2 x ptr], align 8
+  %second = getelementptr inbounds nuw i8, ptr %results, i64 8
+  %qbit.i.i = load i64, ptr @qis_qs, align 8
+  tail call void @___rxy(i64 %qbit.i.i, double 0x400921FB54442D18, double 0.000000e+00)
+  br label %loop
+
+loop:                                             ; preds = %qir_qis.result_array_release.exit, %qir_qis.init_qubit.exit5
+  %i = phi i64 [ 0, %qir_qis.init_qubit.exit5 ], [ %next, %qir_qis.result_array_release.exit ]
+  %slot.i.i = tail call ptr @heap_alloc(i64 16)
+  %failed.i.i = icmp eq ptr %slot.i.i, null
+  br i1 %failed.i.i, label %failure.i.i, label %qir_qis.result_allocate.exit.i
+
+failure.i.i:                                      ; preds = %loop
+  tail call void @panic(i32 1001, ptr nonnull @qir_qis.result_allocation_error)
+  unreachable
+
+qir_qis.result_allocate.exit.i:                   ; preds = %loop
+  %cached.i.i = getelementptr inbounds nuw i8, ptr %slot.i.i, i64 1
+  %future.i.i = getelementptr inbounds nuw i8, ptr %slot.i.i, i64 8
+  store i8 0, ptr %slot.i.i, align 1
+  store i1 false, ptr %cached.i.i, align 1
+  store i64 0, ptr %future.i.i, align 4
+  %qbit.i.i6 = load i64, ptr @qis_qs, align 8
+  %meas.i = tail call i64 @___lazy_measure(i64 %qbit.i.i6)
+  %state1.i.i.i = load i8, ptr %slot.i.i, align 1
+  %is_pending.i.i.i = icmp eq i8 %state1.i.i.i, 1
+  br i1 %is_pending.i.i.i, label %dec_future.i.i.i, label %allocate_and_measure.exit
+
+dec_future.i.i.i:                                 ; preds = %qir_qis.result_allocate.exit.i
+  %future2.i.i.i = load i64, ptr %future.i.i, align 4
+  tail call void @___dec_future_refcount(i64 %future2.i.i.i)
+  br label %allocate_and_measure.exit
+
+allocate_and_measure.exit:                        ; preds = %dec_future.i.i.i, %qir_qis.result_allocate.exit.i
+  store i1 false, ptr %cached.i.i, align 1
+  store i8 1, ptr %slot.i.i, align 1
+  store i64 %meas.i, ptr %future.i.i, align 4
+  store ptr %slot.i.i, ptr %results, align 8
+  %slot.i.i7 = tail call ptr @heap_alloc(i64 16)
+  %failed.i.i8 = icmp eq ptr %slot.i.i7, null
+  br i1 %failed.i.i8, label %failure.i.i18, label %qir_qis.result_allocate.exit.i9
+
+failure.i.i18:                                    ; preds = %allocate_and_measure.exit
+  tail call void @panic(i32 1001, ptr nonnull @qir_qis.result_allocation_error)
+  unreachable
+
+qir_qis.result_allocate.exit.i9:                  ; preds = %allocate_and_measure.exit
+  %cached.i.i10 = getelementptr inbounds nuw i8, ptr %slot.i.i7, i64 1
+  %future.i.i11 = getelementptr inbounds nuw i8, ptr %slot.i.i7, i64 8
+  store i8 0, ptr %slot.i.i7, align 1
+  store i1 false, ptr %cached.i.i10, align 1
+  store i64 0, ptr %future.i.i11, align 4
+  %qbit.i.i12 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %meas.i13 = tail call i64 @___lazy_measure(i64 %qbit.i.i12)
+  %state1.i.i.i14 = load i8, ptr %slot.i.i7, align 1
+  %is_pending.i.i.i15 = icmp eq i8 %state1.i.i.i14, 1
+  br i1 %is_pending.i.i.i15, label %dec_future.i.i.i16, label %body.i.i.i
+
+dec_future.i.i.i16:                               ; preds = %qir_qis.result_allocate.exit.i9
+  %future2.i.i.i17 = load i64, ptr %future.i.i11, align 4
+  tail call void @___dec_future_refcount(i64 %future2.i.i.i17)
+  br label %body.i.i.i
+
+body.i.i.i:                                       ; preds = %dec_future.i.i.i16, %qir_qis.result_allocate.exit.i9
+  store i1 false, ptr %cached.i.i10, align 1
+  store i8 1, ptr %slot.i.i7, align 1
+  store i64 %meas.i13, ptr %future.i.i11, align 4
+  store ptr %slot.i.i7, ptr %second, align 8
+  call fastcc void @qir_qis.result_array_record_output(ptr %results)
+  %state1.i.i.i20 = load i8, ptr %slot.i.i, align 1
+  %is_pending.i.i.i21 = icmp eq i8 %state1.i.i.i20, 1
+  br i1 %is_pending.i.i.i21, label %dec_future.i.i.i22, label %body.i.i.1.i
+
+dec_future.i.i.i22:                               ; preds = %body.i.i.i
+  %future2.i.i.i23 = load i64, ptr %future.i.i, align 4
+  tail call void @___dec_future_refcount(i64 %future2.i.i.i23)
+  br label %body.i.i.1.i
+
+body.i.i.1.i:                                     ; preds = %dec_future.i.i.i22, %body.i.i.i
+  store i8 0, ptr %slot.i.i, align 1
+  store i1 false, ptr %cached.i.i, align 1
+  store i64 0, ptr %future.i.i, align 4
+  tail call void @heap_free(ptr nonnull %slot.i.i)
+  %state1.i.i.1.i = load i8, ptr %slot.i.i7, align 1
+  %is_pending.i.i.1.i = icmp eq i8 %state1.i.i.1.i, 1
+  br i1 %is_pending.i.i.1.i, label %dec_future.i.i.1.i, label %qir_qis.result_array_release.exit
+
+dec_future.i.i.1.i:                               ; preds = %body.i.i.1.i
+  %future2.i.i.1.i = load i64, ptr %future.i.i11, align 4
+  tail call void @___dec_future_refcount(i64 %future2.i.i.1.i)
+  br label %qir_qis.result_array_release.exit
+
+qir_qis.result_array_release.exit:                ; preds = %dec_future.i.i.1.i, %body.i.i.1.i
+  store i8 0, ptr %slot.i.i7, align 1
+  store i1 false, ptr %cached.i.i10, align 1
+  store i64 0, ptr %future.i.i11, align 4
+  tail call void @heap_free(ptr nonnull %slot.i.i7)
+  %next = add nuw nsw i64 %i, 1
+  %exitcond.not = icmp eq i64 %next, 3
+  br i1 %exitcond.not, label %done, label %loop
+
+done:                                             ; preds = %qir_qis.result_array_release.exit
+  %qbit = load i64, ptr @qis_qs, align 8
+  tail call void @___qfree(i64 %qbit)
+  %qbit1 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___qfree(i64 %qbit1)
+  ret i64 0
+}
+
+declare i64 @___qalloc() local_unnamed_addr
+
+declare void @panic(i32, ptr) local_unnamed_addr
+
+declare void @___reset(i64) local_unnamed_addr
+
+define i64 @qir_qis.load_qubit(ptr %0) local_unnamed_addr {
+entry:
+  %valid_static_qubit_index = icmp ult ptr %0, inttoptr (i64 2 to ptr)
+  br i1 %valid_static_qubit_index, label %load_qubit_valid, label %load_qubit_invalid
+
+load_qubit_valid:                                 ; preds = %entry
+  %idx = ptrtoint ptr %0 to i64
+  %qbit_ptr = getelementptr [2 x i64], ptr @qis_qs, i64 0, i64 %idx
+  %qbit = load i64, ptr %qbit_ptr, align 8
+  ret i64 %qbit
+
+load_qubit_invalid:                               ; preds = %entry
+  tail call void @panic(i32 1001, ptr nonnull @e_load_qubit_oob)
+  unreachable
+}
+
+declare ptr @heap_alloc(i64) local_unnamed_addr
+
+declare i64 @___lazy_measure(i64) local_unnamed_addr
+
+declare void @___dec_future_refcount(i64) local_unnamed_addr
+
+; Function Attrs: noinline
+define private fastcc void @qir_qis.result_array_record_output(ptr nonnull readonly captures(none) %0) unnamed_addr #0 {
+entry:
+  %result_arr_data1 = alloca [2 x i1], align 1
+  %result_ptr = load ptr, ptr %0, align 8
+  %is_null.i = icmp eq ptr %result_ptr, null
+  br i1 %is_null.i, label %qir_qis.result_read.exit, label %read_state.i
+
+pending.i:                                        ; preds = %read_state.i
+  %future.i = getelementptr inbounds nuw i8, ptr %result_ptr, i64 8
+  %future3.i = load i64, ptr %future.i, align 4
+  %bool.i = tail call i1 @___read_future_bool(i64 %future3.i)
+  tail call void @___dec_future_refcount(i64 %future3.i)
+  store i1 %bool.i, ptr %cached1.i, align 1
+  store i8 2, ptr %result_ptr, align 1
+  br label %qir_qis.result_read.exit
+
+cached.i:                                         ; preds = %read_state.i
+  %cached4.i = load i1, ptr %cached1.i, align 1
+  br label %qir_qis.result_read.exit
+
+read_state.i:                                     ; preds = %entry
+  %cached1.i = getelementptr inbounds nuw i8, ptr %result_ptr, i64 1
+  %state2.i = load i8, ptr %result_ptr, align 1
+  switch i8 %state2.i, label %qir_qis.result_read.exit [
+    i8 1, label %pending.i
+    i8 2, label %cached.i
+  ]
+
+qir_qis.result_read.exit:                         ; preds = %read_state.i, %cached.i, %pending.i, %entry
+  %common.ret.op.i = phi i1 [ %bool.i, %pending.i ], [ %cached4.i, %cached.i ], [ false, %entry ], [ false, %read_state.i ]
+  store i1 %common.ret.op.i, ptr %result_arr_data1, align 1
+  %elem_ptr.1 = getelementptr i8, ptr %0, i64 8
+  %result_ptr.1 = load ptr, ptr %elem_ptr.1, align 8
+  %is_null.i.1 = icmp eq ptr %result_ptr.1, null
+  br i1 %is_null.i.1, label %qir_qis.result_read.exit.1, label %read_state.i.1
+
+read_state.i.1:                                   ; preds = %qir_qis.result_read.exit
+  %cached1.i.1 = getelementptr inbounds nuw i8, ptr %result_ptr.1, i64 1
+  %state2.i.1 = load i8, ptr %result_ptr.1, align 1
+  switch i8 %state2.i.1, label %qir_qis.result_read.exit.1 [
+    i8 1, label %pending.i.1
+    i8 2, label %cached.i.1
+  ]
+
+cached.i.1:                                       ; preds = %read_state.i.1
+  %cached4.i.1 = load i1, ptr %cached1.i.1, align 1
+  br label %qir_qis.result_read.exit.1
+
+pending.i.1:                                      ; preds = %read_state.i.1
+  %future.i.1 = getelementptr inbounds nuw i8, ptr %result_ptr.1, i64 8
+  %future3.i.1 = load i64, ptr %future.i.1, align 4
+  %bool.i.1 = tail call i1 @___read_future_bool(i64 %future3.i.1)
+  tail call void @___dec_future_refcount(i64 %future3.i.1)
+  store i1 %bool.i.1, ptr %cached1.i.1, align 1
+  store i8 2, ptr %result_ptr.1, align 1
+  br label %qir_qis.result_read.exit.1
+
+qir_qis.result_read.exit.1:                       ; preds = %pending.i.1, %cached.i.1, %read_state.i.1, %qir_qis.result_read.exit
+  %common.ret.op.i.1 = phi i1 [ %bool.i.1, %pending.i.1 ], [ %cached4.i.1, %cached.i.1 ], [ false, %qir_qis.result_read.exit ], [ false, %read_state.i.1 ]
+  %result_bool_ptr.1 = getelementptr inbounds nuw i8, ptr %result_arr_data1, i64 1
+  store i1 %common.ret.op.i.1, ptr %result_bool_ptr.1, align 1
+  %result_arr_desc = alloca <{ i32, i32, ptr, ptr }>, align 8
+  %result_arr_data_ptr = getelementptr inbounds nuw i8, ptr %result_arr_desc, i64 8
+  %result_arr_mask_ptr = getelementptr inbounds nuw i8, ptr %result_arr_desc, i64 16
+  %result_arr_mask = alloca i32, align 4
+  store i32 0, ptr %result_arr_mask, align 4
+  store <2 x i32> <i32 2, i32 1>, ptr %result_arr_desc, align 8
+  store ptr %result_arr_data1, ptr %result_arr_data_ptr, align 8
+  store ptr %result_arr_mask, ptr %result_arr_mask_ptr, align 8
+  call void @print_bool_arr(ptr nonnull @res_life.1, i64 22, ptr nonnull %result_arr_desc)
+  ret void
+}
+
+declare void @print_bool_arr(ptr, i64, ptr) local_unnamed_addr
+
+declare i1 @___read_future_bool(i64) local_unnamed_addr
+
+declare void @heap_free(ptr) local_unnamed_addr
+
+declare void @___rxy(i64, double, double) local_unnamed_addr
+
+declare void @___qfree(i64) local_unnamed_addr
+
+define i64 @qmain(i64 %0) local_unnamed_addr {
+entry:
+  tail call void @setup(i64 %0)
+  %1 = tail call i64 @___user_qir_Entry_Point_Name()
+  %retval = tail call i64 @teardown()
+  ret i64 %retval
+}
+
+declare void @setup(i64) local_unnamed_addr
+
+declare i64 @teardown() local_unnamed_addr
+
+attributes #0 = { noinline }
+
+!llvm.module.flags = !{!0, !1, !2, !3, !4, !5, !6}
+!name = !{!7}
+
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 1}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 true}
+!4 = !{i32 1, !"arrays", i1 true}
+!5 = !{i32 1, !"ir_functions", i1 true}
+!6 = !{i32 1, !"backwards_branching", i1 true}
+!7 = !{!"mainlib"}

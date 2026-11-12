@@ -1,5 +1,5 @@
 use ::std::hash::BuildHasher;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::Into;
 use std::error::Error;
 
@@ -89,12 +89,10 @@ pub fn checked_qubit_index(qubit_idx: u64, required_num_qubits: u32) -> Result<u
 /// Checks if the given type is an i8 array type.
 fn is_i8_array_type(ty: AnyTypeEnum) -> bool {
     ty.is_array_type()
-        && ty
-            .into_array_type()
-            .get_element_type()
-            .into_int_type()
-            .get_bit_width()
-            == 8
+        && matches!(
+            ty.into_array_type().get_element_type(),
+            inkwell::types::BasicTypeEnum::IntType(int) if int.get_bit_width() == 8
+        )
 }
 
 /// Processes a global variable by replacing its initializer with a
@@ -103,10 +101,10 @@ fn is_i8_array_type(ty: AnyTypeEnum) -> bool {
 fn translate_global<'ctx>(
     context: &'ctx Context,
     module: &Module<'ctx>,
-    old_global: GlobalValue,
+    old_global: GlobalValue<'ctx>,
     global_mapping: &mut HashMap<String, GlobalValue<'ctx>>,
     empty_tag_counter: &mut usize,
-) -> Result<(), String> {
+) -> Result<GlobalValue<'ctx>, String> {
     // 1. Extract original string
     let label = get_string_label(old_global)?;
 
@@ -136,7 +134,7 @@ fn translate_global<'ctx>(
     new_global.set_constant(true);
 
     global_mapping.insert(old_global_key, new_global);
-    Ok(())
+    Ok(new_global)
 }
 
 /// Extracts the string label from a global variable's initializer.
@@ -147,7 +145,10 @@ pub fn get_string_label(old_global: GlobalValue<'_>) -> Result<String, String> {
     let init = old_global
         .get_initializer()
         .ok_or("Global has no initializer")?;
-    if init.get_type().is_array_type() && init.get_type().into_array_type().len() == 1 {
+    if init.get_type().is_array_type()
+        && init.get_type().into_array_type().len() == 1
+        && unsafe { llvm_sys::core::LLVMIsNull(init.as_value_ref()) } != 0
+    {
         return Ok(String::new());
     }
     let init_ref = init.as_value_ref();
@@ -234,6 +235,23 @@ pub fn convert_globals<'ctx>(
     context: &'ctx Context,
     module: &Module<'ctx>,
 ) -> Result<HashMap<String, GlobalValue<'ctx>>, String> {
+    convert_globals_with_results(context, module).map(|(globals, _)| globals)
+}
+
+// Result tags use input value identity, independently of legacy classical output
+// labels and generated null-tag fallbacks that may share the same spelling.
+pub(crate) type ResultOutputGlobals<'ctx> = HashMap<GlobalValue<'ctx>, GlobalValue<'ctx>>;
+
+pub(crate) fn convert_globals_with_results<'ctx>(
+    context: &'ctx Context,
+    module: &Module<'ctx>,
+) -> Result<
+    (
+        HashMap<String, GlobalValue<'ctx>>,
+        ResultOutputGlobals<'ctx>,
+    ),
+    String,
+> {
     // Collect globals matching the pattern
     let old_globals: Vec<_> = module
         .get_globals()
@@ -245,17 +263,19 @@ pub fn convert_globals<'ctx>(
         .collect();
 
     let mut global_mapping: HashMap<String, GlobalValue> = HashMap::new();
+    let mut result_mapping = HashMap::new();
     let mut empty_tag_counter: usize = 0;
     for old_global in old_globals {
-        translate_global(
+        let translated = translate_global(
             context,
             module,
             old_global,
             &mut global_mapping,
             &mut empty_tag_counter,
         )?;
+        result_mapping.insert(old_global, translated);
     }
-    Ok(global_mapping)
+    Ok((global_mapping, result_mapping))
 }
 
 /// Finds the entry function in the module.
@@ -1288,7 +1308,9 @@ pub fn parse_gep(gep: BasicValueEnum) -> Result<String, String> {
 
 /// Resolve a result output tag to a global string, or identify a null scalar tag.
 /// Computed/helper-parameter tags cannot be identified from LLVM SSA names.
-pub(crate) fn resolve_output_tag(value: BasicValueEnum<'_>) -> Result<Option<String>, String> {
+pub(crate) fn resolve_output_tag(
+    value: BasicValueEnum<'_>,
+) -> Result<Option<GlobalValue<'_>>, String> {
     use llvm_sys::{
         LLVMOpcode,
         core::{
@@ -1302,14 +1324,22 @@ pub(crate) fn resolve_output_tag(value: BasicValueEnum<'_>) -> Result<Option<Str
     if pointer.is_null() {
         return Ok(None);
     }
+    let mut visited = HashSet::new();
     loop {
         let raw = pointer.as_value_ref();
+        if !visited.insert(raw) {
+            return Err("Cyclic result output tag pointer".into());
+        }
         // SAFETY: `raw` is a live pointer value; string extraction is only used
         // after LLVM identifies a global variable with a constant initializer.
         if !unsafe { LLVMIsAGlobalVariable(raw) }.is_null() {
             let global = unsafe { GlobalValue::new(raw) };
-            if global.is_constant() && get_string_label(global).is_ok() {
-                return parse_gep(pointer.as_basic_value_enum()).map(Some);
+            if matches!(global.get_linkage(), Linkage::Internal | Linkage::Private)
+                && global.is_constant()
+                && is_i8_array_type(global.get_value_type())
+            {
+                get_string_label(global)?;
+                return Ok(Some(global));
             }
             break;
         }
@@ -1977,16 +2007,14 @@ merge:
 
         let mut mapping = HashMap::new();
         let mut empty_tag_counter = 0;
-        assert!(
-            translate_global(
-                &context,
-                &module,
-                global,
-                &mut mapping,
-                &mut empty_tag_counter
-            )
-            .is_err()
-        );
+        translate_global(
+            &context,
+            &module,
+            global,
+            &mut mapping,
+            &mut empty_tag_counter,
+        )
+        .unwrap_err();
     }
 
     #[test]
@@ -2919,6 +2947,8 @@ entry:
             #[case("tests/data/dynamic_result_alloc.ll")]
             #[case("tests/data/dynamic_result_array.ll")]
             #[case("tests/data/dynamic_result_mixed_array_output.ll")]
+            #[case("tests/data/static_result_array.ll")]
+            #[case("tests/data/dynamic_result_lifetimes.ll")]
             // QIR 2.0 (opaque pointers) tests
             #[case("tests/data/qir2_base.ll")]
             #[case("tests/data/qir2_adaptive.ll")]

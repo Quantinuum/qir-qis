@@ -46,12 +46,13 @@ mod aux {
 
     use crate::{
         convert::{
-            INIT_QARRAY_FN, add_print_call, build_result_global, checked_qubit_index,
-            convert_globals, create_reset_call, get_index, get_or_create_function,
-            get_required_num_qubits, get_required_num_qubits_strict, get_required_num_results,
-            get_result_vars, get_string_label, handle_tuple_or_array_output,
-            is_reserved_passthrough_name, parse_gep, record_classical_output, replace_rxy_call,
-            replace_rz_call, replace_rzz_call, resolve_output_tag,
+            INIT_QARRAY_FN, ResultOutputGlobals, add_print_call, build_result_global,
+            checked_qubit_index, convert_globals_with_results, create_reset_call, get_index,
+            get_or_create_function, get_required_num_qubits, get_required_num_qubits_strict,
+            get_required_num_results, get_result_vars, get_string_label,
+            handle_tuple_or_array_output, is_reserved_passthrough_name, parse_gep,
+            record_classical_output, replace_rxy_call, replace_rz_call, replace_rzz_call,
+            resolve_output_tag,
         },
         decode_llvm_bytes,
         result_runtime::{
@@ -1192,6 +1193,7 @@ mod aux {
         let mut result_slot_errors = Vec::new();
         let needs_static_results = crate::result_runtime::uses_static_results(
             module,
+            entry_fn,
             capability_flags.dynamic_result_management,
         );
         let mut static_qubit_errors = Vec::new();
@@ -1420,7 +1422,7 @@ mod aux {
                                             result_slot_errors.push(err);
                                         }
                                     }
-                                    Err(_) if needs_static_results => {
+                                    Err(_) if needs_static_results && required_num_results > 0 => {
                                         // Loaded/selected static IDs are guarded by the runtime table lookup.
                                     }
                                     Err(err) => result_slot_errors.push(format!(
@@ -1538,6 +1540,7 @@ mod aux {
         qubit_array_type: Option<ArrayType<'ctx>>,
         capability_flags: CapabilityFlags,
         global_mapping: *mut HashMap<String, inkwell::values::GlobalValue<'ctx>>,
+        result_output_globals: *mut ResultOutputGlobals<'ctx>,
         result_ssa: *mut Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>,
     }
 
@@ -1551,7 +1554,8 @@ mod aux {
         qubit_array: Option<PointerValue<'ctx>>,
         capability_flags: CapabilityFlags,
     ) -> Result<HashSet<inkwell::values::InstructionValue<'ctx>>, String> {
-        let mut global_mapping = convert_globals(ctx, module)?;
+        let (mut global_mapping, mut result_output_globals) =
+            convert_globals_with_results(ctx, module)?;
 
         if global_mapping.is_empty() {
             log::warn!("No globals found in QIR module");
@@ -1595,12 +1599,6 @@ mod aux {
                             .map(ToOwned::to_owned)
                     }) {
                         if function != entry_fn
-                            && !capability_flags.dynamic_result_management
-                            && module.get_global(STATIC_RESULTS).is_none()
-                        {
-                            continue;
-                        }
-                        if function != entry_fn
                             && !matches!(
                                 fn_name.as_str(),
                                 "__quantum__rt__result_allocate"
@@ -1628,6 +1626,7 @@ mod aux {
                             qubit_array_type,
                             capability_flags,
                             global_mapping: &raw mut global_mapping,
+                            result_output_globals: &raw mut result_output_globals,
                             result_ssa: &raw mut result_ssa,
                         };
                         let previous = instr.get_previous_instruction();
@@ -1909,7 +1908,7 @@ mod aux {
                     &args.instr,
                     args.fn_name.as_str(),
                     args.capability_flags,
-                    args.global_mapping.cast::<()>(),
+                    args.result_output_globals.cast::<()>(),
                     args.result_ssa.cast::<()>(),
                 )?;
                 Ok(BuiltinCallHandling::Handled)
@@ -2470,16 +2469,16 @@ mod aux {
     fn get_or_create_result_output_global<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
-        global_mapping: &mut HashMap<String, inkwell::values::GlobalValue<'ctx>>,
+        result_output_globals: &ResultOutputGlobals<'ctx>,
         capability_flags: CapabilityFlags,
         result_ptr: PointerValue<'ctx>,
         gep: BasicValueEnum<'ctx>,
     ) -> Result<inkwell::values::GlobalValue<'ctx>, String> {
         if let Some(old_global) = resolve_output_tag(gep)? {
-            return global_mapping
-                .get(old_global.as_str())
+            return result_output_globals
+                .get(&old_global)
                 .copied()
-                .ok_or_else(|| format!("Output global `{old_global}` not found in mapping"));
+                .ok_or_else(|| "Result output global not found in mapping".into());
         }
 
         let fallback_label = if capability_flags.dynamic_result_management {
@@ -2497,7 +2496,6 @@ mod aux {
         new_global.set_initializer(&new_const);
         new_global.set_linkage(inkwell::module::Linkage::Private);
         new_global.set_constant(true);
-        global_mapping.insert(fallback_label, new_global);
         Ok(new_global)
     }
 
@@ -3336,17 +3334,12 @@ mod aux {
         let builder = args.ctx.create_builder();
         builder.position_before(&args.instr);
         let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
-        let old_name = resolve_output_tag(call_args[2])?
+        let old_global = resolve_output_tag(call_args[2])?
             .ok_or("Result array output requires a constant global tag")?;
-        let full_tag =
-            if let Some(global) = unsafe { &mut *args.global_mapping }.get(old_name.as_str()) {
-                get_string_label(*global)?
-            } else {
-                return Err(format!("Output global `{old_name}` not found in mapping"));
-            };
-        let old_label = extract_label_from_tag(&full_tag);
+        // Read the input label, never the binary length-prefixed output string.
+        let old_label = get_string_label(old_global)?;
         let (new_const, new_name) =
-            build_result_global(args.ctx, old_label, &old_name, "RESULT_ARRAY", None)?;
+            build_result_global(args.ctx, &old_label, "", "RESULT_ARRAY", None)?;
         let new_global = module_ref(args).add_global(new_const.get_type(), None, &new_name);
         new_global.set_initializer(&new_const);
         new_global.set_linkage(Linkage::Private);
@@ -3734,13 +3727,12 @@ mod aux {
         instr: &'ctx inkwell::values::InstructionValue<'ctx>,
         fn_name: &str,
         capability_flags: CapabilityFlags,
-        global_mapping: *mut (),
+        result_output_globals: *mut (),
         result_ssa: *mut (),
     ) -> Result<(), String> {
         let module = unsafe { &*module.cast::<Module<'ctx>>() };
-        let global_mapping = unsafe {
-            &mut *global_mapping.cast::<HashMap<String, inkwell::values::GlobalValue<'ctx>>>()
-        };
+        let result_output_globals =
+            unsafe { &*result_output_globals.cast::<ResultOutputGlobals<'ctx>>() };
         let result_ssa = unsafe {
             &mut *result_ssa
                 .cast::<Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>>()
@@ -3769,7 +3761,7 @@ mod aux {
             let new_global = get_or_create_result_output_global(
                 ctx,
                 module,
-                global_mapping,
+                result_output_globals,
                 capability_flags,
                 result_ptr,
                 call_args[1],
@@ -4686,9 +4678,9 @@ mod test {
         reason = "tests inspect fixed positions in small generated arrays"
     )]
     use crate::{
-        convert::get_string_label, create_memory_buffer_from_bytes, create_module_from_ir_text,
-        get_entry_attributes, memory_buffer_to_owned_bytes, parse_bitcode_module, qir_ll_to_bc,
-        qir_to_qis, qir_to_qis_with_passthrough_calls, validate_qir,
+        create_memory_buffer_from_bytes, create_module_from_ir_text, get_entry_attributes,
+        memory_buffer_to_owned_bytes, parse_bitcode_module, qir_ll_to_bc, qir_to_qis,
+        qir_to_qis_with_passthrough_calls, validate_qir,
     };
     use inkwell::{
         context::Context,
@@ -4717,6 +4709,8 @@ mod test {
         "tests/data/dynamic_qubit_array_ssa.ll",
         "tests/data/dynamic_result_alloc.ll",
         "tests/data/dynamic_result_mixed_array_output.ll",
+        "tests/data/static_result_array.ll",
+        "tests/data/dynamic_result_lifetimes.ll",
     ];
     static PROPERTY_FIXTURE_BITCODE: LazyLock<BTreeMap<&'static str, Vec<u8>>> =
         LazyLock::new(|| {
@@ -8339,7 +8333,7 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
     proptest! {
         #[test]
         fn prop_dynamic_result_array_record_output_preserves_label(
-            label in "[A-Za-z0-9_]{1,8}",
+            label in "[A-Za-z0-9_:]{0,237}",
         ) {
             let label_len = label
                 .len()
@@ -8393,11 +8387,19 @@ attributes #1 = {{ "irreversible" }}
             let expected_label = format!("USER:RESULT_ARRAY:{label}");
             let labels = module
                 .get_globals()
-                .filter_map(|global| get_string_label(global).ok())
+                .filter_map(|global| {
+                    let inkwell::values::BasicValueEnum::ArrayValue(value) = global.get_initializer()? else {
+                        return None;
+                    };
+                    if !value.is_const_string() {
+                        return None;
+                    }
+                    value.as_const_string()?.get(1..).map(<[u8]>::to_vec)
+                })
                 .collect::<Vec<_>>();
 
             prop_assert!(
-                labels.iter().any(|item| item.contains(&expected_label)),
+                labels.iter().any(|item| item == expected_label.as_bytes()),
                 "expected label payload {expected_label}, got globals: {labels:?}"
             );
         }

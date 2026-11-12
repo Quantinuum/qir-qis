@@ -9,7 +9,6 @@
 
 use inkwell::{
     AddressSpace, IntPredicate,
-    attributes::AttributeLoc,
     builder::Builder,
     context::Context,
     module::{Linkage, Module},
@@ -49,6 +48,12 @@ pub fn validate_input_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), 
                 | "__quantum__qis__m__body"
                 | "__quantum__qis__mresetz__body")
         ) {
+            if function.count_basic_blocks() != 0 {
+                return Err(format!(
+                    "QIR result function must be an external declaration: {}",
+                    function.get_name().to_string_lossy()
+                ));
+            }
             crate::aux::validate_result_signature(
                 function.get_name().to_str().map_err(|e| e.to_string())?,
                 function.get_type(),
@@ -61,18 +66,52 @@ pub fn validate_input_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), 
             ));
         }
     }
+    validate_downstream_result_symbols(ctx, module)?;
+    validate_output_tags(ctx, module)
+}
+
+fn validate_downstream_result_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), String> {
     let ptr = ctx.ptr_type(AddressSpace::default());
-    let panic_type = ctx
-        .void_type()
-        .fn_type(&[ctx.i32_type().into(), ptr.into()], false);
-    if module.get_global("panic").is_some()
-        || module
-            .get_function("panic")
-            .is_some_and(|f| f.get_type() != panic_type || f.count_basic_blocks() != 0)
-    {
-        return Err("Invalid downstream runtime declaration: panic".into());
+    for (name, ty) in [
+        (
+            "panic",
+            ctx.void_type()
+                .fn_type(&[ctx.i32_type().into(), ptr.into()], false),
+        ),
+        (
+            "___read_future_bool",
+            ctx.bool_type().fn_type(&[ctx.i64_type().into()], false),
+        ),
+        (
+            "___dec_future_refcount",
+            ctx.void_type().fn_type(&[ctx.i64_type().into()], false),
+        ),
+        (
+            "___lazy_measure",
+            ctx.i64_type().fn_type(&[ctx.i64_type().into()], false),
+        ),
+        (
+            "print_bool",
+            ctx.void_type().fn_type(
+                &[ptr.into(), ctx.i64_type().into(), ctx.bool_type().into()],
+                false,
+            ),
+        ),
+        (
+            "print_bool_arr",
+            ctx.void_type()
+                .fn_type(&[ptr.into(), ctx.i64_type().into(), ptr.into()], false),
+        ),
+    ] {
+        if module.get_global(name).is_some()
+            || module
+                .get_function(name)
+                .is_some_and(|f| f.get_type() != ty || f.count_basic_blocks() != 0)
+        {
+            return Err(format!("Invalid downstream runtime declaration: {name}"));
+        }
     }
-    validate_output_tags(module)
+    Ok(())
 }
 
 fn validate_heap_runtime_symbols(module: &Module<'_>) -> Result<(), String> {
@@ -88,7 +127,11 @@ fn validate_heap_runtime_symbols(module: &Module<'_>) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_output_tags(module: &Module<'_>) -> Result<(), String> {
+fn validate_output_tags(ctx: &Context, module: &Module<'_>) -> Result<(), String> {
+    let zero_static_results = !crate::aux::get_capability_flags(module).dynamic_result_management
+        && crate::convert::find_entry_function(module)
+            .and_then(get_required_num_results)
+            .is_ok_and(|count| count == 0);
     for function in module.get_functions() {
         for block in function.get_basic_blocks() {
             for instruction in block.get_instructions() {
@@ -98,6 +141,20 @@ fn validate_output_tags(module: &Module<'_>) -> Result<(), String> {
                 let Some(callee) = call.get_called_fn_value() else {
                     continue;
                 };
+                if zero_static_results
+                    && matches!(
+                        callee.get_name().to_str(),
+                        Ok("__quantum__qis__mz__body"
+                            | "__quantum__qis__m__body"
+                            | "__quantum__qis__mresetz__body"
+                            | "__quantum__rt__read_result"
+                            | "__quantum__rt__result_record_output")
+                    )
+                {
+                    return Err(
+                        "Scalar result operations require at least one static result".into(),
+                    );
+                }
                 let index = match callee.get_name().to_str() {
                     Ok("__quantum__rt__result_record_output") => 1,
                     Ok("__quantum__rt__result_array_record_output") => 2,
@@ -107,8 +164,21 @@ fn validate_output_tags(module: &Module<'_>) -> Result<(), String> {
                     .get_operand(index)
                     .and_then(inkwell::values::Operand::value)
                     .ok_or("Missing result output tag")?;
-                if crate::convert::resolve_output_tag(tag)?.is_none() && index == 2 {
-                    return Err("Result array output requires a constant global tag".into());
+                match crate::convert::resolve_output_tag(tag)? {
+                    None if index == 2 => {
+                        return Err("Result array output requires a constant global tag".into());
+                    }
+                    Some(global) => {
+                        let label = crate::convert::get_string_label(global)?;
+                        crate::convert::build_result_global(
+                            ctx,
+                            &label,
+                            "",
+                            if index == 2 { "RESULT_ARRAY" } else { "RESULT" },
+                            None,
+                        )?;
+                    }
+                    None => {}
                 }
             }
         }
@@ -153,7 +223,17 @@ fn validate_alias_symbols(module: &Module<'_>) -> Result<(), String> {
             if !pointer.is_null() {
                 let name = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), len) };
                 if name.starts_with(b"qir_qis.")
-                    || [b"heap_alloc".as_slice(), b"heap_free", b"panic"].contains(&name)
+                    || [
+                        b"heap_alloc".as_slice(),
+                        b"heap_free",
+                        b"panic",
+                        b"___read_future_bool",
+                        b"___dec_future_refcount",
+                        b"___lazy_measure",
+                        b"print_bool",
+                        b"print_bool_arr",
+                    ]
+                    .contains(&name)
                 {
                     return Err(format!(
                         "Input alias or indirect function uses reserved symbol: {}",
@@ -396,7 +476,7 @@ pub fn validate_translation_input(ctx: &Context, module: &Module<'_>) -> Result<
     }
 }
 
-pub fn uses_static_results(module: &Module<'_>, dynamic: bool) -> bool {
+pub fn uses_static_results(module: &Module<'_>, entry: FunctionValue<'_>, dynamic: bool) -> bool {
     if dynamic {
         return false;
     }
@@ -415,10 +495,7 @@ pub fn uses_static_results(module: &Module<'_>, dynamic: bool) -> bool {
     module
         .get_functions()
         .filter(|function| {
-            function
-                .get_string_attribute(AttributeLoc::Function, "entry_point")
-                .is_none()
-                && !function.get_name().to_bytes().starts_with(b"qir_qis.")
+            *function != entry && !function.get_name().to_bytes().starts_with(b"qir_qis.")
         })
         .any(|function| {
             function.get_basic_blocks().into_iter().any(|block| {
@@ -447,7 +524,7 @@ pub fn initialize_static_results<'ctx>(
     entry: FunctionValue<'ctx>,
     dynamic: bool,
 ) -> Result<(), String> {
-    if !uses_static_results(module, dynamic) {
+    if !uses_static_results(module, entry, dynamic) {
         return Ok(());
     }
     let count = u32::try_from(get_required_num_results(entry)?).map_err(|e| e.to_string())?;

@@ -1127,6 +1127,11 @@ fn reserved_aliases_cannot_hide_result_storage_or_runtime_symbols() {
         "heap_alloc",
         "heap_free",
         "panic",
+        "___read_future_bool",
+        "___dec_future_refcount",
+        "___lazy_measure",
+        "print_bool",
+        "print_bool_arr",
     ] {
         let helper = format!("@storage = private global i8 0\n @{symbol} = alias i8, ptr @storage");
         let ll = qir(
@@ -1328,6 +1333,7 @@ fn user_memset_intrinsics_are_not_reported_as_internal_runtime_calls() {
   call void @llvm.memset.p0.i64(ptr %buffer, i8 0, i64 8, i1 false)
   ret void
 }
+
 declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)",
         false,
         false,
@@ -1338,4 +1344,357 @@ declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)",
         error,
         "Unsupported LLVM intrinsic in user-defined function: llvm.memset.p0.i64"
     );
+}
+
+#[test]
+fn cyclic_output_tag_views_fail_validation_and_direct_translation() {
+    for pointers in [
+        "%p = getelementptr i8, ptr %p, i64 0",
+        "%p = getelementptr i8, ptr %q, i64 0\n %q = getelementptr i8, ptr %p, i64 0",
+        "%p = bitcast ptr %q to ptr\n %q = getelementptr i8, ptr %p, i64 0",
+        "%p = addrspacecast ptr addrspace(1) %q to ptr\n %q = addrspacecast ptr %p to ptr addrspace(1)",
+    ] {
+        for array in [false, true] {
+            let output = if array {
+                "%a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr %p)"
+            } else {
+                "call void @__quantum__rt__result_record_output(ptr null, ptr %p)"
+            };
+            let body = format!("entry:\n ret i64 0\ndead:\n {pointers}\n {output}\n unreachable");
+            let bc = qir_ll_to_bc(&qir(&body, "", false, true)).unwrap();
+            for error in [
+                validate_qir(&bc, None),
+                qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+            ] {
+                assert!(error.unwrap_err().contains("Cyclic result output tag"));
+            }
+        }
+    }
+}
+
+#[test]
+fn downstream_result_runtime_signatures_are_checked_before_lowering() {
+    for (name, result, params, returned) in [
+        ("___read_future_bool", "i1", "i64", "ret i1 false"),
+        ("___dec_future_refcount", "void", "i64", "ret void"),
+        ("___lazy_measure", "i64", "i64", "ret i64 0"),
+        ("print_bool", "void", "ptr, i64, i1", "ret void"),
+        ("print_bool_arr", "void", "ptr, i64, ptr", "ret void"),
+    ] {
+        let wrong_result = if result == "void" { "i64" } else { "void" };
+        let wrong_kind = if params.contains("ptr") {
+            params.replace("ptr", "i64")
+        } else {
+            params.replace("i64", "ptr")
+        };
+        let mut declarations = vec![
+            format!("declare {wrong_result} @{name}({params})"),
+            format!("declare {result} @{name}()"),
+            format!("declare {result} @{name}({})", params.replace("i64", "i32")),
+            format!("declare {result} @{name}({wrong_kind})"),
+            format!("declare {result} @{name}({params}, ...)"),
+            format!("define {result} @{name}({params}) {{ {returned} }}"),
+            format!("@{name} = global i64 0"),
+        ];
+        if result != "void" {
+            declarations.push(format!("declare i8 @{name}({params})"));
+        }
+        if params.contains("i1") {
+            declarations.push(format!(
+                "declare {result} @{name}({})",
+                params.replace("i1", "i8")
+            ));
+        }
+        for declaration in declarations {
+            let bc = qir_ll_to_bc(&qir("entry:\n ret i64 0", &declaration, true, true)).unwrap();
+            for error in [
+                validate_qir(&bc, None),
+                qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+            ] {
+                let error = error.unwrap_err();
+                assert!(
+                    error.contains(&format!("Invalid downstream runtime declaration: {name}")),
+                    "{error}"
+                );
+            }
+        }
+        let valid = format!("declare {result} @{name}({params})");
+        let bc = qir_ll_to_bc(&qir("entry:\n ret i64 0", &valid, true, true)).unwrap();
+        qir_to_qis(&bc, 0, "native", None).unwrap();
+    }
+}
+
+#[test]
+fn result_tag_labels_preserve_raw_bytes_and_enforce_abi_length() {
+    for array in [false, true] {
+        let limit = if array { 237 } else { 243 };
+        for label in [
+            String::new(),
+            "part:bit".into(),
+            "é".repeat(58),
+            "x".repeat(115),
+            "x".repeat(116),
+            "x".repeat(limit),
+            "x".repeat(limit + 1),
+        ] {
+            let output = if array {
+                "%a = alloca [1 x ptr]\n store ptr null, ptr %a\n call void @__quantum__rt__result_array_record_output(i64 1, ptr %a, ptr @0)"
+            } else {
+                "call void @__quantum__rt__result_record_output(ptr null, ptr @0)"
+            };
+            let body = format!(
+                "entry:\n call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)\n {output}\n ret i64 0"
+            );
+            let global = format!(
+                "@0 = private constant [{} x i8] c\"{label}\\00\"",
+                label.len() + 1
+            );
+            let ll = qir(&body, &global, false, array);
+            if label.len() > limit {
+                let bc = qir_ll_to_bc(&ll).unwrap();
+                for error in [
+                    validate_qir(&bc, None),
+                    qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+                ] {
+                    assert!(error.unwrap_err().contains("Constant string too long"));
+                }
+            } else {
+                for level in [0, 2] {
+                    let rt = execute(&ll, level, None, 0);
+                    let kind = if array { "RESULT_ARRAY" } else { "RESULT" };
+                    assert_eq!(
+                        rt.outputs,
+                        vec![(format!("USER:{kind}:{label}"), vec![true])]
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn nonzero_and_runtime_result_tag_offsets_are_rejected() {
+    for view in [
+        "%p = getelementptr i8, ptr @tag, i64 1",
+        "%i = select i1 true, i64 0, i64 1\n %p = getelementptr i8, ptr @tag, i64 %i",
+    ] {
+        for array in [false, true] {
+            let output = if array {
+                "%a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr %p)"
+            } else {
+                "call void @__quantum__rt__result_record_output(ptr null, ptr %p)"
+            };
+            let ll = qir(
+                &format!("entry:\n {view}\n {output}\n ret i64 0"),
+                "",
+                false,
+                true,
+            );
+            let bc = qir_ll_to_bc(&ll).unwrap();
+            for error in [
+                validate_qir(&bc, None),
+                qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+            ] {
+                assert!(error.unwrap_err().contains("zero-index views"));
+            }
+        }
+    }
+}
+
+#[test]
+fn null_result_array_tags_are_rejected_before_lowering() {
+    let ll = qir(
+        "entry:\n %a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr null)\n ret i64 0",
+        "",
+        false,
+        true,
+    );
+    let bc = qir_ll_to_bc(&ll).unwrap();
+    for error in [
+        validate_qir(&bc, None),
+        qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+    ] {
+        assert!(
+            error
+                .unwrap_err()
+                .contains("requires a constant global tag")
+        );
+    }
+}
+
+#[test]
+fn unsupported_result_tag_globals_fail_before_translation() {
+    for global in [
+        "@label = constant [4 x i8] c\"out\\00\"",
+        "@label = private global [4 x i8] c\"out\\00\"",
+        "@label = private constant [1 x ptr] zeroinitializer",
+    ] {
+        let ll = qir(
+            "entry:\n call void @__quantum__rt__result_record_output(ptr null, ptr @label)\n ret i64 0",
+            global,
+            false,
+            false,
+        );
+        let bc = qir_ll_to_bc(&ll).unwrap();
+        for error in [
+            validate_qir(&bc, None),
+            qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+        ] {
+            assert!(error.unwrap_err().contains("constant global string"));
+        }
+    }
+}
+
+#[test]
+fn fallback_result_labels_do_not_clobber_input_global_labels() {
+    for (dynamic, computed, name) in [
+        (true, false, "result_dynamic"),
+        (false, false, "result_0"),
+        (false, true, "result_static"),
+    ] {
+        let allocate = if dynamic {
+            "%r = call ptr @__quantum__rt__result_allocate(ptr null)"
+        } else if computed {
+            "%r = select i1 true, ptr null, ptr inttoptr (i64 1 to ptr)"
+        } else {
+            ""
+        };
+        let result = if dynamic || computed { "%r" } else { "null" };
+        let release = if dynamic {
+            "call void @__quantum__rt__result_release(ptr %r)"
+        } else {
+            ""
+        };
+        let body = format!(
+            "entry:\n {allocate}\n call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr {result})\n call void @__quantum__rt__result_record_output(ptr {result}, ptr null)\n call void @__quantum__rt__result_record_output(ptr {result}, ptr @{name})\n %a = alloca [1 x ptr]\n store ptr {result}, ptr %a\n call void @__quantum__rt__result_array_record_output(i64 1, ptr %a, ptr @{name})\n {release}\n ret i64 0"
+        );
+        let global = format!("@{name} = private constant [7 x i8] c\"custom\\00\"");
+        for level in [0, 2] {
+            assert_eq!(
+                execute(&qir(&body, &global, dynamic, true), level, None, 0).outputs,
+                vec![
+                    (format!("USER:RESULT:{name}"), vec![true]),
+                    ("USER:RESULT:custom".into(), vec![true]),
+                    ("USER:RESULT_ARRAY:custom".into(), vec![true]),
+                ]
+            );
+        }
+    }
+}
+
+#[test]
+fn qir_result_functions_must_be_declarations() {
+    for (signature, returned) in [
+        ("ptr @__quantum__rt__result_allocate(ptr)", "ret ptr null"),
+        ("void @__quantum__rt__result_release(ptr)", "ret void"),
+        (
+            "void @__quantum__rt__result_array_allocate(i64, ptr, ptr)",
+            "ret void",
+        ),
+        (
+            "void @__quantum__rt__result_array_release(i64, ptr)",
+            "ret void",
+        ),
+        (
+            "void @__quantum__rt__result_array_record_output(i64, ptr, ptr)",
+            "ret void",
+        ),
+        (
+            "void @__quantum__rt__result_record_output(ptr, ptr)",
+            "ret void",
+        ),
+        ("i1 @__quantum__rt__read_result(ptr)", "ret i1 false"),
+        ("void @__quantum__qis__mz__body(ptr, ptr)", "ret void"),
+        ("void @__quantum__qis__m__body(ptr, ptr)", "ret void"),
+        ("void @__quantum__qis__mresetz__body(ptr, ptr)", "ret void"),
+    ] {
+        let declaration = format!("declare {signature}");
+        let ll = qir(
+            "entry:\n ret i64 0",
+            &format!("define {signature} {{ {returned} }}"),
+            false,
+            true,
+        )
+        .lines()
+        .filter(|line| !line.starts_with(&declaration))
+        .collect::<Vec<_>>()
+        .join("\n");
+        let bc = qir_ll_to_bc(&ll).unwrap();
+        for error in [
+            validate_qir(&bc, None),
+            qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+        ] {
+            assert!(
+                error
+                    .unwrap_err()
+                    .contains("must be an external declaration")
+            );
+        }
+    }
+}
+
+#[test]
+fn helpers_sharing_entry_attributes_use_static_result_storage() {
+    let ll = qir(
+        "entry:\n call void @measure(ptr inttoptr (i64 1 to ptr), ptr null)\n call void @__quantum__rt__result_record_output(ptr null, ptr @tag)\n ret i64 0",
+        "define void @measure(ptr %q, ptr %r) #0 {\n call void @__quantum__qis__mz__body(ptr %q, ptr %r)\n ret void\n}",
+        false,
+        false,
+    );
+    for level in [0, 2] {
+        assert_eq!(
+            execute(&ll, level, None, 0).outputs,
+            vec![("USER:RESULT:out".into(), vec![true])]
+        );
+    }
+}
+
+#[test]
+fn computed_static_results_require_nonzero_declared_storage() {
+    let ll = qir("entry:\n call void @measure(ptr null, ptr null)\n ret i64 0", "define void @measure(ptr %q, ptr %r) {\n call void @__quantum__qis__mz__body(ptr %q, ptr %r)\n ret void\n}", false, false).replace("\"required_num_results\"=\"2\"", "\"required_num_results\"=\"0\"");
+    let bc = qir_ll_to_bc(&ll).unwrap();
+    for error in [
+        validate_qir(&bc, None),
+        qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+    ] {
+        assert!(
+            error
+                .unwrap_err()
+                .contains("require at least one static result")
+        );
+    }
+    let empty = qir(
+        "entry:\n %a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr @tag)\n ret i64 0",
+        "",
+        false,
+        true,
+    )
+    .replace("\"required_num_results\"=\"2\"", "\"required_num_results\"=\"0\"");
+    for level in [0, 2] {
+        assert_eq!(
+            execute(&empty, level, None, 0).outputs,
+            vec![("USER:RESULT_ARRAY:out".into(), vec![])]
+        );
+    }
+}
+
+#[test]
+fn helper_result_operations_cannot_bypass_capability_checks() {
+    let ll = qir(
+        "entry:\n call void @allocate()\n ret i64 0",
+        "define void @allocate() {\n %r = call ptr @__quantum__rt__result_allocate(ptr null)\n ret void\n}",
+        false,
+        false,
+    );
+    let bc = qir_ll_to_bc(&ll).unwrap();
+    for error in [
+        validate_qir(&bc, None),
+        qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+    ] {
+        assert!(
+            error
+                .unwrap_err()
+                .contains("requires `dynamic_result_management=true`")
+        );
+    }
 }

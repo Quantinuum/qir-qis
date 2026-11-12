@@ -18,13 +18,19 @@ fn pick<'a>(data: &[u8], cursor: &mut usize, options: &'a [&'a str]) -> &'a str 
 fn build_result_index_fixture(data: &[u8]) -> String {
     let mut cursor = 0;
     let required_num_qubits = pick_u8_inclusive(data, &mut cursor, 1, 2);
-    let required_num_results = pick_u8_inclusive(data, &mut cursor, 1, 4);
+    let required_num_results = pick_u8_inclusive(data, &mut cursor, 0, 4);
     let result_index = pick_u8_inclusive(data, &mut cursor, 0, 7);
     let qir_major = pick(data, &mut cursor, &["1", "2"]);
     let mode = pick(
         data,
         &mut cursor,
-        &["measure_only", "measure_read", "measure_record", "measure_read_record"],
+        &[
+            "measure_only",
+            "measure_read",
+            "measure_record",
+            "measure_read_record",
+            "cyclic_record",
+        ],
     );
 
     let mut declarations = vec!["declare void @__quantum__qis__mz__body(%Qubit*, %Result*)"];
@@ -48,10 +54,24 @@ fn build_result_index_fixture(data: &[u8]) -> String {
     }
 
     let result_label = if mode.contains("record") {
-        "@result_label = private constant [3 x i8] c\"r\\00\"\n\n"
+        "@result_label = private constant [2 x i8] c\"r\\00\"\n\n"
     } else {
         ""
     };
+
+    // LLVM permits cyclic SSA in unreachable blocks; tag resolution must stop.
+    let mut dead = String::new();
+    if mode == "cyclic_record" {
+        let count = pick_u8_inclusive(data, &mut cursor, 1, 8);
+        dead.push_str("dead:\n");
+        for index in 0..count {
+            let next = (index + 1) % count;
+            dead.push_str(&format!(
+                "  %tag{index} = getelementptr i8, ptr %tag{next}, i64 0\n"
+            ));
+        }
+        dead.push_str("  call void @__quantum__rt__result_record_output(%Result* null, ptr %tag0)\n  unreachable\n");
+    }
 
     format!(
         r#"%Qubit = type opaque
@@ -63,6 +83,7 @@ define i64 @Entry_Point_Name() #0 {{
 entry:
 {}
   ret i64 0
+{dead}
 }}
 
 attributes #0 = {{ "entry_point" "qir_profiles"="base_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="{required_num_qubits}" "required_num_results"="{required_num_results}" }}
@@ -84,8 +105,7 @@ fuzz_target!(|data: &[u8]| -> Corpus {
         return Corpus::Reject;
     };
 
-    if qir_qis::validate_qir(&bitcode, None).is_ok() {
-        let _ = qir_qis::qir_to_qis(&bitcode, 0, "native", None);
-    }
+    let _ = qir_qis::validate_qir(&bitcode, None);
+    let _ = qir_qis::qir_to_qis(&bitcode, 0, "native", None);
     Corpus::Keep
 });
