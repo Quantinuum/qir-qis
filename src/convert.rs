@@ -1049,7 +1049,29 @@ fn get_native_qubit_handle<'ctx>(
     }
 }
 
-/// Extracts the qubit index from an `IntToPtr` conversion string.
+/// Decode a literal integer-to-pointer constant expression without relying on
+/// LLVM folding a subsequent pointer-to-integer conversion.
+fn constant_inttoptr_index(pointer: PointerValue<'_>) -> Option<u64> {
+    use llvm_sys::{
+        LLVMOpcode,
+        core::{LLVMGetConstOpcode, LLVMIsAConstantExpr},
+    };
+    let raw = pointer.as_value_ref();
+    // SAFETY: inspect the opcode only after identifying a constant expression;
+    // an IntToPtr expression has a single integer operand.
+    let operand = unsafe {
+        if LLVMIsAConstantExpr(raw).is_null() || LLVMGetConstOpcode(raw) != LLVMOpcode::LLVMIntToPtr
+        {
+            return None;
+        }
+        LLVMGetOperand(raw, 0)
+    };
+    // SAFETY: a verified IntToPtr expression has a non-null integer operand.
+    let integer = unsafe { inkwell::values::IntValue::new(operand) };
+    // Inkwell checks both ConstantInt kind and width before extracting the value.
+    integer.get_zero_extended_constant()
+}
+
 /// Extract a constant static resource ID without interpreting computed pointer text.
 ///
 /// # Errors
@@ -1057,6 +1079,9 @@ fn get_native_qubit_handle<'ctx>(
 pub fn get_index(arg: PointerValue) -> Result<u64, String> {
     if arg.is_null() {
         return Ok(0);
+    }
+    if let Some(index) = constant_inttoptr_index(arg) {
+        return Ok(index);
     }
     if arg.is_const() {
         let int_type = arg.get_type().get_context().i64_type();
@@ -1471,6 +1496,13 @@ fn native_qir_to_qis_call<'a>(
                 required_num_qubits,
             )?;
         }
+        "llvm.memset.p0.i64" => {
+            if !defined_fn.get_name().to_bytes().starts_with(b"qir_qis.") {
+                return Err(format!(
+                    "Unsupported LLVM intrinsic in user-defined function: {fn_name}"
+                ));
+            }
+        }
         "___lazy_measure"
         | "___qalloc"
         | "___qfree"
@@ -1483,8 +1515,7 @@ fn native_qir_to_qis_call<'a>(
         | "print_float"
         | "print_bool_arr"
         | "heap_alloc"
-        | "heap_free"
-        | "llvm.memset.p0.i64" => {
+        | "heap_free" => {
             let defined_name = defined_fn.get_name().to_str().ok();
             if defined_name != Some(INIT_QARRAY_FN)
                 && !defined_name.is_some_and(|name| name.starts_with("qir_qis."))
@@ -1699,6 +1730,43 @@ merge:
                     assert!(get_index(pointer).is_err(), "{name:?}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_get_index_from_constant_expressions_without_roundtrip_folding() {
+        let context = Context::create();
+        for (integer_type, literal, expected) in [
+            ("i32", "7", 7),
+            ("i64", "1", 1),
+            ("i64", "65535", 65535),
+            ("i64", "-1", u64::MAX),
+        ] {
+            let ir = format!(
+                "define ptr @constant() {{ ret ptr inttoptr ({integer_type} {literal} to ptr) }}"
+            );
+            let module = context
+                .create_module_from_ir(
+                    inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+                        ir.as_bytes(),
+                        "constant_id",
+                    ),
+                )
+                .unwrap();
+            let value = module
+                .get_function("constant")
+                .unwrap()
+                .get_first_basic_block()
+                .unwrap()
+                .get_terminator()
+                .unwrap()
+                .get_operand(0)
+                .and_then(inkwell::values::Operand::value)
+                .unwrap()
+                .into_pointer_value();
+            assert!(value.as_instruction_value().is_none());
+            assert_eq!(constant_inttoptr_index(value), Some(expected));
+            assert_eq!(get_index(value), Ok(expected));
         }
     }
 

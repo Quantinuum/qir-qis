@@ -271,6 +271,8 @@ pub fn ensure_dynamic_result_release<'ctx>(
     let b = ctx.create_builder();
     b.position_at_end(ctx.append_basic_block(f, "entry"));
     let slot = f.get_first_param().expect("slot");
+    // QIR requires non-null handles to name live allocations. Repeated release
+    // and use after release are caller-side undefined behavior, not tracked here.
     b.build_call(ensure_result_slot_clear(ctx, module), &[slot.into()], "")
         .expect("clear slot");
     let free = get_or_create_function(

@@ -1220,3 +1220,73 @@ fn static_table_initialization_uses_memset_at_resource_limit() {
         );
     }
 }
+
+#[test]
+fn entry_computed_static_ids_require_table_backing() {
+    for table in [false, true] {
+        let array_output = if table {
+            "%a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr @tag)"
+        } else {
+            ""
+        };
+        let ll = qir(
+            &format!(
+                r"entry:
+  call void @__quantum__qis__mz__body(ptr null, ptr null)
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr inttoptr (i64 1 to ptr))
+  %take = call i1 @__quantum__rt__read_result(ptr null)
+  %id = select i1 %take, ptr inttoptr (i64 1 to ptr), ptr null
+  call void @__quantum__rt__result_record_output(ptr %id, ptr null)
+  {array_output}
+  ret i64 0"
+            ),
+            "",
+            false,
+            table,
+        );
+        if table {
+            for level in [0, 2] {
+                assert_eq!(
+                    execute(&ll, level, None, 0).outputs,
+                    vec![
+                        ("USER:RESULT:result_static".into(), vec![false]),
+                        ("USER:RESULT_ARRAY:out".into(), vec![]),
+                    ]
+                );
+            }
+        } else {
+            let bc = qir_ll_to_bc(&ll).unwrap();
+            for error in [
+                validate_qir(&bc, None),
+                qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+            ] {
+                assert!(
+                    error
+                        .expect_err("entry-only SSA lowering rejects computed IDs")
+                        .contains("Cannot extract pointer index")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn user_memset_intrinsics_are_not_reported_as_internal_runtime_calls() {
+    let ll = qir(
+        "entry:\n call void @initialize()\n ret i64 0",
+        r"define void @initialize() {
+  %buffer = alloca [8 x i8]
+  call void @llvm.memset.p0.i64(ptr %buffer, i8 0, i64 8, i1 false)
+  ret void
+}
+declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)",
+        false,
+        false,
+    );
+    let bc = qir_ll_to_bc(&ll).unwrap();
+    let error = qir_to_qis(&bc, 0, "native", None).expect_err("user intrinsic remains unsupported");
+    assert_eq!(
+        error,
+        "Unsupported LLVM intrinsic in user-defined function: llvm.memset.p0.i64"
+    );
+}
