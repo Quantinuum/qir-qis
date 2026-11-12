@@ -1050,36 +1050,33 @@ fn get_native_qubit_handle<'ctx>(
 }
 
 /// Extracts the qubit index from an `IntToPtr` conversion string.
-fn get_idx_from_pointer_repr(ir_string: &str) -> Result<u64, String> {
-    for prefix in ["inttoptr (i64 ", "inttoptr i64 "] {
-        if let Some((_, rest)) = ir_string.split_once(prefix)
-            && let Some(num_str) = rest.split(' ').next()
-            && let Ok(idx) = num_str.parse::<u64>()
-        {
-            return Ok(idx);
-        }
-    }
-    Err(format!("Cannot extract pointer index from: {ir_string}"))
-}
-
-/// Extracts the index from a pointer value.
-/// Assumes the pointer is a result of an `IntToPtr` conversion.
+/// Extract a constant static resource ID without interpreting computed pointer text.
 ///
 /// # Errors
-/// Returns an error if the index cannot be extracted.
+/// Returns an error for runtime-computed pointers and unsupported constant encodings.
 pub fn get_index(arg: PointerValue) -> Result<u64, String> {
     if arg.is_null() {
         return Ok(0);
     }
     if arg.is_const() {
         let int_type = arg.get_type().get_context().i64_type();
-        if let Some(idx) = arg.const_to_int(int_type).get_zero_extended_constant() {
-            return Ok(idx);
+        if let Some(index) = arg.const_to_int(int_type).get_zero_extended_constant() {
+            return Ok(index);
         }
     }
-    // Fallback: try to extract the index from an `inttoptr` representation.
-    let ir_string = arg.print_to_string().to_string();
-    get_idx_from_pointer_repr(&ir_string)
+    if let Some(instruction) = arg.as_instruction_value()
+        && instruction.get_opcode() == InstructionOpcode::IntToPtr
+        && let Some(inkwell::values::Operand::Value(BasicValueEnum::IntValue(value))) =
+            instruction.get_operand(0)
+        && value.get_type().get_bit_width() <= 64
+        && let Some(index) = value.get_zero_extended_constant()
+    {
+        return Ok(index);
+    }
+    Err(format!(
+        "Cannot extract pointer index from: {}",
+        arg.print_to_string()
+    ))
 }
 
 /// Creates a call to the `___qfree` function.
@@ -1264,6 +1261,70 @@ pub fn parse_gep(gep: BasicValueEnum) -> Result<String, String> {
     }
 }
 
+/// Resolve a result output tag to a global string, or identify a null scalar tag.
+/// Computed/helper-parameter tags cannot be identified from LLVM SSA names.
+pub(crate) fn resolve_output_tag(value: BasicValueEnum<'_>) -> Result<Option<String>, String> {
+    use llvm_sys::{
+        LLVMOpcode,
+        core::{
+            LLVMGetConstOpcode, LLVMGetInstructionOpcode, LLVMIsAConstantExpr, LLVMIsAConstantInt,
+            LLVMIsAInstruction, LLVMIsNull,
+        },
+    };
+    let BasicValueEnum::PointerValue(mut pointer) = value else {
+        return Err("Result output tag must be a pointer".into());
+    };
+    if pointer.is_null() {
+        return Ok(None);
+    }
+    loop {
+        let raw = pointer.as_value_ref();
+        // SAFETY: `raw` is a live pointer value; string extraction is only used
+        // after LLVM identifies a global variable with a constant initializer.
+        if !unsafe { LLVMIsAGlobalVariable(raw) }.is_null() {
+            let global = unsafe { GlobalValue::new(raw) };
+            if global.is_constant() && get_string_label(global).is_ok() {
+                return parse_gep(pointer.as_basic_value_enum()).map(Some);
+            }
+            break;
+        }
+        let opcode = unsafe {
+            if !LLVMIsAInstruction(raw).is_null() {
+                LLVMGetInstructionOpcode(raw)
+            } else if !LLVMIsAConstantExpr(raw).is_null() {
+                LLVMGetConstOpcode(raw)
+            } else {
+                break;
+            }
+        };
+        if !matches!(
+            opcode,
+            LLVMOpcode::LLVMGetElementPtr | LLVMOpcode::LLVMBitCast | LLVMOpcode::LLVMAddrSpaceCast
+        ) {
+            break;
+        }
+        if opcode == LLVMOpcode::LLVMGetElementPtr {
+            let count = unsafe { LLVMGetNumOperands(raw) };
+            for index in 1..count {
+                let index = u32::try_from(index).map_err(|e| e.to_string())?;
+                let operand = unsafe { LLVMGetOperand(raw, index) };
+                if unsafe { LLVMIsAConstantInt(operand).is_null() || LLVMIsNull(operand) == 0 } {
+                    return Err(
+                        "Result output tags require zero-index views of global strings".into(),
+                    );
+                }
+            }
+        }
+        let base = unsafe { LLVMGetOperand(raw, 0) };
+        if base.is_null() {
+            break;
+        }
+        // SAFETY: verified GEPs and pointer casts have a pointer as operand zero.
+        pointer = unsafe { PointerValue::new(base) };
+    }
+    Err("Result output tag must resolve to a constant global string; runtime or helper-parameter tags are unsupported".into())
+}
+
 /// Processes IR-defined functions that take qubits, replacing calls to QIR gates
 /// with native calls.
 ///
@@ -1422,7 +1483,8 @@ fn native_qir_to_qis_call<'a>(
         | "print_float"
         | "print_bool_arr"
         | "heap_alloc"
-        | "heap_free" => {
+        | "heap_free"
+        | "llvm.memset.p0.i64" => {
             let defined_name = defined_fn.get_name().to_str().ok();
             if defined_name != Some(INIT_QARRAY_FN)
                 && !defined_name.is_some_and(|name| name.starts_with("qir_qis."))
@@ -1590,26 +1652,54 @@ mod tests {
     }
 
     #[test]
-    fn test_get_index_from_inttoptr() {
-        // Can't test this with LLVM IR directly, but we can test the string parsing logic
-        // Example IR string with inttoptr
-        let ir_string = "inttoptr (i64 42 to %Qubit*)";
-        let idx = get_idx_from_pointer_repr(ir_string);
-        assert_eq!(idx, Ok(42));
-    }
-
-    #[test]
-    fn test_get_index_from_inttoptr_opaque_ptr() {
-        let ir_string = "inttoptr (i64 7 to ptr)";
-        let idx = get_idx_from_pointer_repr(ir_string);
-        assert_eq!(idx, Ok(7));
-    }
-
-    #[test]
-    fn test_get_index_from_instruction_style_inttoptr() {
-        let ir_string = "  %q0 = inttoptr i64 1 to ptr";
-        let idx = get_idx_from_pointer_repr(ir_string);
-        assert_eq!(idx, Ok(1));
+    fn test_get_index_folds_only_constant_pointer_values() {
+        let context = Context::create();
+        let module = context
+            .create_module_from_ir(
+                inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+                    br"
+define void @indices(i1 %take, i64 %runtime) {
+entry:
+  %literal = inttoptr i64 7 to ptr
+  %small = inttoptr i32 7 to ptr
+  %maximum = inttoptr i64 -1 to ptr
+  %wide = inttoptr i128 -1 to ptr
+  %computed = inttoptr i64 %runtime to ptr
+  %selected = select i1 %take, ptr inttoptr (i64 1 to ptr), ptr null
+  br i1 %take, label %yes, label %no
+yes:
+  br label %merge
+no:
+  br label %merge
+merge:
+  %merged = phi ptr [inttoptr (i64 1 to ptr), %yes], [null, %no]
+  ret void
+}",
+                    "indices",
+                ),
+            )
+            .unwrap();
+        let function = module.get_function("indices").unwrap();
+        for instruction in function
+            .get_basic_blocks()
+            .into_iter()
+            .flat_map(BasicBlock::get_instructions)
+        {
+            let name = instruction.get_name().and_then(|name| name.to_str().ok());
+            if matches!(
+                name,
+                Some("literal" | "small" | "maximum" | "wide" | "computed" | "selected" | "merged")
+            ) {
+                let pointer = instruction.as_any_value_enum().into_pointer_value();
+                if matches!(name, Some("literal" | "small")) {
+                    assert_eq!(get_index(pointer), Ok(7));
+                } else if name == Some("maximum") {
+                    assert_eq!(get_index(pointer), Ok(u64::MAX));
+                } else {
+                    assert!(get_index(pointer).is_err(), "{name:?}");
+                }
+            }
+        }
     }
 
     #[test]

@@ -51,7 +51,7 @@ mod aux {
             get_required_num_qubits, get_required_num_qubits_strict, get_required_num_results,
             get_result_vars, get_string_label, handle_tuple_or_array_output,
             is_reserved_passthrough_name, parse_gep, record_classical_output, replace_rxy_call,
-            replace_rz_call, replace_rzz_call,
+            replace_rz_call, replace_rzz_call, resolve_output_tag,
         },
         decode_llvm_bytes,
         result_runtime::{
@@ -198,10 +198,34 @@ mod aux {
             _ => true,
         };
 
-        if valid {
+        if valid && !fn_type.is_var_arg() {
             Ok(())
         } else {
             Err(format!("Malformed QIR RT function declaration: {fn_name}"))
+        }
+    }
+
+    pub fn validate_result_signature(name: &str, ty: FunctionType<'_>) -> Result<(), String> {
+        let params = ty.get_param_types();
+        let valid = match name {
+            "__quantum__rt__read_result" => {
+                ty.get_return_type().is_some_and(|result| {
+                    result.is_int_type() && result.into_int_type().get_bit_width() == 1
+                }) && matches!(params.as_slice(), [pointer] if is_ptr_type(*pointer))
+            }
+            "__quantum__rt__result_record_output"
+            | "__quantum__qis__mz__body"
+            | "__quantum__qis__m__body"
+            | "__quantum__qis__mresetz__body" => {
+                is_void_return(ty)
+                    && matches!(params.as_slice(), [first, second] if is_ptr_type(*first) && is_ptr_type(*second))
+            }
+            _ => return validate_dynamic_rt_signature(name, ty),
+        };
+        if valid && !ty.is_var_arg() {
+            Ok(())
+        } else {
+            Err(format!("Malformed QIR result function declaration: {name}"))
         }
     }
 
@@ -2451,7 +2475,7 @@ mod aux {
         result_ptr: PointerValue<'ctx>,
         gep: BasicValueEnum<'ctx>,
     ) -> Result<inkwell::values::GlobalValue<'ctx>, String> {
-        if let Ok(old_global) = parse_gep(gep) {
+        if let Some(old_global) = resolve_output_tag(gep)? {
             return global_mapping
                 .get(old_global.as_str())
                 .copied()
@@ -3312,7 +3336,8 @@ mod aux {
         let builder = args.ctx.create_builder();
         builder.position_before(&args.instr);
         let call_args: Vec<BasicValueEnum> = extract_operands(&args.instr)?;
-        let old_name = parse_gep(call_args[2])?;
+        let old_name = resolve_output_tag(call_args[2])?
+            .ok_or("Result array output requires a constant global tag")?;
         let full_tag =
             if let Some(global) = unsafe { &mut *args.global_mapping }.get(old_name.as_str()) {
                 get_string_label(*global)?

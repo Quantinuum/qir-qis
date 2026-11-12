@@ -910,3 +910,313 @@ entry:
         }
     }
 }
+
+#[test]
+fn helper_tag_parameters_are_rejected_without_looking_up_their_names() {
+    for parameter in ["a", "missing"] {
+        for array in [false, true] {
+            let output = if array {
+                format!(
+                    "%results = alloca [1 x ptr]\n store ptr null, ptr %results\n call void @__quantum__rt__result_array_record_output(i64 1, ptr %results, ptr %{parameter})"
+                )
+            } else {
+                format!(
+                    "call void @__quantum__rt__result_record_output(ptr null, ptr %{parameter})"
+                )
+            };
+            let helpers = format!(
+                r#"
+@a = private constant [2 x i8] c"A\00"
+@b = private constant [2 x i8] c"B\00"
+define void @record(ptr %{parameter}) {{
+  {output}
+  ret void
+}}
+"#
+            );
+            let ll = qir(
+                "entry:\n call void @record(ptr @b)\n ret i64 0",
+                &helpers,
+                false,
+                array,
+            );
+            let bc = qir_ll_to_bc(&ll).unwrap();
+            for error in [
+                validate_qir(&bc, None),
+                qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+            ] {
+                assert!(
+                    error
+                        .expect_err("runtime tags require specialization, not name guessing")
+                        .contains("constant global string")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn helper_global_tag_views_keep_the_actual_global_label() {
+    let ll = qir(
+        r"entry:
+  call void @record()
+  ret i64 0",
+        r"define void @record() {
+  %a = getelementptr [4 x i8], ptr @tag, i64 0, i64 0
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)
+  call void @__quantum__rt__result_record_output(ptr null, ptr %a)
+  ret void
+}",
+        false,
+        false,
+    );
+    for level in [0, 2] {
+        assert_eq!(
+            execute(&ll, level, None, 0).outputs,
+            vec![("USER:RESULT:out".into(), vec![true])]
+        );
+    }
+}
+
+#[test]
+fn computed_qubit_pointers_use_the_selected_qubit() {
+    for phi in [false, true] {
+        let select = if phi {
+            r"br i1 %take, label %yes, label %no
+yes:
+  br label %merge
+no:
+  br label %merge
+merge:
+  %q = phi ptr [inttoptr (i64 1 to ptr), %yes], [null, %no]"
+        } else {
+            "%q = select i1 %take, ptr inttoptr (i64 1 to ptr), ptr null"
+        };
+        let helpers = format!(
+            r"define void @measure_selected(i1 %take, ptr %r) {{
+entry:
+  {select}
+  call void @__quantum__qis__mz__body(ptr %q, ptr %r)
+  ret void
+}}"
+        );
+        let ll = qir(
+            r"entry:
+  %r = call ptr @__quantum__rt__result_allocate(ptr null)
+  call void @measure_selected(i1 false, ptr %r)
+  call void @__quantum__rt__result_record_output(ptr %r, ptr @tag)
+  call void @measure_selected(i1 true, ptr %r)
+  call void @__quantum__rt__result_record_output(ptr %r, ptr @tag)
+  call void @__quantum__rt__result_release(ptr %r)
+  ret i64 0",
+            &helpers,
+            true,
+            false,
+        );
+        for level in [0, 2] {
+            assert_eq!(
+                execute(&ll, level, None, 0).outputs,
+                vec![
+                    ("USER:RESULT:out".into(), vec![false]),
+                    ("USER:RESULT:out".into(), vec![true]),
+                ]
+            );
+        }
+    }
+}
+
+#[test]
+fn computed_static_ids_use_runtime_fallback_labels() {
+    for phi in [false, true] {
+        let select = if phi {
+            r"br i1 %take, label %yes, label %no
+yes:
+  br label %merge
+no:
+  br label %merge
+merge:
+  %r = phi ptr [inttoptr (i64 1 to ptr), %yes], [null, %no]"
+        } else {
+            "%r = select i1 %take, ptr inttoptr (i64 1 to ptr), ptr null"
+        };
+        let helpers = format!(
+            r"define void @record_selected(i1 %take) {{
+entry:
+  {select}
+  call void @__quantum__rt__result_record_output(ptr %r, ptr null)
+  ret void
+}}"
+        );
+        let ll = qir(
+            r"entry:
+  call void @__quantum__qis__mz__body(ptr null, ptr null)
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr inttoptr (i64 1 to ptr))
+  call void @record_selected(i1 false)
+  call void @record_selected(i1 true)
+  ret i64 0",
+            &helpers,
+            false,
+            false,
+        );
+        for level in [0, 2] {
+            assert_eq!(
+                execute(&ll, level, None, 0).outputs,
+                vec![
+                    ("USER:RESULT:result_static".into(), vec![false]),
+                    ("USER:RESULT:result_static".into(), vec![true]),
+                ]
+            );
+        }
+    }
+}
+
+#[test]
+fn reserved_aliases_cannot_hide_result_storage_or_runtime_symbols() {
+    for symbol in [
+        "qir_qis.static_results",
+        "qir_qis.result_read",
+        "heap_alloc",
+        "heap_free",
+        "panic",
+    ] {
+        let helper = format!("@storage = private global i8 0\n @{symbol} = alias i8, ptr @storage");
+        let ll = qir(
+            "entry:\n %a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr @tag)\n ret i64 0",
+            &helper,
+            false,
+            true,
+        );
+        let bc = qir_ll_to_bc(&ll).unwrap();
+        for error in [
+            validate_qir(&bc, None),
+            qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+        ] {
+            assert!(
+                error
+                    .expect_err("aliases must not bypass reserved symbols")
+                    .contains("reserved symbol")
+            );
+        }
+    }
+    let ll = qir(
+        "entry:\n ret i64 0",
+        r"@qir_qis.result_read = ifunc i1 (ptr), ptr @resolver
+define ptr @resolver() { ret ptr @actual }
+define i1 @actual(ptr %r) { ret i1 false }",
+        true,
+        false,
+    );
+    let bc = qir_ll_to_bc(&ll).unwrap();
+    assert!(
+        qir_to_qis(&bc, 0, "native", None)
+            .expect_err("indirect functions also reserve names")
+            .contains("reserved symbol")
+    );
+}
+
+#[test]
+fn result_signatures_are_checked_independently_of_static_bounds() {
+    for name in [
+        "__quantum__rt__read_result",
+        "__quantum__rt__result_record_output",
+        "__quantum__qis__mz__body",
+        "__quantum__qis__m__body",
+        "__quantum__qis__mresetz__body",
+    ] {
+        let read = name == "__quantum__rt__read_result";
+        let canonical = if read {
+            format!("declare i1 @{name}(ptr)")
+        } else {
+            format!("declare void @{name}(ptr, ptr)")
+        };
+        let signatures = if read {
+            vec![
+                "void (ptr)",
+                "i32 (ptr)",
+                "ptr (ptr)",
+                "i1 ()",
+                "i1 (ptr, ptr)",
+                "i1 (i64)",
+                "i1 (i32)",
+                "i1 (ptr, ...)",
+            ]
+        } else {
+            vec![
+                "i1 (ptr, ptr)",
+                "ptr (ptr, ptr)",
+                "void ()",
+                "void (ptr)",
+                "void (ptr, ptr, ptr)",
+                "void (i64, ptr)",
+                "void (ptr, i64)",
+                "void (ptr, ptr, ...)",
+            ]
+        };
+        for signature in signatures {
+            let (ret, args) = signature.split_once(' ').unwrap();
+            let malformed = format!("declare {ret} @{name}{args}");
+            for dynamic in [false, true] {
+                let mut ll = qir("entry:\n ret i64 0", "", dynamic, false);
+                if ll.contains(&canonical) {
+                    ll = ll.replace(&canonical, &malformed);
+                } else {
+                    write!(ll, "\n{malformed}\n").unwrap();
+                }
+                let bc = qir_ll_to_bc(&ll).unwrap();
+                for error in [
+                    validate_qir(&bc, None),
+                    qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+                ] {
+                    let error = error
+                        .expect_err("malformed declarations must return errors before lowering");
+                    assert!(
+                        error.contains("Malformed QIR result function declaration"),
+                        "{malformed}: {error}"
+                    );
+                }
+            }
+        }
+    }
+    let ll = qir(
+        "entry:\n %v = call i1 @__quantum__rt__read_result(i64 0)\n ret i64 0",
+        "",
+        true,
+        false,
+    )
+    .replace(
+        "declare i1 @__quantum__rt__read_result(ptr)",
+        "declare i1 @__quantum__rt__read_result(i64)",
+    );
+    let bc = qir_ll_to_bc(&ll).unwrap();
+    assert!(validate_qir(&bc, None).is_err());
+    qir_to_qis(&bc, 0, "native", None)
+        .expect_err("malformed result calls must fail without panicking");
+}
+
+#[test]
+fn static_table_initialization_uses_memset_at_resource_limit() {
+    for count in [1, crate::MAX_STATIC_RESULTS] {
+        let ll = qir("entry:\n %a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr @tag)\n ret i64 0", "", false, true)
+            .replace("\"required_num_results\"=\"2\"", &format!("\"required_num_results\"=\"{count}\""));
+        let bc = qir_ll_to_bc(&ll).unwrap();
+        validate_qir(&bc, None).unwrap();
+        let output = qir_to_qis(&bc, 0, "native", None).unwrap();
+        let ctx = Context::create();
+        let buffer = MemoryBuffer::create_from_memory_range_copy(&output, "bounded_initialization");
+        let module = Module::parse_bitcode_from_buffer(&buffer, &ctx).unwrap();
+        module.verify().unwrap();
+        let initialize = module.get_function("qir_qis.init_static_results").unwrap();
+        let calls: Vec<_> = initialize
+            .get_basic_blocks()
+            .into_iter()
+            .flat_map(inkwell::basic_block::BasicBlock::get_instructions)
+            .filter_map(|i| inkwell::values::CallSiteValue::try_from(i).ok())
+            .filter_map(inkwell::values::CallSiteValue::get_called_fn_value)
+            .collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls.first().unwrap().get_name().to_str().unwrap(),
+            "llvm.memset.p0.i64"
+        );
+    }
+}

@@ -28,6 +28,7 @@ use crate::{
 pub const STATIC_RESULTS: &str = "qir_qis.static_results";
 
 pub fn validate_input_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), String> {
+    validate_alias_symbols(module)?;
     for global in module.get_globals() {
         if global.get_name().to_bytes().starts_with(b"qir_qis.") {
             return Err("Input QIR must not define internal result storage globals".into());
@@ -40,9 +41,14 @@ pub fn validate_input_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), 
                 | "__quantum__rt__result_release"
                 | "__quantum__rt__result_array_allocate"
                 | "__quantum__rt__result_array_release"
-                | "__quantum__rt__result_array_record_output")
+                | "__quantum__rt__result_array_record_output"
+                | "__quantum__rt__read_result"
+                | "__quantum__rt__result_record_output"
+                | "__quantum__qis__mz__body"
+                | "__quantum__qis__m__body"
+                | "__quantum__qis__mresetz__body")
         ) {
-            crate::aux::validate_dynamic_rt_signature(
+            crate::aux::validate_result_signature(
                 function.get_name().to_str().map_err(|e| e.to_string())?,
                 function.get_type(),
             )?;
@@ -70,6 +76,85 @@ pub fn validate_input_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), 
                 .is_some_and(|f| f.get_type() != ty || f.count_basic_blocks() != 0)
         {
             return Err(format!("Invalid downstream runtime declaration: {name}"));
+        }
+    }
+    validate_output_tags(module)
+}
+
+fn validate_output_tags(module: &Module<'_>) -> Result<(), String> {
+    for function in module.get_functions() {
+        for block in function.get_basic_blocks() {
+            for instruction in block.get_instructions() {
+                let Ok(call) = CallSiteValue::try_from(instruction) else {
+                    continue;
+                };
+                let Some(callee) = call.get_called_fn_value() else {
+                    continue;
+                };
+                let index = match callee.get_name().to_str() {
+                    Ok("__quantum__rt__result_record_output") => 1,
+                    Ok("__quantum__rt__result_array_record_output") => 2,
+                    _ => continue,
+                };
+                let tag = instruction
+                    .get_operand(index)
+                    .and_then(inkwell::values::Operand::value)
+                    .ok_or("Missing result output tag")?;
+                if crate::convert::resolve_output_tag(tag)?.is_none() && index == 2 {
+                    return Err("Result array output requires a constant global tag".into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_alias_symbols(module: &Module<'_>) -> Result<(), String> {
+    use llvm_sys::core::{
+        LLVMGetFirstGlobalAlias, LLVMGetFirstGlobalIFunc, LLVMGetNextGlobalAlias,
+        LLVMGetNextGlobalIFunc, LLVMGetValueName2,
+    };
+    // Inkwell's global iterator visits variables, not aliases or indirect functions.
+    for (first, next) in [
+        (
+            LLVMGetFirstGlobalAlias
+                as unsafe extern "C" fn(
+                    llvm_sys::prelude::LLVMModuleRef,
+                ) -> llvm_sys::prelude::LLVMValueRef,
+            LLVMGetNextGlobalAlias
+                as unsafe extern "C" fn(
+                    llvm_sys::prelude::LLVMValueRef,
+                ) -> llvm_sys::prelude::LLVMValueRef,
+        ),
+        (
+            LLVMGetFirstGlobalIFunc
+                as unsafe extern "C" fn(
+                    llvm_sys::prelude::LLVMModuleRef,
+                ) -> llvm_sys::prelude::LLVMValueRef,
+            LLVMGetNextGlobalIFunc
+                as unsafe extern "C" fn(
+                    llvm_sys::prelude::LLVMValueRef,
+                ) -> llvm_sys::prelude::LLVMValueRef,
+        ),
+    ] {
+        let mut value = unsafe { first(module.as_mut_ptr()) };
+        while !value.is_null() {
+            let mut len = 0;
+            // SAFETY: these iterators yield live GlobalAlias/GlobalIFunc values;
+            // LLVMGetValueName2 returns their borrowed name and exact byte length.
+            let pointer = unsafe { LLVMGetValueName2(value, &raw mut len) };
+            if !pointer.is_null() {
+                let name = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), len) };
+                if name.starts_with(b"qir_qis.")
+                    || [b"heap_alloc".as_slice(), b"heap_free", b"panic"].contains(&name)
+                {
+                    return Err(format!(
+                        "Input alias or indirect function uses reserved symbol: {}",
+                        String::from_utf8_lossy(name)
+                    ));
+                }
+            }
+            value = unsafe { next(value) };
         }
     }
     Ok(())
@@ -366,8 +451,25 @@ pub fn initialize_static_results<'ctx>(
         .get_first_basic_block()
         .and_then(inkwell::basic_block::BasicBlock::get_first_instruction)
         .ok_or("Missing entry instructions")?;
+    let initialize = module.add_function(
+        "qir_qis.init_static_results",
+        ctx.void_type().fn_type(&[], false),
+        Some(Linkage::Private),
+    );
+    b.position_at_end(ctx.append_basic_block(initialize, "entry"));
+    // An aggregate zero store expands into hundreds of thousands of scalar
+    // stores in downstream -O0 codegen at the static-result resource limit.
+    b.build_memset(
+        table.as_pointer_value(),
+        1,
+        ctx.i8_type().const_zero(),
+        ty.size_of()
+            .ok_or("Static result table must have a sized LLVM type")?,
+    )
+    .map_err(|e| e.to_string())?;
+    b.build_return(None).map_err(|e| e.to_string())?;
     b.position_before(&first);
-    b.build_store(table.as_pointer_value(), ty.const_zero())
+    b.build_call(initialize, &[], "")
         .map_err(|e| e.to_string())?;
     // One shared table permits result operations in helpers without changing their ABI.
     let cleanup = module.add_function(
