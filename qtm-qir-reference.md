@@ -193,6 +193,8 @@ declare void @__quantum__rt__double_record_output(double, i8*)
 - `"dynamic_result_management"`
 - `"arrays"`
 
+See the [QIR arrays and dynamic allocation specification](https://github.com/qir-alliance/qir-spec/blob/2.1/specification/Memory_Management.md) for capability requirements and runtime semantics.
+
 When enabled, the following QIR runtime APIs are accepted and lowered by the compiler:
 
 ```llvm
@@ -208,13 +210,15 @@ declare void @__quantum__rt__result_array_release(i64 %N, ptr %array)
 declare void @__quantum__rt__result_array_record_output(i64 %N, ptr %result_array, ptr %tag)
 ```
 
+Result-array output supports static and dynamically allocated results. Dynamic result allocation is supported in successor blocks, branches, loops, and IR-defined helpers.
+
 Support boundary:
 
-- Fixed-size LLVM pointer arrays are supported via `alloca`, `getelementptr`, `load`, `store`, `extractvalue`, and `insertvalue`.
-- `required_num_qubits` is optional when `dynamic_qubit_management=true`.
-- `required_num_results` is optional when `dynamic_result_management=true`.
+- Only fixed-size classical array buffers are supported; pointer-returning helpers remain unsupported.
+- Dynamic results require downstream `heap_alloc(i64) -> ptr` (null on allocation failure) and `heap_free(ptr) -> void`. Input QIR cannot declare or define these reserved symbols.
+- Loaded or selected static result IDs are supported with result arrays or result operations in helpers; entry-only scalar programs require constant IDs. Null-tag scalar output uses `result_<ID>` for constant static IDs, `result_static` for computed static IDs, or `result_dynamic` for dynamic results.
+- Result tags must resolve to private/internal constant `[N x i8]` global strings through zero-offset views. Label limits are 243 UTF-8 bytes for scalar results and 237 for result arrays.
 - `__quantum__rt__result_array_record_output` currently requires an array length that fits in `i32` for the downstream `print_bool_arr(...)` ABI.
-- Runtime-sized classical buffers remain out of scope.
 
 ## Platform Utilities
 

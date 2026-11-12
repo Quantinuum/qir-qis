@@ -12,13 +12,13 @@ __all__ = [
 ]
 
 class CompilerError(builtins.Exception):
-    r"""QIR CompilerError.
+    r"""QIR `CompilerError`.
 
     Raised when QIR to QIS compilation fails.
     """
 
 class ValidationError(builtins.Exception):
-    r"""QIR ValidationError.
+    r"""QIR `ValidationError`.
 
     Raised when the QIR is invalid.
     """

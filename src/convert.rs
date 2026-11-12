@@ -1,5 +1,5 @@
 use ::std::hash::BuildHasher;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::Into;
 use std::error::Error;
 
@@ -54,6 +54,8 @@ pub(crate) static RESERVED_PASSTHROUGH_EXACT_NAMES: phf::Set<&'static str> = phf
     "print_bool",
     "print_float",
     "print_bool_arr",
+    "heap_alloc",
+    "heap_free",
     "get_current_shot",
     "random_seed",
     "random_int",
@@ -87,12 +89,10 @@ pub fn checked_qubit_index(qubit_idx: u64, required_num_qubits: u32) -> Result<u
 /// Checks if the given type is an i8 array type.
 fn is_i8_array_type(ty: AnyTypeEnum) -> bool {
     ty.is_array_type()
-        && ty
-            .into_array_type()
-            .get_element_type()
-            .into_int_type()
-            .get_bit_width()
-            == 8
+        && matches!(
+            ty.into_array_type().get_element_type(),
+            inkwell::types::BasicTypeEnum::IntType(int) if int.get_bit_width() == 8
+        )
 }
 
 /// Processes a global variable by replacing its initializer with a
@@ -101,10 +101,10 @@ fn is_i8_array_type(ty: AnyTypeEnum) -> bool {
 fn translate_global<'ctx>(
     context: &'ctx Context,
     module: &Module<'ctx>,
-    old_global: GlobalValue,
+    old_global: GlobalValue<'ctx>,
     global_mapping: &mut HashMap<String, GlobalValue<'ctx>>,
     empty_tag_counter: &mut usize,
-) -> Result<(), String> {
+) -> Result<GlobalValue<'ctx>, String> {
     // 1. Extract original string
     let label = get_string_label(old_global)?;
 
@@ -134,7 +134,7 @@ fn translate_global<'ctx>(
     new_global.set_constant(true);
 
     global_mapping.insert(old_global_key, new_global);
-    Ok(())
+    Ok(new_global)
 }
 
 /// Extracts the string label from a global variable's initializer.
@@ -145,7 +145,10 @@ pub fn get_string_label(old_global: GlobalValue<'_>) -> Result<String, String> {
     let init = old_global
         .get_initializer()
         .ok_or("Global has no initializer")?;
-    if init.get_type().is_array_type() && init.get_type().into_array_type().len() == 1 {
+    if init.get_type().is_array_type()
+        && init.get_type().into_array_type().len() == 1
+        && unsafe { llvm_sys::core::LLVMIsNull(init.as_value_ref()) } != 0
+    {
         return Ok(String::new());
     }
     let init_ref = init.as_value_ref();
@@ -232,6 +235,23 @@ pub fn convert_globals<'ctx>(
     context: &'ctx Context,
     module: &Module<'ctx>,
 ) -> Result<HashMap<String, GlobalValue<'ctx>>, String> {
+    convert_globals_with_results(context, module).map(|(globals, _)| globals)
+}
+
+// Result tags use input value identity, independently of legacy classical output
+// labels and generated null-tag fallbacks that may share the same spelling.
+pub(crate) type ResultOutputGlobals<'ctx> = HashMap<GlobalValue<'ctx>, GlobalValue<'ctx>>;
+
+pub(crate) fn convert_globals_with_results<'ctx>(
+    context: &'ctx Context,
+    module: &Module<'ctx>,
+) -> Result<
+    (
+        HashMap<String, GlobalValue<'ctx>>,
+        ResultOutputGlobals<'ctx>,
+    ),
+    String,
+> {
     // Collect globals matching the pattern
     let old_globals: Vec<_> = module
         .get_globals()
@@ -243,17 +263,19 @@ pub fn convert_globals<'ctx>(
         .collect();
 
     let mut global_mapping: HashMap<String, GlobalValue> = HashMap::new();
+    let mut result_mapping = HashMap::new();
     let mut empty_tag_counter: usize = 0;
     for old_global in old_globals {
-        translate_global(
+        let translated = translate_global(
             context,
             module,
             old_global,
             &mut global_mapping,
             &mut empty_tag_counter,
         )?;
+        result_mapping.insert(old_global, translated);
     }
-    Ok(global_mapping)
+    Ok((global_mapping, result_mapping))
 }
 
 /// Finds the entry function in the module.
@@ -564,7 +586,7 @@ fn process_allocation_error<'ctx>(
     Ok(())
 }
 
-fn build_panic_with_message<'ctx>(
+pub(crate) fn build_panic_with_message<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
     builder: &Builder<'ctx>,
@@ -1047,37 +1069,59 @@ fn get_native_qubit_handle<'ctx>(
     }
 }
 
-/// Extracts the qubit index from an `IntToPtr` conversion string.
-fn get_idx_from_pointer_repr(ir_string: &str) -> Result<u64, String> {
-    for prefix in ["inttoptr (i64 ", "inttoptr i64 "] {
-        if let Some((_, rest)) = ir_string.split_once(prefix)
-            && let Some(num_str) = rest.split(' ').next()
-            && let Ok(idx) = num_str.parse::<u64>()
+/// Decode a literal integer-to-pointer constant expression without relying on
+/// LLVM folding a subsequent pointer-to-integer conversion.
+fn constant_inttoptr_index(pointer: PointerValue<'_>) -> Option<u64> {
+    use llvm_sys::{
+        LLVMOpcode,
+        core::{LLVMGetConstOpcode, LLVMIsAConstantExpr},
+    };
+    let raw = pointer.as_value_ref();
+    // SAFETY: inspect the opcode only after identifying a constant expression;
+    // an IntToPtr expression has a single integer operand.
+    let operand = unsafe {
+        if LLVMIsAConstantExpr(raw).is_null() || LLVMGetConstOpcode(raw) != LLVMOpcode::LLVMIntToPtr
         {
-            return Ok(idx);
+            return None;
         }
-    }
-    Err(format!("Cannot extract pointer index from: {ir_string}"))
+        LLVMGetOperand(raw, 0)
+    };
+    // SAFETY: a verified IntToPtr expression has a non-null integer operand.
+    let integer = unsafe { inkwell::values::IntValue::new(operand) };
+    // Inkwell checks both ConstantInt kind and width before extracting the value.
+    integer.get_zero_extended_constant()
 }
 
-/// Extracts the index from a pointer value.
-/// Assumes the pointer is a result of an `IntToPtr` conversion.
+/// Extract a constant static resource ID without interpreting computed pointer text.
 ///
 /// # Errors
-/// Returns an error if the index cannot be extracted.
+/// Returns an error for runtime-computed pointers and unsupported constant encodings.
 pub fn get_index(arg: PointerValue) -> Result<u64, String> {
     if arg.is_null() {
         return Ok(0);
     }
+    if let Some(index) = constant_inttoptr_index(arg) {
+        return Ok(index);
+    }
     if arg.is_const() {
         let int_type = arg.get_type().get_context().i64_type();
-        if let Some(idx) = arg.const_to_int(int_type).get_zero_extended_constant() {
-            return Ok(idx);
+        if let Some(index) = arg.const_to_int(int_type).get_zero_extended_constant() {
+            return Ok(index);
         }
     }
-    // Fallback: try to extract the index from an `inttoptr` representation.
-    let ir_string = arg.print_to_string().to_string();
-    get_idx_from_pointer_repr(&ir_string)
+    if let Some(instruction) = arg.as_instruction_value()
+        && instruction.get_opcode() == InstructionOpcode::IntToPtr
+        && let Some(inkwell::values::Operand::Value(BasicValueEnum::IntValue(value))) =
+            instruction.get_operand(0)
+        && value.get_type().get_bit_width() <= 64
+        && let Some(index) = value.get_zero_extended_constant()
+    {
+        return Ok(index);
+    }
+    Err(format!(
+        "Cannot extract pointer index from: {}",
+        arg.print_to_string()
+    ))
 }
 
 /// Creates a call to the `___qfree` function.
@@ -1262,6 +1306,80 @@ pub fn parse_gep(gep: BasicValueEnum) -> Result<String, String> {
     }
 }
 
+/// Resolve a result output tag to a global string, or identify a null scalar tag.
+/// Computed/helper-parameter tags cannot be identified from LLVM SSA names.
+pub(crate) fn resolve_output_tag(
+    value: BasicValueEnum<'_>,
+) -> Result<Option<GlobalValue<'_>>, String> {
+    use llvm_sys::{
+        LLVMOpcode,
+        core::{
+            LLVMGetConstOpcode, LLVMGetInstructionOpcode, LLVMIsAConstantExpr, LLVMIsAConstantInt,
+            LLVMIsAInstruction, LLVMIsNull,
+        },
+    };
+    let BasicValueEnum::PointerValue(mut pointer) = value else {
+        return Err("Result output tag must be a pointer".into());
+    };
+    if pointer.is_null() {
+        return Ok(None);
+    }
+    let mut visited = HashSet::new();
+    loop {
+        let raw = pointer.as_value_ref();
+        if !visited.insert(raw) {
+            return Err("Cyclic result output tag pointer".into());
+        }
+        // SAFETY: `raw` is a live pointer value; string extraction is only used
+        // after LLVM identifies a global variable with a constant initializer.
+        if !unsafe { LLVMIsAGlobalVariable(raw) }.is_null() {
+            let global = unsafe { GlobalValue::new(raw) };
+            if matches!(global.get_linkage(), Linkage::Internal | Linkage::Private)
+                && global.is_constant()
+                && is_i8_array_type(global.get_value_type())
+            {
+                get_string_label(global)?;
+                return Ok(Some(global));
+            }
+            break;
+        }
+        let opcode = unsafe {
+            if !LLVMIsAInstruction(raw).is_null() {
+                LLVMGetInstructionOpcode(raw)
+            } else if !LLVMIsAConstantExpr(raw).is_null() {
+                LLVMGetConstOpcode(raw)
+            } else {
+                break;
+            }
+        };
+        if !matches!(
+            opcode,
+            LLVMOpcode::LLVMGetElementPtr | LLVMOpcode::LLVMBitCast | LLVMOpcode::LLVMAddrSpaceCast
+        ) {
+            break;
+        }
+        if opcode == LLVMOpcode::LLVMGetElementPtr {
+            let count = unsafe { LLVMGetNumOperands(raw) };
+            for index in 1..count {
+                let index = u32::try_from(index).map_err(|e| e.to_string())?;
+                let operand = unsafe { LLVMGetOperand(raw, index) };
+                if unsafe { LLVMIsAConstantInt(operand).is_null() || LLVMIsNull(operand) == 0 } {
+                    return Err(
+                        "Result output tags require zero-index views of global strings".into(),
+                    );
+                }
+            }
+        }
+        let base = unsafe { LLVMGetOperand(raw, 0) };
+        if base.is_null() {
+            break;
+        }
+        // SAFETY: verified GEPs and pointer casts have a pointer as operand zero.
+        pointer = unsafe { PointerValue::new(base) };
+    }
+    Err("Result output tag must resolve to a constant global string; runtime or helper-parameter tags are unsupported".into())
+}
+
 /// Processes IR-defined functions that take qubits, replacing calls to QIR gates
 /// with native calls.
 ///
@@ -1349,7 +1467,7 @@ pub fn prune_unused_ir_qis_helpers(module: &Module<'_>) {
     clippy::too_many_arguments,
     reason = "IR-defined helper lowering needs function identity plus qubit-lowering context"
 )]
-fn native_qir_to_qis_call<'a>(
+pub(crate) fn native_qir_to_qis_call<'a>(
     ctx: &'a Context,
     module: &Module<'a>,
     instr: InstructionValue<'a>,
@@ -1387,7 +1505,15 @@ fn native_qir_to_qis_call<'a>(
                 required_num_qubits,
             )?;
         }
-        "___qalloc"
+        "llvm.memset.p0.i64" => {
+            if !defined_fn.get_name().to_bytes().starts_with(b"qir_qis.") {
+                return Err(format!(
+                    "Unsupported LLVM intrinsic in user-defined function: {fn_name}"
+                ));
+            }
+        }
+        "___lazy_measure"
+        | "___qalloc"
         | "___qfree"
         | "___reset"
         | "panic"
@@ -1396,7 +1522,9 @@ fn native_qir_to_qis_call<'a>(
         | "print_int"
         | "print_bool"
         | "print_float"
-        | "print_bool_arr" => {
+        | "print_bool_arr"
+        | "heap_alloc"
+        | "heap_free" => {
             let defined_name = defined_fn.get_name().to_str().ok();
             if defined_name != Some(INIT_QARRAY_FN)
                 && !defined_name.is_some_and(|name| name.starts_with("qir_qis."))
@@ -1539,12 +1667,14 @@ mod tests {
 
     // Subset of `RESERVED_PASSTHROUGH_EXACT_NAMES` that is rejected by the
     // explicit internal-helper guard in `native_qir_to_qis_call`.
-    const RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS: [&str; 5] = [
+    const RESERVED_NAMES_REJECTED_AS_INTERNAL_CALLS: [&str; 7] = [
         "panic",
         "print_int",
         "print_bool",
         "print_float",
         "print_bool_arr",
+        "heap_alloc",
+        "heap_free",
     ];
 
     #[test]
@@ -1562,26 +1692,91 @@ mod tests {
     }
 
     #[test]
-    fn test_get_index_from_inttoptr() {
-        // Can't test this with LLVM IR directly, but we can test the string parsing logic
-        // Example IR string with inttoptr
-        let ir_string = "inttoptr (i64 42 to %Qubit*)";
-        let idx = get_idx_from_pointer_repr(ir_string);
-        assert_eq!(idx, Ok(42));
+    fn test_get_index_folds_only_constant_pointer_values() {
+        let context = Context::create();
+        let module = context
+            .create_module_from_ir(
+                inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+                    br"
+define void @indices(i1 %take, i64 %runtime) {
+entry:
+  %literal = inttoptr i64 7 to ptr
+  %small = inttoptr i32 7 to ptr
+  %maximum = inttoptr i64 -1 to ptr
+  %wide = inttoptr i128 -1 to ptr
+  %computed = inttoptr i64 %runtime to ptr
+  %selected = select i1 %take, ptr inttoptr (i64 1 to ptr), ptr null
+  br i1 %take, label %yes, label %no
+yes:
+  br label %merge
+no:
+  br label %merge
+merge:
+  %merged = phi ptr [inttoptr (i64 1 to ptr), %yes], [null, %no]
+  ret void
+}",
+                    "indices",
+                ),
+            )
+            .unwrap();
+        let function = module.get_function("indices").unwrap();
+        for instruction in function
+            .get_basic_blocks()
+            .into_iter()
+            .flat_map(BasicBlock::get_instructions)
+        {
+            let name = instruction.get_name().and_then(|name| name.to_str().ok());
+            if matches!(
+                name,
+                Some("literal" | "small" | "maximum" | "wide" | "computed" | "selected" | "merged")
+            ) {
+                let pointer = instruction.as_any_value_enum().into_pointer_value();
+                if matches!(name, Some("literal" | "small")) {
+                    assert_eq!(get_index(pointer), Ok(7));
+                } else if name == Some("maximum") {
+                    assert_eq!(get_index(pointer), Ok(u64::MAX));
+                } else {
+                    assert!(get_index(pointer).is_err(), "{name:?}");
+                }
+            }
+        }
     }
 
     #[test]
-    fn test_get_index_from_inttoptr_opaque_ptr() {
-        let ir_string = "inttoptr (i64 7 to ptr)";
-        let idx = get_idx_from_pointer_repr(ir_string);
-        assert_eq!(idx, Ok(7));
-    }
-
-    #[test]
-    fn test_get_index_from_instruction_style_inttoptr() {
-        let ir_string = "  %q0 = inttoptr i64 1 to ptr";
-        let idx = get_idx_from_pointer_repr(ir_string);
-        assert_eq!(idx, Ok(1));
+    fn test_get_index_from_constant_expressions_without_roundtrip_folding() {
+        let context = Context::create();
+        for (integer_type, literal, expected) in [
+            ("i32", "7", 7),
+            ("i64", "1", 1),
+            ("i64", "65535", 65535),
+            ("i64", "-1", u64::MAX),
+        ] {
+            let ir = format!(
+                "define ptr @constant() {{ ret ptr inttoptr ({integer_type} {literal} to ptr) }}"
+            );
+            let module = context
+                .create_module_from_ir(
+                    inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+                        ir.as_bytes(),
+                        "constant_id",
+                    ),
+                )
+                .unwrap();
+            let value = module
+                .get_function("constant")
+                .unwrap()
+                .get_first_basic_block()
+                .unwrap()
+                .get_terminator()
+                .unwrap()
+                .get_operand(0)
+                .and_then(inkwell::values::Operand::value)
+                .unwrap()
+                .into_pointer_value();
+            assert!(value.as_instruction_value().is_none());
+            assert_eq!(constant_inttoptr_index(value), Some(expected));
+            assert_eq!(get_index(value), Ok(expected));
+        }
     }
 
     #[test]
@@ -1791,16 +1986,14 @@ mod tests {
 
         let mut mapping = HashMap::new();
         let mut empty_tag_counter = 0;
-        assert!(
-            translate_global(
-                &context,
-                &module,
-                global,
-                &mut mapping,
-                &mut empty_tag_counter
-            )
-            .is_err()
-        );
+        translate_global(
+            &context,
+            &module,
+            global,
+            &mut mapping,
+            &mut empty_tag_counter,
+        )
+        .unwrap_err();
     }
 
     #[test]
