@@ -534,6 +534,53 @@ no:
 }
 
 #[test]
+fn input_heap_runtime_symbols_cannot_bypass_validation() {
+    for (name, signature, call) in [
+        (
+            "heap_alloc",
+            "ptr @heap_alloc(i64)",
+            "%p = call ptr @heap_alloc(i64 1)",
+        ),
+        (
+            "heap_free",
+            "void @heap_free(ptr)",
+            "call void @heap_free(ptr inttoptr (i64 1 to ptr))",
+        ),
+    ] {
+        for attribute in ["", "\"wasm\"", "\"cudaq-fnid\"=\"heap\""] {
+            for placement in ["unused", "entry", "helper"] {
+                let body = match placement {
+                    "entry" => format!("entry:\n {call}\n ret i64 0"),
+                    "helper" => "entry:\n call void @helper()\n ret i64 0".into(),
+                    _ => "entry:\n ret i64 0".into(),
+                };
+                let mut helpers = format!("declare {signature}");
+                if !attribute.is_empty() {
+                    write!(helpers, " #2\nattributes #2 = {{ {attribute} }}").unwrap();
+                }
+                if placement == "helper" {
+                    write!(
+                        helpers,
+                        "\ndefine void @helper() {{\n {call}\n ret void\n}}"
+                    )
+                    .unwrap();
+                }
+                let bc = qir_ll_to_bc(&qir(&body, &helpers, true, false)).unwrap();
+                let expected = format!("Input QIR uses reserved heap runtime symbol: {name}");
+                let validation = validate_qir(&bc, None).unwrap_err();
+                let translation = qir_to_qis(&bc, 0, "native", None).unwrap_err();
+                assert!(validation.contains(&expected), "{validation}");
+                assert!(translation.contains(&expected), "{translation}");
+                let passthrough =
+                    crate::qir_to_qis_with_passthrough_calls(&bc, 0, "native", None, &[name])
+                        .unwrap_err();
+                assert!(passthrough.contains("reserved"), "{passthrough}");
+            }
+        }
+    }
+}
+
+#[test]
 fn malformed_runtime_symbols_fail_validation_and_direct_translation() {
     for declaration in [
         "declare i64 @heap_alloc(i64)",
@@ -542,6 +589,8 @@ fn malformed_runtime_symbols_fail_validation_and_direct_translation() {
         "declare i64 @heap_free(ptr)",
         "declare void @heap_free(i64)",
         "define ptr @heap_alloc(i64 %n) { ret ptr null }",
+        "define void @heap_free(ptr %p) { ret void }",
+        "@heap_alloc = global i64 0",
         "@heap_free = global i64 0",
         "@qir_qis.static_results = global i64 0",
     ] {

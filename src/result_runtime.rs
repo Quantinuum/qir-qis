@@ -29,6 +29,7 @@ pub const STATIC_RESULTS: &str = "qir_qis.static_results";
 
 pub fn validate_input_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), String> {
     validate_alias_symbols(module)?;
+    validate_heap_runtime_symbols(module)?;
     for global in module.get_globals() {
         if global.get_name().to_bytes().starts_with(b"qir_qis.") {
             return Err("Input QIR must not define internal result storage globals".into());
@@ -61,24 +62,30 @@ pub fn validate_input_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), 
         }
     }
     let ptr = ctx.ptr_type(AddressSpace::default());
-    for (name, ty) in [
-        ("heap_alloc", ptr.fn_type(&[ctx.i64_type().into()], false)),
-        ("heap_free", ctx.void_type().fn_type(&[ptr.into()], false)),
-        (
-            "panic",
-            ctx.void_type()
-                .fn_type(&[ctx.i32_type().into(), ptr.into()], false),
-        ),
-    ] {
-        if module.get_global(name).is_some()
-            || module
-                .get_function(name)
-                .is_some_and(|f| f.get_type() != ty || f.count_basic_blocks() != 0)
-        {
-            return Err(format!("Invalid downstream runtime declaration: {name}"));
-        }
+    let panic_type = ctx
+        .void_type()
+        .fn_type(&[ctx.i32_type().into(), ptr.into()], false);
+    if module.get_global("panic").is_some()
+        || module
+            .get_function("panic")
+            .is_some_and(|f| f.get_type() != panic_type || f.count_basic_blocks() != 0)
+    {
+        return Err("Invalid downstream runtime declaration: panic".into());
     }
     validate_output_tags(module)
+}
+
+fn validate_heap_runtime_symbols(module: &Module<'_>) -> Result<(), String> {
+    // Only lowering may introduce heap calls; downstream attributes must not
+    // grant input QIR access to the allocator used for result storage.
+    for name in ["heap_alloc", "heap_free"] {
+        if module.get_function(name).is_some() || module.get_global(name).is_some() {
+            return Err(format!(
+                "Input QIR uses reserved heap runtime symbol: {name}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_output_tags(module: &Module<'_>) -> Result<(), String> {
