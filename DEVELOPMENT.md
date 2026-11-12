@@ -110,29 +110,6 @@ Apple Silicon macOS, a 30-sample release run measured `validate_qir` at
 (13.99% median). Repeat the benchmark on the target environment before relying
 on these figures.
 
-#### Static Result Initialization
-
-Static result tables are zeroed with LLVM `memset`, using the LLVM-computed
-allocation size. An aggregate zero store can expand into a large number of
-scalar stores during downstream unoptimized code generation.
-
-A local Apple Silicon / LLVM 21 measurement used the release-profile Python
-extension to translate QIR declaring the indicated number of static results,
-with one qubit and an empty result-array output, at `opt_level=0` and
-`target="aarch64"`. The emitted bitcode was compiled with
-`llc -O0 -filetype=obj`; `/usr/bin/time -l` measured code-generation peak RSS.
-These are single-run observations:
-
-| Static results | Codegen seconds, before / after | Peak RSS MB, before / after | Object bytes, before / after |
-| --- | --- | --- | --- |
-| 4,096 | 0.229 / 0.131 | 54.3 / 28.6 | 186,408 / 4,384 |
-| 65,535 | 39.905 / 0.018 | 492.7 / 28.7 | 3,868,760 / 4,400 |
-
-Rust-side translation stayed around 0.5 ms in these cases. The declared counts
-exercise the generic compiler safety budget; hardware capacity is unchanged.
-Repeat on the target environment before relying on the timings. The regression
-suite checks LLVM-verifiable `memset` initialization at the maximum result count.
-
 ### Robustness Tooling
 
 The repo also supports three complementary robustness checks:
