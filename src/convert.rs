@@ -566,7 +566,7 @@ fn process_allocation_error<'ctx>(
     Ok(())
 }
 
-fn build_panic_with_message<'ctx>(
+pub(crate) fn build_panic_with_message<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
     builder: &Builder<'ctx>,
@@ -1276,6 +1276,24 @@ pub fn process_ir_defined_q_fns<'a>(
     dynamic_qubit_management: bool,
     passthrough_calls: &BTreeSet<String>,
 ) -> Result<(), String> {
+    process_ir_defined_q_fns_with_generated_calls(
+        ctx,
+        module,
+        entry_fn,
+        dynamic_qubit_management,
+        passthrough_calls,
+        &std::collections::HashSet::new(),
+    )
+}
+
+pub(crate) fn process_ir_defined_q_fns_with_generated_calls<'a>(
+    ctx: &'a Context,
+    module: &Module<'a>,
+    entry_fn: FunctionValue,
+    dynamic_qubit_management: bool,
+    passthrough_calls: &BTreeSet<String>,
+    generated_calls: &std::collections::HashSet<InstructionValue<'a>>,
+) -> Result<(), String> {
     let required_num_qubits = if dynamic_qubit_management {
         0
     } else {
@@ -1287,6 +1305,9 @@ pub fn process_ir_defined_q_fns<'a>(
     {
         for bb in defined_fn.get_basic_blocks() {
             for instr in bb.get_instructions() {
+                if generated_calls.contains(&instr) {
+                    continue;
+                }
                 if let Ok(call) = CallSiteValue::try_from(instr) {
                     let fn_name = call
                         .get_called_fn_value()
@@ -1389,9 +1410,8 @@ fn native_qir_to_qis_call<'a>(
                 required_num_qubits,
             )?;
         }
-        // Shared result lowering has already translated measurements in user helpers.
-        "___lazy_measure" => {}
-        "___qalloc"
+        "___lazy_measure"
+        | "___qalloc"
         | "___qfree"
         | "___reset"
         | "panic"
@@ -1406,7 +1426,6 @@ fn native_qir_to_qis_call<'a>(
             let defined_name = defined_fn.get_name().to_str().ok();
             if defined_name != Some(INIT_QARRAY_FN)
                 && !defined_name.is_some_and(|name| name.starts_with("qir_qis."))
-                && fn_name != "___reset"
             {
                 log::error!(
                     "Unexpected call to internal function: {fn_name} in function {}",

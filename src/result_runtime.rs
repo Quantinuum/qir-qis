@@ -9,10 +9,11 @@
 
 use inkwell::{
     AddressSpace, IntPredicate,
+    attributes::AttributeLoc,
     builder::Builder,
     context::Context,
     module::{Linkage, Module},
-    values::{BasicValue, FunctionValue, PointerValue},
+    values::{BasicValue, CallSiteValue, FunctionValue, PointerValue},
 };
 
 use crate::{
@@ -21,10 +22,10 @@ use crate::{
         ensure_out_err_success, ensure_result_slot_clear, get_dynamic_result_slot_type,
         initialize_dynamic_result_slot,
     },
-    convert::{get_or_create_function, get_required_num_results},
+    convert::{build_panic_with_message, get_or_create_function, get_required_num_results},
 };
 
-const STATIC_RESULTS: &str = "qir_qis.static_results";
+pub const STATIC_RESULTS: &str = "qir_qis.static_results";
 
 pub fn validate_input_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), String> {
     for global in module.get_globals() {
@@ -33,19 +34,14 @@ pub fn validate_input_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), 
         }
     }
     for function in module.get_functions() {
-        if function
-            .get_name()
-            .to_bytes()
-            .starts_with(b"__quantum__rt__result_")
-            && matches!(
-                function.get_name().to_str(),
-                Ok("__quantum__rt__result_allocate"
-                    | "__quantum__rt__result_release"
-                    | "__quantum__rt__result_array_allocate"
-                    | "__quantum__rt__result_array_release"
-                    | "__quantum__rt__result_array_record_output")
-            )
-        {
+        if matches!(
+            function.get_name().to_str(),
+            Ok("__quantum__rt__result_allocate"
+                | "__quantum__rt__result_release"
+                | "__quantum__rt__result_array_allocate"
+                | "__quantum__rt__result_array_release"
+                | "__quantum__rt__result_array_record_output")
+        ) {
             crate::aux::validate_dynamic_rt_signature(
                 function.get_name().to_str().map_err(|e| e.to_string())?,
                 function.get_type(),
@@ -79,41 +75,6 @@ pub fn validate_input_symbols(ctx: &Context, module: &Module<'_>) -> Result<(), 
     Ok(())
 }
 
-fn panic_path<'ctx>(
-    ctx: &'ctx Context,
-    module: &Module<'ctx>,
-    builder: &Builder<'ctx>,
-    message: &[u8],
-) {
-    let text = ctx.const_string(message, true);
-    let global = module.add_global(text.get_type(), None, "qir_qis.error");
-    global.set_initializer(&text);
-    global.set_constant(true);
-    global.set_linkage(Linkage::Private);
-    let panic = get_or_create_function(
-        module,
-        "panic",
-        ctx.void_type().fn_type(
-            &[
-                ctx.i32_type().into(),
-                ctx.ptr_type(AddressSpace::default()).into(),
-            ],
-            false,
-        ),
-    );
-    builder
-        .build_call(
-            panic,
-            &[
-                ctx.i32_type().const_int(1001, false).into(),
-                global.as_pointer_value().into(),
-            ],
-            "",
-        )
-        .expect("report runtime error");
-    builder.build_unreachable().expect("terminate failed path");
-}
-
 fn report_allocation_failure<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
@@ -139,12 +100,14 @@ fn report_allocation_failure<'ctx>(
     b.build_conditional_branch(null, terminate, flag)
         .expect("failure dispatch");
     b.position_at_end(terminate);
-    panic_path(
+    build_panic_with_message(
         ctx,
         module,
         &b,
-        b".EXIT:INT:No memory available for result allocation.",
-    );
+        "qir_qis.result_allocation_error",
+        "No memory available for result allocation.",
+    )
+    .expect("allocation panic message");
     b.position_at_end(flag);
     b.build_store(out_err, ctx.bool_type().const_all_ones())
         .expect("failure flag");
@@ -340,16 +303,48 @@ pub fn validate_translation_input(ctx: &Context, module: &Module<'_>) -> Result<
 }
 
 pub fn uses_static_results(module: &Module<'_>, dynamic: bool) -> bool {
-    !dynamic
-        && module
-            .get_function("__quantum__rt__result_array_record_output")
-            .is_some_and(|output| {
-                output
-                    .as_global_value()
-                    .as_pointer_value()
-                    .get_first_use()
-                    .is_some()
+    if dynamic {
+        return false;
+    }
+    if module
+        .get_function("__quantum__rt__result_array_record_output")
+        .is_some_and(|output| {
+            output
+                .as_global_value()
+                .as_pointer_value()
+                .get_first_use()
+                .is_some()
+        })
+    {
+        return true;
+    }
+    module
+        .get_functions()
+        .filter(|function| {
+            function
+                .get_string_attribute(AttributeLoc::Function, "entry_point")
+                .is_none()
+                && !function.get_name().to_bytes().starts_with(b"qir_qis.")
+        })
+        .any(|function| {
+            function.get_basic_blocks().into_iter().any(|block| {
+                block.get_instructions().any(|instruction| {
+                    CallSiteValue::try_from(instruction)
+                        .ok()
+                        .and_then(CallSiteValue::get_called_fn_value)
+                        .is_some_and(|callee| {
+                            matches!(
+                                callee.get_name().to_str(),
+                                Ok("__quantum__qis__mz__body"
+                                    | "__quantum__qis__m__body"
+                                    | "__quantum__qis__mresetz__body"
+                                    | "__quantum__rt__read_result"
+                                    | "__quantum__rt__result_record_output")
+                            )
+                        })
+                })
             })
+        })
 }
 
 pub fn initialize_static_results<'ctx>(
@@ -472,12 +467,14 @@ fn ensure_static_result_lookup<'ctx>(
     b.build_conditional_branch(in_range, valid, invalid)
         .expect("checked lookup");
     b.position_at_end(invalid);
-    panic_path(
+    build_panic_with_message(
         ctx,
         module,
         &b,
-        b".EXIT:INT:Static result index out of bounds.",
-    );
+        "qir_qis.static_result_bounds_error",
+        "Static result index out of bounds.",
+    )
+    .expect("bounds panic message");
     b.position_at_end(valid);
     let slot = unsafe {
         b.build_gep(

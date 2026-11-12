@@ -109,7 +109,11 @@ extern "C" fn qubit_allocate() -> u64 {
         q
     })
 }
-extern "C" fn runtime_panic(code: u32, _: *const u8) {
+extern "C" fn runtime_panic(code: u32, message: *const u8) {
+    // SAFETY: generated panic strings carry the exact payload length in their first byte.
+    let length = unsafe { message.read() };
+    let diagnostic = label(message, u64::from(length));
+    eprintln!("diagnostic: {diagnostic}");
     let live = RUNTIME.with_borrow(|rt| rt.allocations.len());
     eprintln!("qir-qis runtime panic: {code}, live slots: {live}");
     std::process::exit(77);
@@ -588,9 +592,16 @@ fn allocation_failure_without_error_pointer_terminates_after_rollback() {
             "{case}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("qir-qis runtime panic: 1001, live slots: 0"));
+        let expected_diagnostic = if case == "bounds" {
+            "EXIT:INT:Static result index out of bounds."
+        } else {
+            "EXIT:INT:No memory available for result allocation."
+        };
         assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("qir-qis runtime panic: 1001, live slots: 0")
+            stderr.contains(&format!("diagnostic: {expected_diagnostic}\n")),
+            "{stderr}"
         );
     }
 }
@@ -699,6 +710,203 @@ done:
         for level in [0, 2] {
             let rt = execute(&ll, level, None, 0);
             assert_eq!((rt.allocated, rt.freed), (allocations, allocations));
+        }
+    }
+}
+
+#[test]
+fn result_panic_messages_have_exact_length_prefixes() {
+    for (body, dynamic, global_name, payload) in [
+        (
+            "entry:\n %r = call ptr @__quantum__rt__result_allocate(ptr null)\n call void @__quantum__rt__result_release(ptr %r)\n ret i64 0",
+            true,
+            "qir_qis.result_allocation_error",
+            "EXIT:INT:No memory available for result allocation.",
+        ),
+        (
+            "entry:\n %a = alloca [1 x ptr]\n store ptr null, ptr %a\n call void @__quantum__rt__result_array_record_output(i64 1, ptr %a, ptr @tag)\n ret i64 0",
+            false,
+            "qir_qis.static_result_bounds_error",
+            "EXIT:INT:Static result index out of bounds.",
+        ),
+    ] {
+        let bc = qir_ll_to_bc(&qir(body, "", dynamic, true)).unwrap();
+        let compiled = qir_to_qis(&bc, 0, "native", None).unwrap();
+        let ctx = Context::create();
+        let buffer = MemoryBuffer::create_from_memory_range_copy(&compiled, "panic_messages");
+        let module = Module::parse_bitcode_from_buffer(&buffer, &ctx).unwrap();
+        let global = module.get_global(global_name).expect("panic message");
+        let encoded = crate::convert::get_string_label(global).unwrap();
+        let (length, bytes) = encoded.as_bytes().split_first().unwrap();
+        assert_eq!(usize::from(*length), payload.len());
+        assert_eq!(bytes, payload.as_bytes());
+        assert_eq!(
+            u32::try_from(encoded.len()).unwrap(),
+            global.get_value_type().into_array_type().len()
+        );
+    }
+}
+
+#[test]
+fn null_tag_scalar_output_accepts_loaded_and_selected_static_ids() {
+    let ll = qir(
+        r"entry:
+  %a = alloca [1 x ptr]
+  store ptr inttoptr (i64 1 to ptr), ptr %a
+  call void @__quantum__qis__mz__body(ptr null, ptr null)
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr inttoptr (i64 1 to ptr))
+  %id = load ptr, ptr %a
+  %selected = select i1 true, ptr %id, ptr null
+  call void @__quantum__rt__result_record_output(ptr %id, ptr null)
+  call void @__quantum__rt__result_record_output(ptr %selected, ptr null)
+  call void @__quantum__rt__result_record_output(ptr null, ptr null)
+  call void @__quantum__rt__result_array_record_output(i64 1, ptr %a, ptr @tag)
+  ret i64 0",
+        "",
+        false,
+        true,
+    );
+    for level in [0, 2] {
+        let expected = vec![
+            ("USER:RESULT:result_static".into(), vec![true]),
+            ("USER:RESULT:result_static".into(), vec![true]),
+            ("USER:RESULT:result_0".into(), vec![false]),
+            ("USER:RESULT_ARRAY:out".into(), vec![true]),
+        ];
+        for _ in 0..2 {
+            assert_eq!(execute(&ll, level, None, 0).outputs, expected);
+        }
+    }
+}
+
+#[test]
+fn static_helper_measurements_do_not_require_array_output() {
+    for arrays in [false, true] {
+        for operation in ["mz", "mresetz"] {
+            let helpers = format!(
+                r"define void @measure_static(ptr %q, ptr %r) {{
+entry:
+  call void @__quantum__qis__{operation}__body(ptr %q, ptr %r)
+  ret void
+}}
+declare void @__quantum__qis__mresetz__body(ptr, ptr) #1"
+            );
+            let ll = qir(
+                r"entry:
+  call void @measure_static(ptr inttoptr (i64 1 to ptr), ptr null)
+  %read = call i1 @__quantum__rt__read_result(ptr null)
+  call void @__quantum__rt__result_record_output(ptr null, ptr @tag)
+  ret i64 0",
+                &helpers,
+                false,
+                arrays,
+            );
+            for level in [0, 2] {
+                let rt = execute(&ll, level, None, 0);
+                assert_eq!(rt.outputs, vec![("USER:RESULT:out".into(), vec![true])]);
+                assert_eq!((rt.reads, rt.decrements, rt.allocated), (1, 1, 0));
+            }
+        }
+    }
+}
+
+#[test]
+fn helpers_can_record_scalar_and_array_results() {
+    for dynamic in [false, true] {
+        for record_array in [false, true] {
+            let allocate = if dynamic {
+                "%r = call ptr @__quantum__rt__result_allocate(ptr null)"
+            } else {
+                "%r = inttoptr i64 0 to ptr"
+            };
+            let release = if dynamic {
+                "call void @__quantum__rt__result_release(ptr %r)"
+            } else {
+                ""
+            };
+            let array_output = if record_array {
+                r"%a = alloca [2 x ptr]
+  %second = getelementptr [2 x ptr], ptr %a, i64 0, i64 1
+  store ptr %r, ptr %a
+  store ptr %r, ptr %second
+  call void @__quantum__rt__result_array_record_output(i64 2, ptr %a, ptr @tag)"
+            } else {
+                ""
+            };
+            let helpers = format!(
+                r"define void @record() {{
+entry:
+  {allocate}
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr %r)
+  call void @__quantum__rt__result_record_output(ptr %r, ptr @tag)
+  {array_output}
+  {release}
+  ret void
+}}"
+            );
+            let ll = qir(
+                "entry:\n call void @record()\n ret i64 0",
+                &helpers,
+                dynamic,
+                record_array,
+            );
+            for level in [0, 2] {
+                let rt = execute(&ll, level, None, 0);
+                let mut expected = vec![("USER:RESULT:out".into(), vec![true])];
+                if record_array {
+                    expected.push(("USER:RESULT_ARRAY:out".into(), vec![true, true]));
+                }
+                assert_eq!(rt.outputs, expected);
+                assert_eq!((rt.reads, rt.decrements), (1, 1));
+                assert_eq!(
+                    (rt.allocated, rt.freed),
+                    (usize::from(dynamic), usize::from(dynamic))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn input_native_calls_in_helpers_remain_rejected_without_validation() {
+    for (declaration, call) in [
+        ("declare void @___reset(i64)", "call void @___reset(i64 0)"),
+        (
+            "declare i64 @___lazy_measure(i64)",
+            "%native = call i64 @___lazy_measure(i64 0)",
+        ),
+        (
+            "declare void @print_bool(ptr, i64, i1)",
+            "call void @print_bool(ptr null, i64 0, i1 false)",
+        ),
+    ] {
+        for before in [false, true] {
+            let (prefix, suffix) = if before { (call, "") } else { ("", call) };
+            let helpers = format!(
+                r"{declaration}
+define void @record() {{
+entry:
+  {prefix}
+  %r = call ptr @__quantum__rt__result_allocate(ptr null)
+  call void @__quantum__qis__mz__body(ptr null, ptr %r)
+  {suffix}
+  call void @__quantum__rt__result_release(ptr %r)
+  ret void
+}}"
+            );
+            let ll = qir(
+                "entry:\n call void @record()\n ret i64 0",
+                &helpers,
+                true,
+                false,
+            );
+            let bc = qir_ll_to_bc(&ll).unwrap();
+            let error = qir_to_qis(&bc, 0, "native", None)
+                .expect_err("input native call must not inherit generated-call permission");
+            assert!(
+                error.contains("Unexpected call to internal function"),
+                "{error}"
+            );
         }
     }
 }

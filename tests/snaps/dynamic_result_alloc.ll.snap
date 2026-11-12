@@ -11,7 +11,7 @@ target triple = "aarch64-unknown-linux-gnu"
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
 @e_load_qubit_oob = private constant [38 x i8] c"%EXIT:INT:Invalid static qubit handle."
 @res_r0 = private constant [15 x i8] c"\0EUSER:RESULT:r0"
-@qir_qis.error = private constant [53 x i8] c".EXIT:INT:No memory available for result allocation.\00"
+@qir_qis.result_allocation_error = private constant [52 x i8] c"3EXIT:INT:No memory available for result allocation."
 @gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
 @gen_version = local_unnamed_addr global [5 x i8] c"0.0.0", section ",generator"
 
@@ -33,7 +33,7 @@ qir_qis.init_qubit.exit:                          ; preds = %entry
   br i1 %failed.i, label %failure.i, label %body.i.i
 
 failure.i:                                        ; preds = %qir_qis.init_qubit.exit
-  tail call void @panic(i32 1001, ptr nonnull @qir_qis.error)
+  tail call void @panic(i32 1001, ptr nonnull @qir_qis.result_allocation_error)
   unreachable
 
 body.i.i:                                         ; preds = %qir_qis.init_qubit.exit

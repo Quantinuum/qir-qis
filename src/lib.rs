@@ -42,7 +42,7 @@ mod aux {
         reason = "LLVM operand and metadata layouts are validated before fixed-position access"
     )]
 
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
     use crate::{
         convert::{
@@ -55,7 +55,7 @@ mod aux {
         },
         decode_llvm_bytes,
         result_runtime::{
-            ensure_dynamic_result_allocate, ensure_dynamic_result_array_allocate,
+            STATIC_RESULTS, ensure_dynamic_result_allocate, ensure_dynamic_result_array_allocate,
             ensure_dynamic_result_release, result_read_function, result_slot_pointer,
         },
         utils::extract_operands,
@@ -1166,6 +1166,10 @@ mod aux {
         // previously-separate sequential passes produced.
         let mut functions_errors = Vec::new();
         let mut result_slot_errors = Vec::new();
+        let needs_static_results = crate::result_runtime::uses_static_results(
+            module,
+            capability_flags.dynamic_result_management,
+        );
         let mut static_qubit_errors = Vec::new();
         let mut dynamic_array_backing_errors = Vec::new();
         let mut capability_errors = Vec::new();
@@ -1392,7 +1396,7 @@ mod aux {
                                             result_slot_errors.push(err);
                                         }
                                     }
-                                    Err(_) if crate::result_runtime::uses_static_results(module, capability_flags.dynamic_result_management) => {
+                                    Err(_) if needs_static_results => {
                                         // Loaded/selected static IDs are guarded by the runtime table lookup.
                                     }
                                     Err(err) => result_slot_errors.push(format!(
@@ -1513,7 +1517,7 @@ mod aux {
         result_ssa: *mut Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>,
     }
 
-    /// Primary translation loop over the entry function for translation to QIS.
+    /// Lower entry calls and result operations in helpers, tracking emitted helper calls.
     pub fn process_entry_function<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
@@ -1522,7 +1526,7 @@ mod aux {
         passthrough_calls: &BTreeSet<String>,
         qubit_array: Option<PointerValue<'ctx>>,
         capability_flags: CapabilityFlags,
-    ) -> Result<(), String> {
+    ) -> Result<HashSet<inkwell::values::InstructionValue<'ctx>>, String> {
         let mut global_mapping = convert_globals(ctx, module)?;
 
         if global_mapping.is_empty() {
@@ -1542,6 +1546,7 @@ mod aux {
             )
         };
 
+        let mut generated_calls = HashSet::new();
         let functions: Vec<_> = module
             .get_functions()
             .filter(|f| {
@@ -1567,7 +1572,7 @@ mod aux {
                     }) {
                         if function != entry_fn
                             && !capability_flags.dynamic_result_management
-                            && module.get_global("qir_qis.static_results").is_none()
+                            && module.get_global(STATIC_RESULTS).is_none()
                         {
                             continue;
                         }
@@ -1579,6 +1584,8 @@ mod aux {
                                     | "__quantum__rt__result_array_allocate"
                                     | "__quantum__rt__result_array_release"
                                     | "__quantum__rt__read_result"
+                                    | "__quantum__rt__result_record_output"
+                                    | "__quantum__rt__result_array_record_output"
                                     | "__quantum__qis__mz__body"
                                     | "__quantum__qis__m__body"
                                     | "__quantum__qis__mresetz__body"
@@ -1599,12 +1606,26 @@ mod aux {
                             global_mapping: &raw mut global_mapping,
                             result_ssa: &raw mut result_ssa,
                         };
+                        let previous = instr.get_previous_instruction();
+                        let next = instr.get_next_instruction();
                         process_call_instruction(args)?;
+                        if function != entry_fn {
+                            // Record inserted calls, rather than exempting native names in user input.
+                            let mut cursor = previous
+                                .and_then(inkwell::values::InstructionValue::get_next_instruction)
+                                .or_else(|| bb.get_first_instruction());
+                            while let Some(inserted) = cursor.filter(|i| Some(*i) != next) {
+                                if inserted != instr && CallSiteValue::try_from(inserted).is_ok() {
+                                    generated_calls.insert(inserted);
+                                }
+                                cursor = inserted.get_next_instruction();
+                            }
+                        }
                     }
                 }
             }
         }
-        Ok(())
+        Ok(generated_calls)
     }
 
     fn process_call_instruction(mut args: ProcessCallArgs<'_>) -> Result<(), String> {
@@ -2439,8 +2460,12 @@ mod aux {
 
         let fallback_label = if capability_flags.dynamic_result_management {
             "result_dynamic".to_string()
+        } else if let Ok(index) = get_index(result_ptr) {
+            format!("result_{index}")
+        } else if module.get_global(STATIC_RESULTS).is_some() {
+            "result_static".to_string()
         } else {
-            format!("result_{}", get_index(result_ptr)?)
+            return Err("Cannot determine static result output label".to_string());
         };
         let (new_const, new_name) =
             build_result_global(ctx, &fallback_label, &fallback_label, "RESULT", None)?;
@@ -3392,8 +3417,7 @@ mod aux {
         };
 
         // Store measurement result
-        if capability_flags.dynamic_result_management
-            || module.get_global("qir_qis.static_results").is_some()
+        if capability_flags.dynamic_result_management || module.get_global(STATIC_RESULTS).is_some()
         {
             let result_ptr = result_slot_pointer(ctx, module, &builder, result_ptr)?;
             let set_result_fn = ensure_dynamic_result_setter(ctx, module);
@@ -4145,8 +4169,8 @@ pub fn qir_to_qis_with_passthrough_calls(
         aux::{get_capability_flags, process_entry_function, validate_static_qubit_helper_usage},
         convert::{
             add_qmain_wrapper, create_qubit_array, find_entry_function, free_all_qubits,
-            get_string_attrs, process_ir_defined_q_fns, prune_unused_ir_qis_helpers,
-            validate_declared_resource_limits,
+            get_string_attrs, process_ir_defined_q_fns_with_generated_calls,
+            prune_unused_ir_qis_helpers, validate_declared_resource_limits,
         },
         decompose::add_decompositions,
         opt::optimize,
@@ -4214,7 +4238,7 @@ pub fn qir_to_qis_with_passthrough_calls(
         capability_flags.dynamic_result_management,
     )?;
     let wasm_fns = get_wasm_functions(wasm_bytes)?;
-    process_entry_function(
+    let generated_calls = process_entry_function(
         &ctx,
         &module,
         entry_fn,
@@ -4225,12 +4249,13 @@ pub fn qir_to_qis_with_passthrough_calls(
     )?;
 
     // Handle IR defined functions that take qubits
-    process_ir_defined_q_fns(
+    process_ir_defined_q_fns_with_generated_calls(
         &ctx,
         &module,
         entry_fn,
         capability_flags.dynamic_qubit_management,
         &passthrough_calls,
+        &generated_calls,
     )?;
 
     if let Some(qubit_array) = qubit_array {
