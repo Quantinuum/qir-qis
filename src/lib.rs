@@ -1972,7 +1972,7 @@ mod aux {
     fn get_or_create_result_output_global<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
-        global_mapping: &mut HashMap<String, inkwell::values::GlobalValue<'ctx>>,
+        global_mapping: &HashMap<String, inkwell::values::GlobalValue<'ctx>>,
         capability_flags: CapabilityFlags,
         result_ptr: PointerValue<'ctx>,
         gep: BasicValueEnum<'ctx>,
@@ -2005,7 +2005,6 @@ mod aux {
         new_global.set_initializer(&new_const);
         new_global.set_linkage(inkwell::module::Linkage::Private);
         new_global.set_constant(true);
-        global_mapping.insert(fallback_label, new_global);
         Ok(new_global)
     }
 
@@ -6846,6 +6845,80 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
         let err =
             validate_qir(&bc_bytes, None).expect_err("unsupported RT declarations should fail");
         assert!(err.contains("Unsupported QIR RT function: __quantum__rt__mystery"));
+    }
+
+    #[test]
+    fn test_static_result_fallback_does_not_replace_explicit_label() {
+        let ll_text = r#"
+@result_0 = private constant [7 x i8] c"custom\00"
+define i64 @entry() #0 {
+  call void @__quantum__qis__mz__body(ptr null, ptr null)
+  call void @__quantum__rt__result_record_output(ptr null, ptr null)
+  call void @__quantum__rt__result_record_output(ptr null, ptr @result_0)
+  ret i64 0
+}
+declare void @__quantum__qis__mz__body(ptr, ptr)
+declare void @__quantum__rt__result_record_output(ptr, ptr)
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" "required_num_results"="1" }
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 false}
+"#;
+        let bc = qir_ll_to_bc(ll_text).unwrap();
+        let output = qir_to_qis(&bc, 0, "native", None).unwrap();
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &output, "output").unwrap();
+        let text = module.to_string();
+        assert!(text.contains("USER:RESULT:result_0"), "{text}");
+        assert!(text.contains("USER:RESULT:custom"), "{text}");
+        let calls: Vec<_> = text
+            .lines()
+            .filter(|line| line.contains("call void @print_bool("))
+            .collect();
+        assert_eq!(calls.len(), 2, "{text}");
+        assert!(calls[0].contains("@res_result_0"), "{text}");
+        assert!(calls[1].contains("@res_custom"), "{text}");
+    }
+
+    #[test]
+    fn test_dynamic_result_fallback_does_not_replace_explicit_label() {
+        let ll_text = r#"
+@result_dynamic = private constant [7 x i8] c"custom\00"
+define i64 @entry() #0 {
+  %r = call ptr @__quantum__rt__result_allocate(ptr null)
+  call void @__quantum__qis__mz__body(ptr null, ptr %r)
+  call void @__quantum__rt__result_record_output(ptr %r, ptr null)
+  call void @__quantum__rt__result_record_output(ptr %r, ptr @result_dynamic)
+  call void @__quantum__rt__result_release(ptr %r)
+  ret i64 0
+}
+declare ptr @__quantum__rt__result_allocate(ptr)
+declare void @__quantum__rt__result_release(ptr)
+declare void @__quantum__qis__mz__body(ptr, ptr)
+declare void @__quantum__rt__result_record_output(ptr, ptr)
+attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeling_schema"="schema_id" "required_num_qubits"="1" }
+!llvm.module.flags = !{!0, !1, !2, !3}
+!0 = !{i32 1, !"qir_major_version", i32 2}
+!1 = !{i32 7, !"qir_minor_version", i32 0}
+!2 = !{i32 1, !"dynamic_qubit_management", i1 false}
+!3 = !{i32 1, !"dynamic_result_management", i1 true}
+"#;
+        let bc = qir_ll_to_bc(ll_text).unwrap();
+        let output = qir_to_qis(&bc, 0, "native", None).unwrap();
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &output, "output").unwrap();
+        let text = module.to_string();
+        assert!(text.contains("USER:RESULT:result_dynamic"), "{text}");
+        assert!(text.contains("USER:RESULT:custom"), "{text}");
+        let calls: Vec<_> = text
+            .lines()
+            .filter(|line| line.contains("call void @print_bool("))
+            .collect();
+        assert_eq!(calls.len(), 2, "{text}");
+        assert!(calls[0].contains("@res_result_dynamic"), "{text}");
+        assert!(calls[1].contains("@res_custom"), "{text}");
     }
 
     #[test]
