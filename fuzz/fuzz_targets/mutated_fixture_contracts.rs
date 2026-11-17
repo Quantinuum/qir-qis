@@ -16,6 +16,8 @@ const FIXTURES: &[&str] = &[
     include_str!("../../tests/data/dynamic_result_alloc.ll"),
     include_str!("../../tests/data/dynamic_result_array.ll"),
     include_str!("../../tests/data/dynamic_result_mixed_array_output.ll"),
+    include_str!("../../tests/data/static_result_array.ll"),
+    include_str!("../../tests/data/dynamic_result_lifetimes.ll"),
 ];
 const PROFILE_ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz_";
 const SCHEMA_ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz_";

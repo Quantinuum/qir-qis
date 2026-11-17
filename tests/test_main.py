@@ -65,8 +65,23 @@ def test_dynamic_result_mixed_array_spec_output() -> None:
     assert "USER:RESULT_ARRAY" not in output, output  # noqa: S101
 
 
+def test_static_result_array_spec_output() -> None:
+    """Static IDs preserve array order, duplicates, and scalar output labels."""
+    output = run_main_spec("tests/data/static_result_array.ll")
+    assert "OUTPUT  RESULT_ARRAY    101     a0" in output, output  # noqa: S101
+    assert "OUTPUT  RESULT  0       a0" in output, output  # noqa: S101
+
+
+def test_dynamic_result_lifetimes_spec_output() -> None:
+    """Results allocated inside loop helpers survive until caller release."""
+    output = run_main_spec("tests/data/dynamic_result_lifetimes.ll")
+    assert "OUTPUT  RESULT_ARRAY    10      life" in output, output  # noqa: S101
+
+
 if __name__ == "__main__":
     test_base_spec_output()
     test_base_plain_output()
     test_dynamic_result_array_spec_output()
     test_dynamic_result_mixed_array_spec_output()
+    test_static_result_array_spec_output()
+    test_dynamic_result_lifetimes_spec_output()
