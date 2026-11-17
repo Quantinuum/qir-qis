@@ -22,7 +22,10 @@ use inkwell::{
 };
 
 use crate::{
-    aux::{build_dynamic_array_loop, build_ptr_is_null, ensure_out_err_success},
+    aux::{
+        build_dynamic_array_loop, build_pointer_array_release_helper, build_ptr_is_null,
+        ensure_out_err_success,
+    },
     convert::{build_panic_with_message, get_or_create_function, get_required_num_results},
 };
 
@@ -414,6 +417,19 @@ pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValida
                     continue;
                 };
                 let name = callee.get_name();
+                if function != entry
+                    && name.to_str().is_ok_and(|name| {
+                        name == "__quantum__rt__initialize"
+                            || (name.starts_with("__quantum__rt__")
+                                && name.ends_with("_record_output"))
+                    })
+                {
+                    checks.errors.push(format!(
+                        "Output recording and initialization are only supported in the entry point: {}",
+                        name.to_string_lossy()
+                    ));
+                    continue;
+                }
                 let Some((name, op)) = name
                     .to_str()
                     .ok()
@@ -467,7 +483,7 @@ fn validate_result_operands(
             .and_then(inkwell::values::Operand::value)
             .ok_or("Missing result operand")?
             .into_pointer_value();
-        match crate::convert::get_index(result) {
+        match crate::convert::get_result_index(result) {
             Ok(index) => {
                 crate::aux::checked_result_index(index, count)?;
             }
@@ -991,19 +1007,8 @@ pub fn ensure_dynamic_result_array_release<'ctx>(
         .expect("array")
         .into_pointer_value();
     let release_fn = ensure_dynamic_result_release(ctx, module);
-    build_dynamic_array_loop(ctx, function, &builder, len, |builder, index| {
-        // SAFETY: the caller owns a validated pointer array of `len` entries.
-        let element = unsafe { builder.build_gep(ptr_type, array_ptr, &[index], "elem_ptr") }
-            .map_err(|error| error.to_string())?;
-        let value = builder
-            .build_load(ptr_type, element, "value_ptr")
-            .map_err(|error| error.to_string())?;
-        builder
-            .build_call(release_fn, &[value.into()], "")
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    })
-    .expect("build dynamic result release loop");
+    build_pointer_array_release_helper(ctx, &builder, function, len, array_ptr, release_fn)
+        .expect("build dynamic result release loop");
     builder.build_return(None).expect("ret");
     function
 }
@@ -1268,14 +1273,6 @@ pub fn ensure_dynamic_result_array_allocate<'ctx>(
         "",
     )
     .expect("rollback elements");
-    build_dynamic_array_loop(ctx, f, &b, idx, |b, i| {
-        let element = unsafe { b.build_gep(ptr, array, &[i], "released_element") }
-            .map_err(|e| e.to_string())?;
-        b.build_store(element, ptr.const_null())
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    })
-    .expect("clear rolled back entries");
     b.build_call(
         report_allocation_failure(ctx, module),
         &[out_err.into()],

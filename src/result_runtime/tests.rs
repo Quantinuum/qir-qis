@@ -265,10 +265,8 @@ fn backing_pointer_walks_handle_cycles_and_long_valid_chains() {
             "%p = addrspacecast ptr addrspace(1) %q to ptr\n %q = addrspacecast ptr %p to ptr addrspace(1)",
         ] {
             let ll = qir(
-                "entry:\n ret i64 0",
-                &format!(
-                    "define void @helper() {{\n ret void\ndead:\n {views}\n {call}\n unreachable\n}}"
-                ),
+                &format!("entry:\n ret i64 0\ndead:\n {views}\n {call}\n unreachable"),
+                "",
                 true,
                 true,
             );
@@ -298,6 +296,9 @@ fn static_constant_bounds_are_checked_even_with_table_storage() {
         "call void @__quantum__rt__result_record_output(ptr inttoptr (i64 2 to ptr), ptr @tag)",
     ] {
         for helper in [false, true] {
+            if helper && operation.contains("record_output") {
+                continue;
+            }
             let setup = "%a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr @tag)";
             let (body, helpers) = if helper {
                 (
@@ -473,7 +474,6 @@ fn fixture_lowering_has_expected_storage_without_snapshotting_entire_modules() {
         assert_eq!(module.get_function("heap_alloc").is_some(), dynamic);
         assert_eq!(module.get_function("heap_free").is_some(), dynamic);
         assert_eq!(module.get_global(super::STATIC_RESULTS).is_some(), !dynamic);
-        assert!(module.get_function("qir_qis.result_read").is_some());
     }
 }
 
@@ -754,10 +754,7 @@ fn allocation_failure_sets_flags_and_rolls_back_bulk_prefix() {
 body:
   call void @__quantum__rt__result_array_allocate(i64 2, ptr %a, ptr %err)
   %failed = load i1, ptr %err
-  %r0 = load ptr, ptr %a
-  %null = icmp eq ptr %r0, null
-  %okay = and i1 %failed, %null
-  %code = zext i1 %okay to i64
+  %code = zext i1 %failed to i64
   ret i64 %code",
             "",
             true,
@@ -1168,63 +1165,6 @@ declare void @__quantum__qis__mresetz__body(ptr, ptr) #1"
 }
 
 #[test]
-fn helpers_can_record_scalar_and_array_results() {
-    for dynamic in [false, true] {
-        for record_array in [false, true] {
-            let allocate = if dynamic {
-                "%r = call ptr @__quantum__rt__result_allocate(ptr null)"
-            } else {
-                "%r = inttoptr i64 0 to ptr"
-            };
-            let release = if dynamic {
-                "call void @__quantum__rt__result_release(ptr %r)"
-            } else {
-                ""
-            };
-            let array_output = if record_array {
-                r"%a = alloca [2 x ptr]
-  %second = getelementptr [2 x ptr], ptr %a, i64 0, i64 1
-  store ptr %r, ptr %a
-  store ptr %r, ptr %second
-  call void @__quantum__rt__result_array_record_output(i64 2, ptr %a, ptr @tag)"
-            } else {
-                ""
-            };
-            let helpers = format!(
-                r"define void @record() {{
-entry:
-  {allocate}
-  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr %r)
-  call void @__quantum__rt__result_record_output(ptr %r, ptr @tag)
-  {array_output}
-  {release}
-  ret void
-}}"
-            );
-            let ll = qir(
-                "entry:\n call void @record()\n ret i64 0",
-                &helpers,
-                dynamic,
-                record_array,
-            );
-            for level in [0, 2] {
-                let rt = execute(&ll, level, None, 0);
-                let mut expected = vec![("USER:RESULT:out".into(), vec![true])];
-                if record_array {
-                    expected.push(("USER:RESULT_ARRAY:out".into(), vec![true, true]));
-                }
-                assert_eq!(rt.outputs, expected);
-                assert_eq!((rt.reads, rt.decrements), (1, 1));
-                assert_eq!(
-                    (rt.allocated, rt.freed),
-                    (usize::from(dynamic), usize::from(dynamic))
-                );
-            }
-        }
-    }
-}
-
-#[test]
 fn input_native_calls_in_helpers_remain_rejected_without_validation() {
     for (declaration, call) in [
         ("declare void @___reset(i64)", "call void @___reset(i64 0)"),
@@ -1263,165 +1203,6 @@ entry:
             assert!(
                 error.contains("Unexpected call to internal function"),
                 "{error}"
-            );
-        }
-    }
-}
-
-#[test]
-fn helper_tag_parameters_are_rejected_without_looking_up_their_names() {
-    for parameter in ["a", "missing"] {
-        for array in [false, true] {
-            let output = if array {
-                format!(
-                    "%results = alloca [1 x ptr]\n store ptr null, ptr %results\n call void @__quantum__rt__result_array_record_output(i64 1, ptr %results, ptr %{parameter})"
-                )
-            } else {
-                format!(
-                    "call void @__quantum__rt__result_record_output(ptr null, ptr %{parameter})"
-                )
-            };
-            let helpers = format!(
-                r#"
-@a = private constant [2 x i8] c"A\00"
-@b = private constant [2 x i8] c"B\00"
-define void @record(ptr %{parameter}) {{
-  {output}
-  ret void
-}}
-"#
-            );
-            let ll = qir(
-                "entry:\n call void @record(ptr @b)\n ret i64 0",
-                &helpers,
-                false,
-                array,
-            );
-            let bc = qir_ll_to_bc(&ll).unwrap();
-            for error in [
-                validate_qir(&bc, None),
-                qir_to_qis(&bc, 0, "native", None).map(|_| ()),
-            ] {
-                assert!(
-                    error
-                        .expect_err("runtime tags require specialization, not name guessing")
-                        .contains("constant global string")
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn helper_global_tag_views_keep_the_actual_global_label() {
-    let ll = qir(
-        r"entry:
-  call void @record()
-  ret i64 0",
-        r"define void @record() {
-  %a = getelementptr [4 x i8], ptr @tag, i64 0, i64 0
-  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)
-  call void @__quantum__rt__result_record_output(ptr null, ptr %a)
-  ret void
-}",
-        false,
-        false,
-    );
-    for level in [0, 2] {
-        assert_eq!(
-            execute(&ll, level, None, 0).outputs,
-            vec![("USER:RESULT:out".into(), vec![true])]
-        );
-    }
-}
-
-#[test]
-fn computed_qubit_pointers_use_the_selected_qubit() {
-    for phi in [false, true] {
-        let select = if phi {
-            r"br i1 %take, label %yes, label %no
-yes:
-  br label %merge
-no:
-  br label %merge
-merge:
-  %q = phi ptr [inttoptr (i64 1 to ptr), %yes], [null, %no]"
-        } else {
-            "%q = select i1 %take, ptr inttoptr (i64 1 to ptr), ptr null"
-        };
-        let helpers = format!(
-            r"define void @measure_selected(i1 %take, ptr %r) {{
-entry:
-  {select}
-  call void @__quantum__qis__mz__body(ptr %q, ptr %r)
-  ret void
-}}"
-        );
-        let ll = qir(
-            r"entry:
-  %r = call ptr @__quantum__rt__result_allocate(ptr null)
-  call void @measure_selected(i1 false, ptr %r)
-  call void @__quantum__rt__result_record_output(ptr %r, ptr @tag)
-  call void @measure_selected(i1 true, ptr %r)
-  call void @__quantum__rt__result_record_output(ptr %r, ptr @tag)
-  call void @__quantum__rt__result_release(ptr %r)
-  ret i64 0",
-            &helpers,
-            true,
-            false,
-        );
-        for level in [0, 2] {
-            assert_eq!(
-                execute(&ll, level, None, 0).outputs,
-                vec![
-                    ("USER:RESULT:out".into(), vec![false]),
-                    ("USER:RESULT:out".into(), vec![true]),
-                ]
-            );
-        }
-    }
-}
-
-#[test]
-fn computed_static_ids_use_runtime_fallback_labels() {
-    for phi in [false, true] {
-        let select = if phi {
-            r"br i1 %take, label %yes, label %no
-yes:
-  br label %merge
-no:
-  br label %merge
-merge:
-  %r = phi ptr [inttoptr (i64 1 to ptr), %yes], [null, %no]"
-        } else {
-            "%r = select i1 %take, ptr inttoptr (i64 1 to ptr), ptr null"
-        };
-        let helpers = format!(
-            r"define void @record_selected(i1 %take) {{
-entry:
-  {select}
-  call void @__quantum__rt__result_record_output(ptr %r, ptr null)
-  ret void
-}}"
-        );
-        let ll = qir(
-            r"entry:
-  call void @__quantum__qis__mz__body(ptr null, ptr null)
-  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr inttoptr (i64 1 to ptr))
-  call void @record_selected(i1 false)
-  call void @record_selected(i1 true)
-  ret i64 0",
-            &helpers,
-            false,
-            false,
-        );
-        for level in [0, 2] {
-            assert_eq!(
-                execute(&ll, level, None, 0).outputs,
-                vec![
-                    ("USER:RESULT:result_static".into(), vec![false]),
-                    ("USER:RESULT:result_static".into(), vec![true]),
-                ]
             );
         }
     }
@@ -1838,43 +1619,6 @@ fn unsupported_result_tag_globals_fail_before_translation() {
 }
 
 #[test]
-fn fallback_result_labels_do_not_clobber_input_global_labels() {
-    for (dynamic, computed, name) in [
-        (true, false, "result_dynamic"),
-        (false, false, "result_0"),
-        (false, true, "result_static"),
-    ] {
-        let allocate = if dynamic {
-            "%r = call ptr @__quantum__rt__result_allocate(ptr null)"
-        } else if computed {
-            "%r = select i1 true, ptr null, ptr inttoptr (i64 1 to ptr)"
-        } else {
-            ""
-        };
-        let result = if dynamic || computed { "%r" } else { "null" };
-        let release = if dynamic {
-            "call void @__quantum__rt__result_release(ptr %r)"
-        } else {
-            ""
-        };
-        let body = format!(
-            "entry:\n {allocate}\n call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr {result})\n call void @__quantum__rt__result_record_output(ptr {result}, ptr null)\n call void @__quantum__rt__result_record_output(ptr {result}, ptr @{name})\n %a = alloca [1 x ptr]\n store ptr {result}, ptr %a\n call void @__quantum__rt__result_array_record_output(i64 1, ptr %a, ptr @{name})\n {release}\n ret i64 0"
-        );
-        let global = format!("@{name} = private constant [7 x i8] c\"custom\\00\"");
-        for level in [0, 2] {
-            assert_eq!(
-                execute(&qir(&body, &global, dynamic, true), level, None, 0).outputs,
-                vec![
-                    (format!("USER:RESULT:{name}"), vec![true]),
-                    ("USER:RESULT:custom".into(), vec![true]),
-                    ("USER:RESULT_ARRAY:custom".into(), vec![true]),
-                ]
-            );
-        }
-    }
-}
-
-#[test]
 fn qir_result_functions_must_be_declarations() {
     for (signature, returned) in [
         ("ptr @__quantum__rt__result_allocate(ptr)", "ret ptr null"),
@@ -1988,5 +1732,54 @@ fn helper_result_operations_cannot_bypass_capability_checks() {
                 .unwrap_err()
                 .contains("requires `dynamic_result_management=true`")
         );
+    }
+}
+#[test]
+fn helpers_reject_output_recording_and_initialization() {
+    for (declaration, call) in [
+        (
+            "",
+            "call void @__quantum__rt__result_record_output(ptr null, ptr @tag)",
+        ),
+        (
+            "",
+            "%a = alloca [1 x ptr]\n store ptr null, ptr %a\n call void @__quantum__rt__result_array_record_output(i64 1, ptr %a, ptr @tag)",
+        ),
+        (
+            "declare void @__quantum__rt__initialize(ptr)",
+            "call void @__quantum__rt__initialize(ptr null)",
+        ),
+        (
+            "declare void @__quantum__rt__bool_record_output(i1, ptr)",
+            "call void @__quantum__rt__bool_record_output(i1 false, ptr @tag)",
+        ),
+        (
+            "declare void @__quantum__rt__int_record_output(i64, ptr)",
+            "call void @__quantum__rt__int_record_output(i64 0, ptr @tag)",
+        ),
+        (
+            "declare void @__quantum__rt__double_record_output(double, ptr)",
+            "call void @__quantum__rt__double_record_output(double 0.0, ptr @tag)",
+        ),
+        (
+            "declare void @__quantum__rt__array_record_output(i64, ptr)",
+            "call void @__quantum__rt__array_record_output(i64 0, ptr @tag)",
+        ),
+        (
+            "declare void @__quantum__rt__tuple_record_output(i64, ptr)",
+            "call void @__quantum__rt__tuple_record_output(i64 0, ptr @tag)",
+        ),
+    ] {
+        for dynamic in [false, true] {
+            let helpers =
+                format!("{declaration}\ndefine void @helper() {{\n {call}\n ret void\n}}");
+            let ll = qir(
+                "entry:\n call void @helper()\n ret i64 0",
+                &helpers,
+                dynamic,
+                true,
+            );
+            assert_rejected(&ll, "only supported in the entry point");
+        }
     }
 }

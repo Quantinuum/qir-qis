@@ -101,10 +101,10 @@ fn is_i8_array_type(ty: AnyTypeEnum) -> bool {
 fn translate_global<'ctx>(
     context: &'ctx Context,
     module: &Module<'ctx>,
-    old_global: GlobalValue<'ctx>,
+    old_global: GlobalValue,
     global_mapping: &mut HashMap<String, GlobalValue<'ctx>>,
     empty_tag_counter: &mut usize,
-) -> Result<GlobalValue<'ctx>, String> {
+) -> Result<(), String> {
     // 1. Extract original string
     let label = get_string_label(old_global)?;
 
@@ -134,7 +134,7 @@ fn translate_global<'ctx>(
     new_global.set_constant(true);
 
     global_mapping.insert(old_global_key, new_global);
-    Ok(new_global)
+    Ok(())
 }
 
 /// Extracts the string label from a global variable's initializer.
@@ -235,23 +235,6 @@ pub fn convert_globals<'ctx>(
     context: &'ctx Context,
     module: &Module<'ctx>,
 ) -> Result<HashMap<String, GlobalValue<'ctx>>, String> {
-    convert_globals_with_results(context, module).map(|(globals, _)| globals)
-}
-
-// Result tags use input value identity, independently of legacy classical output
-// labels and generated null-tag fallbacks that may share the same spelling.
-pub(crate) type ResultOutputGlobals<'ctx> = HashMap<GlobalValue<'ctx>, GlobalValue<'ctx>>;
-
-pub(crate) fn convert_globals_with_results<'ctx>(
-    context: &'ctx Context,
-    module: &Module<'ctx>,
-) -> Result<
-    (
-        HashMap<String, GlobalValue<'ctx>>,
-        ResultOutputGlobals<'ctx>,
-    ),
-    String,
-> {
     // Collect globals matching the pattern
     let old_globals: Vec<_> = module
         .get_globals()
@@ -263,19 +246,17 @@ pub(crate) fn convert_globals_with_results<'ctx>(
         .collect();
 
     let mut global_mapping: HashMap<String, GlobalValue> = HashMap::new();
-    let mut result_mapping = HashMap::new();
     let mut empty_tag_counter: usize = 0;
     for old_global in old_globals {
-        let translated = translate_global(
+        translate_global(
             context,
             module,
             old_global,
             &mut global_mapping,
             &mut empty_tag_counter,
         )?;
-        result_mapping.insert(old_global, translated);
     }
-    Ok((global_mapping, result_mapping))
+    Ok(global_mapping)
 }
 
 /// Finds the entry function in the module.
@@ -1069,6 +1050,39 @@ fn get_native_qubit_handle<'ctx>(
     }
 }
 
+/// Extracts the qubit index from an `IntToPtr` conversion string.
+fn get_idx_from_pointer_repr(ir_string: &str) -> Result<u64, String> {
+    for prefix in ["inttoptr (i64 ", "inttoptr i64 "] {
+        if let Some((_, rest)) = ir_string.split_once(prefix)
+            && let Some(num_str) = rest.split(' ').next()
+            && let Ok(idx) = num_str.parse::<u64>()
+        {
+            return Ok(idx);
+        }
+    }
+    Err(format!("Cannot extract pointer index from: {ir_string}"))
+}
+
+/// Extracts the index from a pointer value.
+/// Assumes the pointer is a result of an `IntToPtr` conversion.
+///
+/// # Errors
+/// Returns an error if the index cannot be extracted.
+pub fn get_index(arg: PointerValue) -> Result<u64, String> {
+    if arg.is_null() {
+        return Ok(0);
+    }
+    if arg.is_const() {
+        let int_type = arg.get_type().get_context().i64_type();
+        if let Some(idx) = arg.const_to_int(int_type).get_zero_extended_constant() {
+            return Ok(idx);
+        }
+    }
+    // Fallback: try to extract the index from an `inttoptr` representation.
+    let ir_string = arg.print_to_string().to_string();
+    get_idx_from_pointer_repr(&ir_string)
+}
+
 /// Decode a literal integer-to-pointer constant expression without relying on
 /// LLVM folding a subsequent pointer-to-integer conversion.
 fn constant_inttoptr_index(pointer: PointerValue<'_>) -> Option<u64> {
@@ -1092,11 +1106,11 @@ fn constant_inttoptr_index(pointer: PointerValue<'_>) -> Option<u64> {
     integer.get_zero_extended_constant()
 }
 
-/// Extract a constant static resource ID without interpreting computed pointer text.
+/// Extract a constant static result ID without interpreting computed pointer text.
 ///
 /// # Errors
 /// Returns an error for runtime-computed pointers and unsupported constant encodings.
-pub fn get_index(arg: PointerValue) -> Result<u64, String> {
+pub(crate) fn get_result_index(arg: PointerValue) -> Result<u64, String> {
     if arg.is_null() {
         return Ok(0);
     }
@@ -1692,7 +1706,30 @@ mod tests {
     }
 
     #[test]
-    fn test_get_index_folds_only_constant_pointer_values() {
+    fn test_get_index_from_inttoptr() {
+        // Can't test this with LLVM IR directly, but we can test the string parsing logic
+        // Example IR string with inttoptr
+        let ir_string = "inttoptr (i64 42 to %Qubit*)";
+        let idx = get_idx_from_pointer_repr(ir_string);
+        assert_eq!(idx, Ok(42));
+    }
+
+    #[test]
+    fn test_get_index_from_inttoptr_opaque_ptr() {
+        let ir_string = "inttoptr (i64 7 to ptr)";
+        let idx = get_idx_from_pointer_repr(ir_string);
+        assert_eq!(idx, Ok(7));
+    }
+
+    #[test]
+    fn test_get_index_from_instruction_style_inttoptr() {
+        let ir_string = "  %q0 = inttoptr i64 1 to ptr";
+        let idx = get_idx_from_pointer_repr(ir_string);
+        assert_eq!(idx, Ok(1));
+    }
+
+    #[test]
+    fn test_result_index_folds_only_constant_pointer_values() {
         let context = Context::create();
         let module = context
             .create_module_from_ir(
@@ -1732,18 +1769,18 @@ merge:
             ) {
                 let pointer = instruction.as_any_value_enum().into_pointer_value();
                 if matches!(name, Some("literal" | "small")) {
-                    assert_eq!(get_index(pointer), Ok(7));
+                    assert_eq!(get_result_index(pointer), Ok(7));
                 } else if name == Some("maximum") {
-                    assert_eq!(get_index(pointer), Ok(u64::MAX));
+                    assert_eq!(get_result_index(pointer), Ok(u64::MAX));
                 } else {
-                    assert!(get_index(pointer).is_err(), "{name:?}");
+                    assert!(get_result_index(pointer).is_err(), "{name:?}");
                 }
             }
         }
     }
 
     #[test]
-    fn test_get_index_from_constant_expressions_without_roundtrip_folding() {
+    fn test_result_index_from_constant_expressions_without_roundtrip_folding() {
         let context = Context::create();
         for (integer_type, literal, expected) in [
             ("i32", "7", 7),
@@ -1775,7 +1812,7 @@ merge:
                 .into_pointer_value();
             assert!(value.as_instruction_value().is_none());
             assert_eq!(constant_inttoptr_index(value), Some(expected));
-            assert_eq!(get_index(value), Ok(expected));
+            assert_eq!(get_result_index(value), Ok(expected));
         }
     }
 

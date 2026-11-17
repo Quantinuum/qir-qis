@@ -46,9 +46,9 @@ mod aux {
 
     use crate::{
         convert::{
-            INIT_QARRAY_FN, ResultOutputGlobals, add_print_call, build_result_global,
-            checked_qubit_index, convert_globals_with_results, create_reset_call, get_index,
-            get_or_create_function, get_required_num_qubits, get_required_num_qubits_strict,
+            INIT_QARRAY_FN, add_print_call, build_result_global, checked_qubit_index,
+            convert_globals, create_reset_call, get_index, get_or_create_function,
+            get_required_num_qubits, get_required_num_qubits_strict, get_result_index,
             get_result_vars, get_string_label, handle_tuple_or_array_output,
             is_reserved_passthrough_name, parse_gep, record_classical_output, replace_rxy_call,
             replace_rz_call, replace_rzz_call, resolve_output_tag,
@@ -1337,7 +1337,6 @@ mod aux {
         qubit_array_type: Option<ArrayType<'ctx>>,
         capability_flags: CapabilityFlags,
         global_mapping: *mut HashMap<String, inkwell::values::GlobalValue<'ctx>>,
-        result_output_globals: *mut ResultOutputGlobals<'ctx>,
         result_ssa: *mut Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>,
     }
 
@@ -1352,8 +1351,7 @@ mod aux {
         original_calls: &[(FunctionValue<'ctx>, inkwell::values::InstructionValue<'ctx>)],
     ) -> Result<(), String> {
         let capability_flags = get_capability_flags(module);
-        let (mut global_mapping, mut result_output_globals) =
-            convert_globals_with_results(ctx, module)?;
+        let mut global_mapping = convert_globals(ctx, module)?;
 
         if global_mapping.is_empty() {
             log::warn!("No globals found in QIR module");
@@ -1406,7 +1404,6 @@ mod aux {
                     qubit_array_type,
                     capability_flags,
                     global_mapping: &raw mut global_mapping,
-                    result_output_globals: &raw mut result_output_globals,
                     result_ssa: &raw mut result_ssa,
                 };
                 process_call_instruction(args)?;
@@ -1672,7 +1669,7 @@ mod aux {
                     &args.instr,
                     args.fn_name.as_str(),
                     args.capability_flags,
-                    args.result_output_globals.cast::<()>(),
+                    args.global_mapping.cast::<()>(),
                     args.result_ssa.cast::<()>(),
                 )?;
                 Ok(BuiltinCallHandling::Handled)
@@ -1909,17 +1906,6 @@ mod aux {
         rollback_done: BasicBlock<'ctx>,
     }
 
-    struct PointerArrayReleaseHelperArgs<'ctx> {
-        function: FunctionValue<'ctx>,
-        len: inkwell::values::IntValue<'ctx>,
-        array_ptr: PointerValue<'ctx>,
-        release_fn: FunctionValue<'ctx>,
-        ptr_elem_type: inkwell::types::PointerType<'ctx>,
-        gep_error: &'static str,
-        load_error: &'static str,
-        release_error: &'static str,
-    }
-
     fn create_dynamic_qubit_array_allocate_blocks<'ctx>(
         ctx: &'ctx Context,
         function: FunctionValue<'ctx>,
@@ -1999,7 +1985,7 @@ mod aux {
             );
         }
 
-        let result_idx = get_index(result_ptr)?;
+        let result_idx = get_result_index(result_ptr)?;
         let result_idx_usize = usize::try_from(result_idx)
             .map_err(|e| format!("Failed to convert result index to usize: {e}"))?;
         let meas_handle = result_ssa[result_idx_usize]
@@ -2046,21 +2032,27 @@ mod aux {
     fn get_or_create_result_output_global<'ctx>(
         ctx: &'ctx Context,
         module: &Module<'ctx>,
-        result_output_globals: &ResultOutputGlobals<'ctx>,
+        global_mapping: &mut HashMap<String, inkwell::values::GlobalValue<'ctx>>,
         capability_flags: CapabilityFlags,
         result_ptr: PointerValue<'ctx>,
         gep: BasicValueEnum<'ctx>,
     ) -> Result<inkwell::values::GlobalValue<'ctx>, String> {
         if let Some(old_global) = resolve_output_tag(gep)? {
-            return result_output_globals
-                .get(&old_global)
+            let name = old_global.get_name().to_str().map_err(|e| e.to_string())?;
+            let key = if name.is_empty() {
+                get_string_label(old_global)?
+            } else {
+                name.to_owned()
+            };
+            return global_mapping
+                .get(&key)
                 .copied()
                 .ok_or_else(|| "Result output global not found in mapping".into());
         }
 
         let fallback_label = if capability_flags.dynamic_result_management {
             "result_dynamic".to_string()
-        } else if let Ok(index) = get_index(result_ptr) {
+        } else if let Ok(index) = get_result_index(result_ptr) {
             format!("result_{index}")
         } else if module.get_global(STATIC_RESULTS).is_some() {
             "result_static".to_string()
@@ -2073,6 +2065,7 @@ mod aux {
         new_global.set_initializer(&new_const);
         new_global.set_linkage(inkwell::module::Linkage::Private);
         new_global.set_constant(true);
+        global_mapping.insert(fallback_label, new_global);
         Ok(new_global)
     }
 
@@ -2239,22 +2232,24 @@ mod aux {
         Ok(())
     }
 
-    fn build_pointer_array_release_helper<'ctx>(
+    pub fn build_pointer_array_release_helper<'ctx>(
         ctx: &'ctx Context,
         builder: &inkwell::builder::Builder<'ctx>,
-        args: &PointerArrayReleaseHelperArgs<'ctx>,
+        function: FunctionValue<'ctx>,
+        len: inkwell::values::IntValue<'ctx>,
+        array_ptr: PointerValue<'ctx>,
+        release_fn: FunctionValue<'ctx>,
     ) -> Result<(), String> {
-        build_dynamic_array_loop(ctx, args.function, builder, args.len, |builder, idx| {
-            let elem_ptr = unsafe {
-                builder.build_gep(args.ptr_elem_type, args.array_ptr, &[idx], "elem_ptr")
-            }
-            .map_err(|e| format!("{}: {e}", args.gep_error))?;
-            let value_ptr = builder
-                .build_load(args.ptr_elem_type, elem_ptr, "value_ptr")
-                .map_err(|e| format!("{}: {e}", args.load_error))?;
-            let _ = builder
-                .build_call(args.release_fn, &[value_ptr.into()], "")
-                .map_err(|e| format!("{}: {e}", args.release_error))?;
+        let ptr = ctx.ptr_type(AddressSpace::default());
+        build_dynamic_array_loop(ctx, function, builder, len, |builder, idx| {
+            let elem = unsafe { builder.build_gep(ptr, array_ptr, &[idx], "elem_ptr") }
+                .map_err(|e| e.to_string())?;
+            let value = builder
+                .build_load(ptr, elem, "value_ptr")
+                .map_err(|e| e.to_string())?;
+            builder
+                .build_call(release_fn, &[value.into()], "")
+                .map_err(|e| e.to_string())?;
             Ok(())
         })
     }
@@ -2393,21 +2388,8 @@ mod aux {
             .expect("array")
             .into_pointer_value();
         let release_fn = ensure_dynamic_qubit_release(ctx, module);
-        build_pointer_array_release_helper(
-            ctx,
-            &builder,
-            &PointerArrayReleaseHelperArgs {
-                function,
-                len,
-                array_ptr,
-                release_fn,
-                ptr_elem_type: ptr_type,
-                gep_error: "Failed to build qubit array GEP",
-                load_error: "Failed to load dynamic qubit pointer",
-                release_error: "Failed to release dynamic qubit",
-            },
-        )
-        .expect("build dynamic qubit release loop");
+        build_pointer_array_release_helper(ctx, &builder, function, len, array_ptr, release_fn)
+            .expect("build dynamic qubit release loop");
         builder.build_return(None).expect("return");
         function
     }
@@ -2708,7 +2690,7 @@ mod aux {
                 &mut *result_ssa
                     .cast::<Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>>()
             };
-            let result_idx = get_index(result_ptr)?;
+            let result_idx = get_result_index(result_ptr)?;
             let result_idx_usize = checked_result_index(result_idx, result_ssa.len())?;
             result_ssa[result_idx_usize] = Some((meas, None));
         }
@@ -2988,12 +2970,13 @@ mod aux {
         instr: &'ctx inkwell::values::InstructionValue<'ctx>,
         fn_name: &str,
         capability_flags: CapabilityFlags,
-        result_output_globals: *mut (),
+        global_mapping: *mut (),
         result_ssa: *mut (),
     ) -> Result<(), String> {
         let module = unsafe { &*module.cast::<Module<'ctx>>() };
-        let result_output_globals =
-            unsafe { &*result_output_globals.cast::<ResultOutputGlobals<'ctx>>() };
+        let global_mapping = unsafe {
+            &mut *global_mapping.cast::<HashMap<String, inkwell::values::GlobalValue<'ctx>>>()
+        };
         let result_ssa = unsafe {
             &mut *result_ssa
                 .cast::<Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>>()
@@ -3022,7 +3005,7 @@ mod aux {
             let new_global = get_or_create_result_output_global(
                 ctx,
                 module,
-                result_output_globals,
+                global_mapping,
                 capability_flags,
                 result_ptr,
                 call_args[1],

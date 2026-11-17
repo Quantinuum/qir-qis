@@ -210,7 +210,7 @@ declare void @__quantum__rt__result_array_release(i64 %N, ptr %array)
 declare void @__quantum__rt__result_array_record_output(i64 %N, ptr %result_array, ptr %tag)
 ```
 
-Result-array output supports static and dynamically allocated results. Dynamic result allocation is supported in successor blocks, branches, loops, and IR-defined helpers.
+Result-array output supports static and dynamically allocated results. Dynamic result allocation is supported in successor blocks, branches, loops, and IR-defined helpers. Output recording and initialization calls are restricted to the entry point.
 
 Support boundary:
 
