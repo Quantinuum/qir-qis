@@ -47,9 +47,9 @@ mod aux {
     use crate::{
         convert::{
             INIT_QARRAY_FN, add_print_call, build_result_global, checked_qubit_index,
-            convert_globals, create_reset_call, get_index, get_or_create_function,
-            get_required_num_qubits, get_required_num_qubits_strict, get_result_index,
-            get_result_vars, get_string_label, handle_tuple_or_array_output,
+            convert_globals, create_reset_call, get_or_create_function, get_required_num_qubits,
+            get_required_num_qubits_strict, get_result_index, get_result_vars,
+            get_static_qubit_index, get_string_label, handle_tuple_or_array_output,
             is_reserved_passthrough_name, parse_gep, record_classical_output, replace_rxy_call,
             replace_rz_call, replace_rzz_call, resolve_output_tag,
         },
@@ -541,8 +541,24 @@ mod aux {
                 continue;
             }
 
-            let Ok(qubit_idx) = get_index(qubit_ptr) else {
-                continue;
+            let qubit_idx = match get_static_qubit_index(qubit_ptr) {
+                Ok(index) => index,
+                Err(err) => {
+                    if matches!(
+                        callee_name,
+                        "__quantum__qis__mz__body"
+                            | "__quantum__qis__m__body"
+                            | "__quantum__qis__mz_leaked__body"
+                            | "__quantum__qis__reset__body"
+                            | "__quantum__qis__mresetz__body"
+                    ) || callee_name.starts_with("__quantum__qis__barrier")
+                    {
+                        errors.push(format!(
+                            "Invalid static qubit handle passed to `{callee_name}`: {err}"
+                        ));
+                    }
+                    continue;
+                }
             };
             if let Err(err) = checked_qubit_index(qubit_idx, required_num_qubits) {
                 errors.push(format!(
@@ -589,13 +605,15 @@ mod aux {
                     }) else {
                         continue;
                     };
-                    let call_args = match extract_operands(&instr) {
+                    let mut call_args = match extract_operands(&instr) {
                         Ok(args) => args,
                         Err(err) => {
                             errors.push(format!("Failed to inspect `{callee_name}` call: {err}"));
                             continue;
                         }
                     };
+                    // LLVM includes the callee as the final call operand.
+                    call_args.pop();
 
                     let direct_positions =
                         direct_qubit_operand_positions(&callee_name, call_args.len());
@@ -1689,7 +1707,7 @@ mod aux {
         let qubit_array_type =
             qubit_array_type.ok_or("Missing static qubit array type for qubit lookup")?;
         let i64_type = ctx.i64_type();
-        let index = if let Ok(index) = get_index(qubit_ptr) {
+        let index = if let Ok(index) = get_static_qubit_index(qubit_ptr) {
             checked_qubit_index(index, qubit_array_type.len())?
         } else {
             let load = module
@@ -5704,6 +5722,96 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         }
         assert!(err.contains("Qubit index 1 exceeds required_num_qubits (1)"));
         assert!(err.contains("Qubit index 2 exceeds required_num_qubits (1)"));
+    }
+
+    #[test]
+    fn test_validate_qir_rejects_selected_static_qubit() {
+        let ll_text = minimal_qir_with_body(
+            "2",
+            "1",
+            "1",
+            "@take = external global i1\ndeclare void @__quantum__qis__mz__body(ptr, ptr)",
+            "  %condition = load i1, ptr @take\n  %q = select i1 %condition, ptr inttoptr (i64 1 to ptr), ptr null\n  call void @__quantum__qis__mz__body(ptr %q, ptr null)",
+        );
+        let bc = qir_ll_to_bc(&ll_text).unwrap();
+        let err = validate_qir(&bc, None).expect_err("computed static qubit must be rejected");
+        assert!(err.contains("Unsupported computed static qubit"), "{err}");
+    }
+
+    #[test]
+    fn test_computed_static_qubits_are_rejected_by_both_apis() {
+        for (qubits, declaration, body) in [
+            (
+                "2",
+                "declare void @__quantum__qis__mz__body(ptr, ptr)",
+                "  %q = select i1 %condition, ptr inttoptr (i64 1 to ptr), ptr null\n  call void @__quantum__qis__mz__body(ptr %q, ptr null)",
+            ),
+            (
+                "1",
+                "declare void @__quantum__qis__mz__body(ptr, ptr)",
+                "  %q = select i1 %condition, ptr inttoptr (i64 1 to ptr), ptr null\n  call void @__quantum__qis__mz__body(ptr %q, ptr null)",
+            ),
+            (
+                "2",
+                "declare void @__quantum__qis__reset__body(ptr)",
+                "  %q = select i1 %condition, ptr inttoptr (i64 1 to ptr), ptr null\n  call void @__quantum__qis__reset__body(ptr %q)",
+            ),
+            (
+                "2",
+                "declare void @__quantum__qis__mz__body(ptr, ptr)",
+                "  %id = zext i1 %condition to i64\n  %q = inttoptr i64 %id to ptr\n  call void @__quantum__qis__mz__body(ptr %q, ptr null)",
+            ),
+            (
+                "2",
+                "@handle = external global i8\ndeclare void @__quantum__qis__mz__body(ptr, ptr)",
+                "  call void @__quantum__qis__mz__body(ptr @handle, ptr null)",
+            ),
+        ] {
+            let ll = minimal_qir_with_body(
+                qubits,
+                "1",
+                "1",
+                &format!("@take = external global i1\n{declaration}"),
+                &format!("  %condition = load i1, ptr @take\n{body}"),
+            );
+            let bc = qir_ll_to_bc(&ll).unwrap();
+            for err in [
+                validate_qir(&bc, None).unwrap_err(),
+                qir_to_qis(&bc, 0, "native", None).unwrap_err(),
+            ] {
+                assert!(err.contains("Unsupported computed static qubit"), "{err}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_literal_static_qubits_validate_and_translate() {
+        let ll = minimal_qir_with_body(
+            "2",
+            "1",
+            "1",
+            "declare void @__quantum__qis__mz__body(ptr, ptr)",
+            "  %q = inttoptr i64 1 to ptr\n  call void @__quantum__qis__mz__body(ptr null, ptr null)\n  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)\n  call void @__quantum__qis__mz__body(ptr %q, ptr null)",
+        );
+        let bc = qir_ll_to_bc(&ll).unwrap();
+        validate_qir(&bc, None).unwrap();
+        let output = qir_to_qis(&bc, 0, "native", None).unwrap();
+        verify_bitcode_module(&output, "literal_qubits").unwrap();
+    }
+
+    #[test]
+    fn test_native_gate_keeps_runtime_static_qubit_lookup() {
+        let ll = minimal_qir_with_body(
+            "1",
+            "0",
+            "1",
+            "@take = external global i1\ndeclare void @__quantum__qis__rzz__body(double, ptr, ptr)",
+            "  %condition = load i1, ptr @take\n  %q = select i1 %condition, ptr inttoptr (i64 1 to ptr), ptr null\n  call void @__quantum__qis__rzz__body(double 1.0, ptr %q, ptr null)",
+        );
+        let bc = qir_ll_to_bc(&ll).unwrap();
+        validate_qir(&bc, None).unwrap();
+        let output = qir_to_qis(&bc, 0, "native", None).unwrap();
+        verify_bitcode_module(&output, "computed_native_qubit").unwrap();
     }
 
     #[test]
