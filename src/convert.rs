@@ -1032,7 +1032,7 @@ fn get_native_qubit_handle<'ctx>(
             .map_err(|e| format!("Failed to convert qubit pointer to handle: {e}"));
     }
 
-    if let Ok(qubit_idx) = get_index(qubit_ptr) {
+    if let Ok(qubit_idx) = get_static_qubit_index(qubit_ptr) {
         let _ = checked_qubit_index(qubit_idx, required_num_qubits)?;
     }
 
@@ -1136,6 +1136,11 @@ pub(crate) fn get_result_index(arg: PointerValue) -> Result<u64, String> {
         "Cannot extract pointer index from: {}",
         arg.print_to_string()
     ))
+}
+
+/// Decode a static qubit ID without treating operands of computed pointers as IDs.
+pub(crate) fn get_static_qubit_index(arg: PointerValue) -> Result<u64, String> {
+    get_result_index(arg).map_err(|err| format!("Unsupported computed static qubit: {err}"))
 }
 
 /// Creates a call to the `___qfree` function.
