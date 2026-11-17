@@ -1049,45 +1049,6 @@ mod aux {
         Ok(())
     }
 
-    /// Backing check used by direct translation and targeted unit tests.
-    /// Public validation performs these checks in [`validate_qir_call_sites`].
-    pub fn validate_dynamic_array_allocation_backing(module: &Module, errors: &mut Vec<String>) {
-        for fun in module.get_functions() {
-            for bb in fun.get_basic_blocks() {
-                for instr in bb.get_instructions() {
-                    let Ok(call) = CallSiteValue::try_from(instr) else {
-                        continue;
-                    };
-                    let Some(callee) = call.get_called_fn_value() else {
-                        continue;
-                    };
-                    let callee_global = callee.as_global_value();
-                    let callee_name = callee_global.get_name();
-                    let Some(fn_name) = callee_name.to_str().ok() else {
-                        continue;
-                    };
-                    if ResultOp::from_name(fn_name).is_some_and(ResultOp::is_array)
-                        || matches!(
-                            fn_name,
-                            "__quantum__rt__qubit_array_allocate"
-                                | "__quantum__rt__qubit_array_release"
-                        )
-                    {
-                        match extract_operands(&instr) {
-                            Ok(mut args) => {
-                                args.truncate(call.count_arguments() as usize);
-                                if let Err(error) = validate_pointer_array_call(fn_name, &args) {
-                                    errors.push(error);
-                                }
-                            }
-                            Err(error) => errors.push(error),
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     /// Capability requirements from QIR `Memory_Management.md`, independently of storage lowering.
     pub fn result_capability_error(name: &str, flags: CapabilityFlags) -> Option<String> {
         ResultOp::from_name(name).and_then(|op| op.capability_error(name, flags))
@@ -1112,7 +1073,6 @@ mod aux {
         // previously-separate sequential passes produced.
         let mut functions_errors = Vec::new();
         let mut static_qubit_errors = Vec::new();
-        let mut dynamic_array_backing_errors = Vec::new();
         let mut capability_errors = Vec::new();
 
         // --- Setup shared by the per-call-site checks below (mirrors what each
@@ -1246,28 +1206,14 @@ mod aux {
                     let helper_qubit_positions = static_qubit_ctx
                         .as_ref()
                         .and_then(|(_, helper_qubit_params)| helper_qubit_params.get(&callee_name));
-                    let static_qubit_operand_inspection_relevant = static_qubit_ctx.is_some();
-                    let array_backing_relevant = matches!(
-                        callee_name.as_str(),
-                        "__quantum__rt__qubit_array_allocate"
-                            | "__quantum__rt__qubit_array_release"
-                    );
-                    if static_qubit_ctx.is_none() && !array_backing_relevant {
+                    if static_qubit_ctx.is_none() {
                         continue;
                     }
-
                     let mut call_args = match extract_operands(&instr) {
                         Ok(args) => args,
                         Err(err) => {
-                            if static_qubit_operand_inspection_relevant {
-                                static_qubit_errors
-                                    .push(format!("Failed to inspect `{callee_name}` call: {err}"));
-                            }
-                            if array_backing_relevant {
-                                dynamic_array_backing_errors.push(format!(
-                                    "Failed to inspect {callee_name} operands: {err}"
-                                ));
-                            }
+                            static_qubit_errors
+                                .push(format!("Failed to inspect `{callee_name}` call: {err}"));
                             continue;
                         }
                     };
@@ -1302,12 +1248,6 @@ mod aux {
                             );
                         }
                     }
-
-                    if array_backing_relevant
-                        && let Err(error) = validate_pointer_array_call(&callee_name, &call_args)
-                    {
-                        dynamic_array_backing_errors.push(error);
-                    }
                 }
             }
         }
@@ -1317,7 +1257,7 @@ mod aux {
         errors.extend(result_checks.errors);
         capability_errors.extend(result_checks.capabilities);
         errors.extend(static_qubit_errors);
-        errors.extend(dynamic_array_backing_errors);
+        errors.extend(result_checks.qubit_array_backing);
         capability_errors
     }
 
@@ -4006,9 +3946,12 @@ mod test {
         let ctx = Context::create();
         let module = create_module_from_ir_text(&ctx, ll_text, "qir")
             .expect("inline IR should parse for dynamic array backing validation");
-        let mut errors = Vec::new();
-        crate::aux::validate_dynamic_array_allocation_backing(&module, &mut errors);
-        errors
+        let entry = module.get_function("Entry_Point_Name").expect("test entry");
+        entry.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            ctx.create_string_attribute("entry_point", ""),
+        );
+        crate::result_runtime::validate_result_calls(&ctx, &module).qubit_array_backing
     }
 
     fn assert_public_bitcode_round_trips_from_file(bitcode: &[u8], name: &str) {

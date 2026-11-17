@@ -252,6 +252,30 @@ fn result_calls_must_match_their_correct_declarations() {
 }
 
 #[test]
+fn qubit_array_backing_is_checked_by_validation_and_direct_translation() {
+    for (declaration, call) in [
+        (
+            "declare void @__quantum__rt__qubit_array_allocate(i64, ptr, ptr)",
+            "call void @__quantum__rt__qubit_array_allocate(i64 2, ptr %a, ptr null)",
+        ),
+        (
+            "declare void @__quantum__rt__qubit_array_release(i64, ptr)",
+            "call void @__quantum__rt__qubit_array_release(i64 2, ptr %a)",
+        ),
+    ] {
+        let body = format!("entry:\n %a = alloca [1 x ptr]\n {call}\n ret i64 0");
+        let ll = qir(&body, declaration, false, true).replace(
+            "\"dynamic_qubit_management\", i1 false",
+            "\"dynamic_qubit_management\", i1 true",
+        );
+        assert_rejected(
+            &ll,
+            "requested length 2 does not match backing array length 1",
+        );
+    }
+}
+
+#[test]
 fn backing_pointer_walks_handle_cycles_and_long_valid_chains() {
     for call in [
         "call void @__quantum__rt__result_array_allocate(i64 0, ptr %p, ptr null)",

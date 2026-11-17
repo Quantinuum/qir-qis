@@ -381,6 +381,8 @@ fn validate_heap_runtime_symbols(module: &Module<'_>) -> Result<(), String> {
 pub struct ResultValidation {
     pub errors: Vec<String>,
     pub capabilities: Vec<String>,
+    // Keep qubit backing diagnostics after static-qubit errors in public validation.
+    pub qubit_array_backing: Vec<String>,
 }
 
 pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValidation {
@@ -417,6 +419,23 @@ pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValida
                     continue;
                 };
                 let name = callee.get_name();
+                if matches!(
+                    name.to_str().ok(),
+                    Some(
+                        "__quantum__rt__qubit_array_allocate"
+                            | "__quantum__rt__qubit_array_release"
+                    )
+                ) {
+                    let backing =
+                        crate::utils::extract_operands(&instruction).and_then(|mut args| {
+                            args.truncate(call.count_arguments() as usize);
+                            crate::aux::validate_pointer_array_call(&name.to_string_lossy(), &args)
+                        });
+                    if let Err(error) = backing {
+                        checks.qubit_array_backing.push(error);
+                    }
+                    continue;
+                }
                 if function != entry
                     && name.to_str().is_ok_and(|name| {
                         name == "__quantum__rt__initialize"
@@ -1290,7 +1309,7 @@ pub fn validate_translation_input(ctx: &Context, module: &Module<'_>) -> Result<
     let checks = validate_result_calls(ctx, module);
     let mut errors = checks.errors;
     errors.extend(checks.capabilities);
-    crate::aux::validate_dynamic_array_allocation_backing(module, &mut errors);
+    errors.extend(checks.qubit_array_backing);
     if errors.is_empty() {
         Ok(())
     } else {
