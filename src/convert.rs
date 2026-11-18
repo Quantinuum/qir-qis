@@ -145,9 +145,10 @@ pub fn get_string_label(old_global: GlobalValue<'_>) -> Result<String, String> {
     let init = old_global
         .get_initializer()
         .ok_or("Global has no initializer")?;
-    if init.get_type().is_array_type()
-        && init.get_type().into_array_type().len() == 1
-        && unsafe { llvm_sys::core::LLVMIsNull(init.as_value_ref()) } != 0
+    if let BasicValueEnum::ArrayValue(array) = init
+        && is_i8_array_type(array.get_type().into())
+        && !array.get_type().is_empty()
+        && array.is_null()
     {
         return Ok(String::new());
     }
