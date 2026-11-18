@@ -424,10 +424,6 @@ pub struct ResultValidation {
     pub qubit_array_backing: Vec<String>,
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "result signatures, capabilities, and cleanup requirements share one instruction walk"
-)]
 pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValidation {
     let mut checks = ResultValidation::default();
     let flags = crate::aux::get_capability_flags(module);
@@ -459,17 +455,6 @@ pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValida
                 let Ok(call) = CallSiteValue::try_from(instruction) else {
                     continue;
                 };
-                // Entry cleanup must run after helpers finish using the shared
-                // slots, which is incompatible with musttail's adjacent return.
-                if function == entry
-                    && required.is_some_and(|count| count > 0)
-                    && call.get_tail_call_kind() == LLVMTailCallKind::LLVMTailCallKindMustTail
-                {
-                    checks.errors.push(
-                        "Entry-point musttail calls are unsupported when static result cleanup is required"
-                            .into(),
-                    );
-                }
                 let Some(callee) = direct_callee(call) else {
                     continue;
                 };
@@ -1134,7 +1119,7 @@ pub fn ensure_dynamic_result_array_record_output<'ctx>(
             false,
         ),
     );
-    let read_fn = result_read_function(ctx, module);
+    let read_fn = result_read_function(ctx, module, true).ok_or("Missing result array reader")?;
     let bool_arr =
         build_dynamic_result_array_values(ctx, function, &builder, len, array_ptr, read_fn)?;
     let array_desc = build_dynamic_result_array_descriptor(ctx, &builder, len, bool_arr)?;
@@ -1373,8 +1358,7 @@ pub fn validate_translation_input(ctx: &Context, module: &Module<'_>) -> Result<
     }
 }
 
-// Keep computed-ID admission independent of storage: entry-only scalar QIR still
-// requires constant IDs even though all static results now use slots.
+// Keep computed-ID admission independent of the scalar fast-path decision.
 fn allows_computed_static_result_ids(
     module: &Module<'_>,
     entry: FunctionValue<'_>,
@@ -1395,6 +1379,10 @@ fn allows_computed_static_result_ids(
     {
         return true;
     }
+    helpers_use_results(module, entry)
+}
+
+fn helpers_use_results(module: &Module<'_>, entry: FunctionValue<'_>) -> bool {
     module
         .get_functions()
         .filter(|function| {
@@ -1419,6 +1407,94 @@ fn allows_computed_static_result_ids(
         })
 }
 
+/// The lexical cache is safe only along a straight-line chain in block order,
+/// with every future read before overwrite or return. Other cases use slots.
+fn entry_results_are_ssa_safe(entry: FunctionValue<'_>) -> Result<bool, String> {
+    use inkwell::values::{BasicValueEnum, InstructionOpcode, Operand};
+
+    let blocks = entry.get_basic_blocks();
+    let calls = blocks
+        .iter()
+        .flat_map(|block| block.get_instructions())
+        .filter_map(|instruction| {
+            let call = CallSiteValue::try_from(instruction).ok()?;
+            let callee = call.get_called_fn_value()?;
+            let name = callee.get_name();
+            let op = name.to_str().ok().and_then(ResultOp::from_name)?;
+            let index = op.result_operand()?;
+            Some(
+                instruction
+                    .get_operand(index)
+                    .and_then(Operand::value)
+                    .ok_or_else(|| "Missing result operand".into())
+                    .and_then(|value| {
+                        let BasicValueEnum::PointerValue(pointer) = value else {
+                            return Err("Result operand must be a pointer".into());
+                        };
+                        crate::convert::get_result_index(pointer)
+                    })
+                    .map(|id| (op, id)),
+            )
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if calls.is_empty() {
+        return Ok(true);
+    }
+    let measured: HashSet<_> = calls
+        .iter()
+        .filter(|(op, _)| {
+            matches!(
+                op,
+                ResultOp::Measure | ResultOp::MeasureAlias | ResultOp::MeasureReset
+            )
+        })
+        .map(|(_, id)| *id)
+        .collect();
+    if calls
+        .iter()
+        .any(|(op, id)| matches!(op, ResultOp::Read | ResultOp::Output) && !measured.contains(id))
+    {
+        return Err("Expected measurement handle".into());
+    }
+    if blocks
+        .last()
+        .and_then(|block| block.get_terminator())
+        .is_none_or(|instruction| instruction.get_opcode() != InstructionOpcode::Return)
+    {
+        return Ok(false);
+    }
+    for (block, next) in blocks.iter().zip(blocks.iter().skip(1)) {
+        let Some(terminator) = block.get_terminator() else {
+            return Ok(false);
+        };
+        // A br's first operand is a block only for an unconditional branch.
+        if terminator.get_opcode() != InstructionOpcode::Br
+            || terminator.get_operand(0).and_then(Operand::block) != Some(*next)
+        {
+            return Ok(false);
+        }
+    }
+
+    let mut pending = HashMap::new();
+    let mut overwritten = false;
+    for (op, id) in calls {
+        match op {
+            ResultOp::Measure | ResultOp::MeasureAlias | ResultOp::MeasureReset => {
+                overwritten |= pending.insert(id, true) == Some(true);
+            }
+            ResultOp::Read | ResultOp::Output => {
+                *pending.get_mut(&id).ok_or("Expected measurement handle")? = false;
+            }
+            ResultOp::Allocate
+            | ResultOp::Release
+            | ResultOp::ArrayAllocate
+            | ResultOp::ArrayRelease
+            | ResultOp::ArrayOutput => {}
+        }
+    }
+    Ok(!overwritten && !pending.values().any(|pending| *pending))
+}
+
 pub fn initialize_static_results<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
@@ -1428,9 +1504,12 @@ pub fn initialize_static_results<'ctx>(
     if dynamic {
         return Ok(());
     }
-    // Mutable slots carry both values and future ownership along executed paths;
-    // a lexical SSA cache cannot represent joins or loop-carried results.
     let count = u32::try_from(get_required_num_results(entry)?).map_err(|e| e.to_string())?;
+    if !allows_computed_static_result_ids(module, entry, false)
+        && entry_results_are_ssa_safe(entry)?
+    {
+        return Ok(());
+    }
     let ty = get_dynamic_result_slot_type(ctx).array_type(count);
     let table = module.add_global(ty, None, STATIC_RESULTS);
     table.set_linkage(Linkage::Private);
@@ -1498,7 +1577,26 @@ pub fn initialize_static_results<'ctx>(
             .get_terminator()
             .filter(|i| i.get_opcode() == inkwell::values::InstructionOpcode::Return)
         {
-            b.position_before(&ret);
+            // A result-free tail callee cannot observe the slots, so cleanup
+            // can precede the call without breaking musttail/ret adjacency.
+            let musttail = ret.get_previous_instruction().and_then(|instruction| {
+                let instruction =
+                    if instruction.get_opcode() == inkwell::values::InstructionOpcode::BitCast {
+                        instruction.get_previous_instruction()?
+                    } else {
+                        instruction
+                    };
+                let call = CallSiteValue::try_from(instruction).ok()?;
+                (call.get_tail_call_kind() == LLVMTailCallKind::LLVMTailCallKindMustTail)
+                    .then_some(instruction)
+            });
+            if musttail.is_some() && helpers_use_results(module, entry) {
+                return Err(
+                    "Entry-point musttail calls are unsupported when helpers use static results"
+                        .into(),
+                );
+            }
+            b.position_before(&musttail.unwrap_or(ret));
             b.build_call(cleanup, &[], "").map_err(|e| e.to_string())?;
         }
     }
@@ -1588,12 +1686,13 @@ fn ensure_static_result_lookup<'ctx>(
 pub fn result_read_function<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
-) -> FunctionValue<'ctx> {
+    dynamic: bool,
+) -> Option<FunctionValue<'ctx>> {
     if module.get_global(STATIC_RESULTS).is_none() {
-        return ensure_dynamic_result_read(ctx, module);
+        return dynamic.then(|| ensure_dynamic_result_read(ctx, module));
     }
     if let Some(f) = module.get_function("qir_qis.static_result_read") {
-        return f;
+        return Some(f);
     }
     let ptr = ctx.ptr_type(AddressSpace::default());
     let f = module.add_function(
@@ -1621,7 +1720,7 @@ pub fn result_read_function<'ctx>(
         .basic()
         .expect("result bool");
     b.build_return(Some(&value)).expect("return bool");
-    f
+    Some(f)
 }
 
 #[cfg(test)]

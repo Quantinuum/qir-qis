@@ -692,11 +692,15 @@ pub(crate) fn validate_declared_resource_limits(entry_fn: FunctionValue) -> Resu
     validate_declared_result_limit(entry_fn)
 }
 
-/// Creates empty entries for the legacy result SSA cache, sized by
-/// `required_num_results`.
+/// Retrieves the result SSA variables from the entry function.
+/// The result variable count is equal to the `required_num_results` attribute.
 ///
-/// Retained for Rust source compatibility. Translation uses runtime result slots
-/// and no longer calls this helper.
+/// # Returns
+/// a vector of `Option<(BasicValueEnum, Option<BasicValueEnum>)>`.
+/// Each element in the vector corresponds to a result variable, where:
+/// - The first element stores the measurement future (if any).
+/// - The second element is an optional value that can be used to store the SSA
+///   variable for the result future after it is read.
 ///
 /// # Errors
 /// Returns an error if the `required_num_results` attribute is missing or invalid.

@@ -1,5 +1,6 @@
 ---
 source: src/convert.rs
+assertion_line: 2701
 expression: qis_text.to_string()
 ---
 ; ModuleID = 'qis_module'

@@ -185,31 +185,6 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
 declare void @__quantum__rt__double_record_output(double, i8*)
 ```
 
-### Static Result Values
-
-Statically declared result slots start as `false` on each entry-point invocation.
-Reading or recording a result before its first measurement returns or outputs
-`false`, without reading or decrementing a measurement future. This is
-`qir-qis` behavior, shared by entry-only scalar programs and programs using
-result arrays or result operations in helpers.
-
-A measurement replaces the slot's previous value. Reads and output recording
-share the cached boolean until the next measurement. Pending futures are
-released when overwritten or before any normal return from the entry point.
-
-Entry-point `musttail` calls are unsupported when `required_num_results` is
-nonzero and results are statically managed: cleanup must run after the callee
-finishes using the slots. These calls fail validation and translation with an
-explicit error. This restriction rejects some previously accepted programs,
-including entries with dynamic qubits and a result-free tail-called helper.
-
-Zero-slot entries omit result initialization and cleanup. This does not guarantee
-entry-point `musttail` support: nonzero statically managed qubits still require
-exit cleanup, which can cause LLVM verification to fail even with zero result
-slots. That existing qubit-cleanup limitation is independent of result slots.
-`musttail` calls within helpers do not trigger the entry-point result-cleanup
-restriction.
-
 ### Dynamic Allocation and Arrays
 
 `qir-qis` accepts the optional Adaptive Profile capability flags:
