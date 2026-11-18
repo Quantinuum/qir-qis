@@ -200,8 +200,15 @@ released when overwritten or before any normal return from the entry point.
 Entry-point `musttail` calls are unsupported when `required_num_results` is
 nonzero and results are statically managed: cleanup must run after the callee
 finishes using the slots. These calls fail validation and translation with an
-explicit error. Zero-slot entries omit result initialization and cleanup;
-`musttail` calls within helpers do not trigger this restriction.
+explicit error. This restriction rejects some previously accepted programs,
+including entries with dynamic qubits and a result-free tail-called helper.
+
+Zero-slot entries omit result initialization and cleanup. This does not guarantee
+entry-point `musttail` support: nonzero statically managed qubits still require
+exit cleanup, which can cause LLVM verification to fail even with zero result
+slots. That existing qubit-cleanup limitation is independent of result slots.
+`musttail` calls within helpers do not trigger the entry-point result-cleanup
+restriction.
 
 ### Dynamic Allocation and Arrays
 

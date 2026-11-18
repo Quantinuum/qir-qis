@@ -670,11 +670,21 @@ fn entry_musttail_with_static_result_cleanup_is_rejected() {
         "define i64 @helper() {\n ret i64 0\n}",
         false,
         false,
+    )
+    .replace(
+        "\"required_num_results\"=\"2\"",
+        "\"required_num_results\"=\"1\"",
     );
-    assert_rejected(
-        &ll,
-        "Entry-point musttail calls are unsupported when static result cleanup is required",
-    );
+    for dynamic_qubits in [false, true] {
+        let ll = ll.replace(
+            "\"dynamic_qubit_management\", i1 false",
+            &format!("\"dynamic_qubit_management\", i1 {dynamic_qubits}"),
+        );
+        assert_rejected(
+            &ll,
+            "Entry-point musttail calls are unsupported when static result cleanup is required",
+        );
+    }
 }
 
 #[test]
