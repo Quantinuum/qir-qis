@@ -147,10 +147,15 @@ pub fn get_string_label(old_global: GlobalValue<'_>) -> Result<String, String> {
         .ok_or("Global has no initializer")?;
     if let BasicValueEnum::ArrayValue(array) = init
         && is_i8_array_type(array.get_type().into())
-        && !array.get_type().is_empty()
-        && array.is_null()
     {
-        return Ok(String::new());
+        // Reject empty arrays before LLVM string extraction, whose treatment of
+        // zero-length initializers differs between LLVM builds.
+        if array.get_type().is_empty() {
+            return Err("Global string initializer must contain at least one byte".into());
+        }
+        if array.is_null() {
+            return Ok(String::new());
+        }
     }
     let init_ref = init.as_value_ref();
     let is_const_str = unsafe { LLVMIsConstantString(init_ref) } != 0;

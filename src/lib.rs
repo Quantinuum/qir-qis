@@ -5442,10 +5442,16 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[rstest]
-    #[case("[0 x i8] zeroinitializer")]
-    #[case("[2 x i16] zeroinitializer")]
-    #[case("[2 x i8] c\"\\FF\\00\"")]
-    fn test_malformed_result_tags_still_fail(#[case] initializer: &str) {
+    #[case("[0 x i8] zeroinitializer", "at least one byte")]
+    #[case(
+        "[2 x i16] zeroinitializer",
+        "must resolve to a constant global string"
+    )]
+    #[case("[2 x i8] c\"\\FF\\00\"", "Invalid UTF-8")]
+    fn test_malformed_result_tags_still_fail(
+        #[case] initializer: &str,
+        #[case] error_fragment: &str,
+    ) {
         let ll_text = minimal_qir_with_body(
             "1",
             "1",
@@ -5459,8 +5465,13 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
                call void @__quantum__rt__result_record_output(ptr null, ptr @tag)",
         );
         let bc = qir_ll_to_bc(&ll_text).expect("QIR should assemble");
-        validate_qir(&bc, None).expect_err("malformed actual tags must be rejected");
-        qir_to_qis(&bc, 0, "native", None).expect_err("malformed actual tags must fail cleanly");
+        for error in [
+            validate_qir(&bc, None).expect_err("malformed actual tags must be rejected"),
+            qir_to_qis(&bc, 0, "native", None)
+                .expect_err("malformed actual tags must fail cleanly"),
+        ] {
+            assert!(error.contains(error_fragment), "{error}");
+        }
     }
 
     #[rstest]
