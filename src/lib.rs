@@ -5499,6 +5499,33 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
     }
 
     #[test]
+    fn test_rejects_recursive_entry_alias() {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "1",
+            "2",
+            "@again = alias i64 (), ptr @Entry_Point_Name",
+            "  %again = call i64 @again()",
+        )
+        .replace("base_profile", "adaptive_profile");
+        let bc = qir_ll_to_bc(&ll_text).unwrap();
+
+        for (api, result) in [
+            ("validation", validate_qir(&bc, None)),
+            (
+                "translation",
+                qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+            ),
+        ] {
+            let error = result.expect_err(&format!("{api} must reject recursion through an alias"));
+            assert!(
+                error.contains("Function call target must be a direct function"),
+                "{api}: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn test_accepts_acyclic_helper_calls() {
         let helpers = r"
 declare void @__quantum__qis__h__body(ptr)

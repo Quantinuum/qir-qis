@@ -177,9 +177,10 @@ pub fn snapshot_calls<'ctx>(
 pub fn validate_acyclic_calls(module: &Module<'_>) -> Result<(), String> {
     let mut callees = HashMap::<_, Vec<_>>::new();
     for (caller, instruction) in snapshot_calls(module) {
-        if let Ok(call) = CallSiteValue::try_from(instruction)
-            && let Some(callee) = direct_callee(call)
-        {
+        if let Ok(call) = CallSiteValue::try_from(instruction) {
+            // Lowering requires direct calls; unresolved targets could hide cycles.
+            let callee =
+                direct_callee(call).ok_or("Function call target must be a direct function")?;
             callees.entry(caller).or_default().push(callee);
         }
     }
