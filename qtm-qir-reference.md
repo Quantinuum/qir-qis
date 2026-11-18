@@ -197,6 +197,12 @@ A measurement replaces the slot's previous value. Reads and output recording
 share the cached boolean until the next measurement. Pending futures are
 released when overwritten or before any normal return from the entry point.
 
+Entry-point `musttail` calls are unsupported when `required_num_results` is
+nonzero and results are statically managed: cleanup must run after the callee
+finishes using the slots. These calls fail validation and translation with an
+explicit error. Zero-slot entries omit result initialization and cleanup;
+`musttail` calls within helpers do not trigger this restriction.
+
 ### Dynamic Allocation and Arrays
 
 `qir-qis` accepts the optional Adaptive Profile capability flags:

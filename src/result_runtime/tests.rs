@@ -629,6 +629,82 @@ fn result_capabilities_follow_spec_matrix() {
 }
 
 #[test]
+fn entry_without_static_results_preserves_musttail() {
+    let ll = qir(
+        r"entry:
+  %value = musttail call i64 @helper()
+  ret i64 %value",
+        r"define i64 @helper() {
+entry:
+  ret i64 0
+}",
+        false,
+        false,
+    )
+    .replace(
+        "\"required_num_qubits\"=\"2\"",
+        "\"required_num_qubits\"=\"0\"",
+    )
+    .replace(
+        "\"required_num_results\"=\"2\"",
+        "\"required_num_results\"=\"0\"",
+    );
+    for dynamic_qubits in [false, true] {
+        let ll = ll.replace(
+            "\"dynamic_qubit_management\", i1 false",
+            &format!("\"dynamic_qubit_management\", i1 {dynamic_qubits}"),
+        );
+        for level in [0, 2] {
+            // Direct translation accepts zero-qubit entries; validate_qir
+            // requires dynamic qubit management for them.
+            let rt = execute_inner(&ll, level, None, 0, dynamic_qubits);
+            assert_eq!((rt.reads, rt.decrements, rt.allocated), (0, 0, 0));
+        }
+    }
+}
+
+#[test]
+fn entry_musttail_with_static_result_cleanup_is_rejected() {
+    let ll = qir(
+        "entry:\n %value = musttail call i64 @helper()\n ret i64 %value",
+        "define i64 @helper() {\n ret i64 0\n}",
+        false,
+        false,
+    );
+    assert_rejected(
+        &ll,
+        "Entry-point musttail calls are unsupported when static result cleanup is required",
+    );
+}
+
+#[test]
+fn musttail_helpers_preserve_static_result_lifetimes() {
+    let ll = qir(
+        r"entry:
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)
+  %value = call i64 @helper()
+  ret i64 %value",
+        r"define i64 @helper() {
+entry:
+  %value = musttail call i64 @read()
+  ret i64 %value
+}
+define i64 @read() {
+entry:
+  %value = call i1 @__quantum__rt__read_result(ptr null)
+  %code = zext i1 %value to i64
+  ret i64 %code
+}",
+        false,
+        false,
+    );
+    for level in [0, 2] {
+        let rt = execute(&ll, level, None, 1);
+        assert_eq!((rt.reads, rt.decrements, rt.allocated), (1, 1, 0));
+    }
+}
+
+#[test]
 fn entry_static_unmeasured_reads_and_output_are_false() {
     let ll = qir(
         r"entry:
@@ -1104,12 +1180,24 @@ fn allocation_failure_without_error_pointer_terminates_after_rollback() {
                 false,
                 None,
             ),
+            "empty_bounds" => (
+                "entry:\n %a = alloca [1 x ptr]\n store ptr null, ptr %a\n call void @__quantum__rt__result_array_record_output(i64 1, ptr %a, ptr @tag)\n ret i64 0",
+                false,
+                None,
+            ),
             _ => unreachable!("known child case"),
         };
-        execute(&qir(body, "", dynamic, true), 0, fail_after, 0);
+        let mut ll = qir(body, "", dynamic, true);
+        if case == "empty_bounds" {
+            ll = ll.replace(
+                "\"required_num_results\"=\"2\"",
+                "\"required_num_results\"=\"0\"",
+            );
+        }
+        execute(&ll, 0, fail_after, 0);
         panic!("runtime error path returned");
     }
-    for case in ["scalar", "bulk", "bounds"] {
+    for case in ["scalar", "bulk", "bounds", "empty_bounds"] {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "result_runtime::tests::allocation_failure_without_error_pointer_terminates_after_rollback", "--nocapture"])
             .env(ENV, case).output().unwrap();
@@ -1121,7 +1209,7 @@ fn allocation_failure_without_error_pointer_terminates_after_rollback() {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("qir-qis runtime panic: 1001, live slots: 0"));
-        let expected_diagnostic = if case == "bounds" {
+        let expected_diagnostic = if case.ends_with("bounds") {
             "EXIT:INT:Static result index out of bounds."
         } else {
             "EXIT:INT:No memory available for result allocation."
@@ -1525,8 +1613,8 @@ fn static_table_initialization_uses_memset_at_resource_limit() {
 
 #[test]
 fn entry_computed_static_ids_require_arrays_or_helpers() {
-    for table in [false, true] {
-        let array_output = if table {
+    for arrays in [false, true] {
+        let array_output = if arrays {
             "%a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr @tag)"
         } else {
             ""
@@ -1544,9 +1632,9 @@ fn entry_computed_static_ids_require_arrays_or_helpers() {
             ),
             "",
             false,
-            table,
+            arrays,
         );
-        if table {
+        if arrays {
             for level in [0, 2] {
                 assert_eq!(
                     execute(&ll, level, None, 0).outputs,

@@ -58,7 +58,7 @@ mod aux {
             ResultOp, STATIC_RESULTS, ensure_dynamic_result_allocate,
             ensure_dynamic_result_array_allocate, ensure_dynamic_result_array_record_output,
             ensure_dynamic_result_array_release, ensure_dynamic_result_release,
-            ensure_dynamic_result_setter, result_read_function, result_slot_pointer,
+            ensure_result_setter, result_read_function, result_slot_pointer,
         },
         utils::extract_operands,
     };
@@ -2573,7 +2573,7 @@ mod aux {
 
         // Store measurement result
         let result_ptr = result_slot_pointer(ctx, module, &builder, result_ptr)?;
-        let set_result_fn = ensure_dynamic_result_setter(ctx, module);
+        let set_result_fn = ensure_result_setter(ctx, module);
         let _ = builder
             .build_call(set_result_fn, &[result_ptr.into(), meas.into()], "")
             .map_err(|e| format!("Failed to update result state: {e}"))?;

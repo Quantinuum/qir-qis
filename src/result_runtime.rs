@@ -17,7 +17,8 @@ use inkwell::{
     module::{Linkage, Module},
     types::FunctionType,
     values::{
-        AsValueRef, BasicValue, CallSiteValue, FunctionValue, InstructionValue, PointerValue,
+        AsValueRef, BasicValue, CallSiteValue, FunctionValue, InstructionValue, LLVMTailCallKind,
+        PointerValue,
     },
 };
 
@@ -423,6 +424,10 @@ pub struct ResultValidation {
     pub qubit_array_backing: Vec<String>,
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "result signatures, capabilities, and cleanup requirements share one instruction walk"
+)]
 pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValidation {
     let mut checks = ResultValidation::default();
     let flags = crate::aux::get_capability_flags(module);
@@ -454,6 +459,17 @@ pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValida
                 let Ok(call) = CallSiteValue::try_from(instruction) else {
                     continue;
                 };
+                // Entry cleanup must run after helpers finish using the shared
+                // slots, which is incompatible with musttail's adjacent return.
+                if function == entry
+                    && required.is_some_and(|count| count > 0)
+                    && call.get_tail_call_kind() == LLVMTailCallKind::LLVMTailCallKindMustTail
+                {
+                    checks.errors.push(
+                        "Entry-point musttail calls are unsupported when static result cleanup is required"
+                            .into(),
+                    );
+                }
                 let Some(callee) = direct_callee(call) else {
                     continue;
                 };
@@ -855,7 +871,7 @@ pub fn initialize_dynamic_result_slot<'ctx>(
     clear_dynamic_result_slot(ctx, builder, &slot_ptrs);
 }
 
-pub fn ensure_dynamic_result_setter<'ctx>(
+pub fn ensure_result_setter<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
 ) -> FunctionValue<'ctx> {
@@ -1419,6 +1435,11 @@ pub fn initialize_static_results<'ctx>(
     let table = module.add_global(ty, None, STATIC_RESULTS);
     table.set_linkage(Linkage::Private);
     table.set_initializer(&ty.const_zero());
+    // Keep the empty table for static-ID bounds checks, but no lifecycle calls
+    // are needed. In particular, do not split a musttail call from its return.
+    if count == 0 {
+        return Ok(());
+    }
     let b = ctx.create_builder();
     let first = entry
         .get_first_basic_block()
