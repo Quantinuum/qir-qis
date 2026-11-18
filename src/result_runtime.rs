@@ -174,6 +174,44 @@ pub fn snapshot_calls<'ctx>(
     calls
 }
 
+pub fn validate_acyclic_calls(module: &Module<'_>) -> Result<(), String> {
+    let mut callees = HashMap::<_, Vec<_>>::new();
+    for (caller, instruction) in snapshot_calls(module) {
+        if let Ok(call) = CallSiteValue::try_from(instruction) {
+            // Lowering requires direct calls; unresolved targets could hide cycles.
+            let callee =
+                direct_callee(call).ok_or("Function call target must be a direct function")?;
+            callees.entry(caller).or_default().push(callee);
+        }
+    }
+
+    let mut active = HashSet::new();
+    let mut completed = HashSet::new();
+    for root in module.get_functions() {
+        // Use an explicit DFS stack so long valid call chains cannot overflow
+        // the Rust stack. Check every function, including unreachable helpers.
+        let mut pending = vec![(root, false)];
+        while let Some((function, exiting)) = pending.pop() {
+            if exiting {
+                active.remove(&function);
+                completed.insert(function);
+            } else if !completed.contains(&function) {
+                if !active.insert(function) {
+                    return Err(format!(
+                        "Recursive call cycle involving `{}`",
+                        function.get_name().to_string_lossy()
+                    ));
+                }
+                pending.push((function, true));
+                if let Some(children) = callees.get(&function) {
+                    pending.extend(children.iter().map(|&callee| (callee, false)));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn remove_effect_attributes(count: u32, mut remove: impl FnMut(AttributeLoc, u32)) {
     for name in [
         "memory",
@@ -1305,6 +1343,7 @@ pub fn ensure_dynamic_result_array_allocate<'ctx>(
 }
 
 pub fn validate_translation_input(ctx: &Context, module: &Module<'_>) -> Result<(), String> {
+    validate_acyclic_calls(module)?;
     validate_input_symbols(ctx, module)?;
     let checks = validate_result_calls(ctx, module);
     let mut errors = checks.errors;
