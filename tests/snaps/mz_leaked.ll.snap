@@ -1,6 +1,5 @@
 ---
 source: src/convert.rs
-assertion_line: 2701
 expression: qis_text.to_string()
 ---
 ; ModuleID = 'qis_module'
@@ -57,11 +56,11 @@ load_qubit_invalid:                               ; preds = %entry
   unreachable
 }
 
+declare void @___dec_future_refcount(i64) local_unnamed_addr
+
 declare i64 @___lazy_measure_leaked(i64) local_unnamed_addr
 
 declare i64 @___read_future_uint(i64) local_unnamed_addr
-
-declare void @___dec_future_refcount(i64) local_unnamed_addr
 
 declare void @print_int(ptr, i64, i64) local_unnamed_addr
 

@@ -48,10 +48,10 @@ mod aux {
         convert::{
             INIT_QARRAY_FN, add_print_call, build_result_global, checked_qubit_index,
             convert_globals, create_reset_call, get_or_create_function, get_required_num_qubits,
-            get_required_num_qubits_strict, get_result_index, get_result_vars,
-            get_static_qubit_index, get_string_label, handle_tuple_or_array_output,
-            is_reserved_passthrough_name, parse_gep, record_classical_output, replace_rxy_call,
-            replace_rz_call, replace_rzz_call, resolve_output_tag,
+            get_required_num_qubits_strict, get_result_index, get_static_qubit_index,
+            get_string_label, handle_tuple_or_array_output, is_reserved_passthrough_name,
+            parse_gep, record_classical_output, replace_rxy_call, replace_rz_call,
+            replace_rzz_call, resolve_output_tag,
         },
         decode_llvm_bytes,
         result_runtime::{
@@ -71,8 +71,8 @@ mod aux {
         module::{Linkage, Module},
         types::{ArrayType, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
         values::{
-            AnyValue, AsValueRef, BasicMetadataValueEnum, BasicValue, BasicValueEnum,
-            CallSiteValue, FunctionValue, InstructionOpcode, PointerValue,
+            AsValueRef, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
+            FunctionValue, InstructionOpcode, PointerValue,
         },
     };
 
@@ -1295,7 +1295,6 @@ mod aux {
         qubit_array_type: Option<ArrayType<'ctx>>,
         capability_flags: CapabilityFlags,
         global_mapping: *mut HashMap<String, inkwell::values::GlobalValue<'ctx>>,
-        result_ssa: *mut Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>,
     }
 
     /// Lower only the captured original calls; generated runtime calls are never revisited.
@@ -1314,11 +1313,6 @@ mod aux {
         if global_mapping.is_empty() {
             log::warn!("No globals found in QIR module");
         }
-        let mut result_ssa = if capability_flags.dynamic_result_management {
-            Vec::new()
-        } else {
-            get_result_vars(entry_fn)?
-        };
         let required_num_qubits = if capability_flags.dynamic_qubit_management {
             0
         } else {
@@ -1362,7 +1356,6 @@ mod aux {
                     qubit_array_type,
                     capability_flags,
                     global_mapping: &raw mut global_mapping,
-                    result_ssa: &raw mut result_ssa,
                 };
                 process_call_instruction(args)?;
             }
@@ -1558,7 +1551,6 @@ mod aux {
                     args.capability_flags,
                     args.qubit_array,
                     args.qubit_array_type,
-                    args.result_ssa.cast::<()>(),
                 )?;
                 Ok(BuiltinCallHandling::Handled)
             }
@@ -1628,7 +1620,6 @@ mod aux {
                     args.fn_name.as_str(),
                     args.capability_flags,
                     args.global_mapping.cast::<()>(),
-                    args.result_ssa.cast::<()>(),
                 )?;
                 Ok(BuiltinCallHandling::Handled)
             }
@@ -1927,64 +1918,15 @@ mod aux {
         module: &Module<'ctx>,
         builder: &inkwell::builder::Builder<'ctx>,
         result_ptr: PointerValue<'ctx>,
-        capability_flags: CapabilityFlags,
-        result_ssa: &mut [Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>],
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        if let Some(read_func) =
-            result_read_function(ctx, module, capability_flags.dynamic_result_management)
-        {
-            return call_basic_value(
-                builder,
-                read_func,
-                &[result_ptr.into()],
-                "bool",
-                "Failed to build call for dynamic result read",
-                "Failed to get basic value from dynamic result read call",
-            );
-        }
-
-        let result_idx = get_result_index(result_ptr)?;
-        let result_idx_usize = usize::try_from(result_idx)
-            .map_err(|e| format!("Failed to convert result index to usize: {e}"))?;
-        let meas_handle = result_ssa[result_idx_usize]
-            .ok_or_else(|| "Expected measurement handle".to_string())?;
-        result_ssa[result_idx_usize]
-            .and_then(|v| v.1)
-            .and_then(|val: BasicValueEnum<'_>| val.as_instruction_value())
-            .map_or_else(
-                || {
-                    let read_func = get_or_create_function(
-                        module,
-                        "___read_future_bool",
-                        ctx.bool_type().fn_type(&[ctx.i64_type().into()], false),
-                    );
-                    let bool_val = call_basic_value(
-                        builder,
-                        read_func,
-                        &[meas_handle.0.into()],
-                        "bool",
-                        "Failed to build call for read_future_bool",
-                        "Failed to get basic value from read_future_bool call",
-                    )?;
-                    let dec_func = get_or_create_function(
-                        module,
-                        "___dec_future_refcount",
-                        ctx.void_type().fn_type(&[ctx.i64_type().into()], false),
-                    );
-                    let _ = builder
-                        .build_call(dec_func, &[meas_handle.0.into()], "")
-                        .map_err(|e| {
-                            format!("Failed to build call for dec_future_refcount: {e}")
-                        })?;
-                    result_ssa[result_idx_usize] = Some((meas_handle.0, Some(bool_val)));
-                    Ok(bool_val)
-                },
-                |val: inkwell::values::InstructionValue<'_>| {
-                    val.as_any_value_enum()
-                        .try_into()
-                        .map_err(|()| "Expected BasicValueEnum".to_string())
-                },
-            )
+        call_basic_value(
+            builder,
+            result_read_function(ctx, module),
+            &[result_ptr.into()],
+            "bool",
+            "Failed to build call for result read",
+            "Failed to get basic value from result read call",
+        )
     }
 
     fn get_or_create_result_output_global<'ctx>(
@@ -2577,10 +2519,6 @@ mod aux {
         Ok(())
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "measurement lowering needs a fixed set of builder inputs"
-    )]
     fn handle_mz_call<'ctx>(
         ctx: &'ctx Context,
         module: *const (),
@@ -2589,7 +2527,6 @@ mod aux {
         capability_flags: CapabilityFlags,
         qubit_array: Option<PointerValue<'ctx>>,
         qubit_array_type: Option<ArrayType<'ctx>>,
-        result_ssa: *mut (),
     ) -> Result<(), String> {
         let module = unsafe { &*module.cast::<Module<'ctx>>() };
         if fn_name == "__quantum__qis__m__body" {
@@ -2635,22 +2572,11 @@ mod aux {
         };
 
         // Store measurement result
-        if capability_flags.dynamic_result_management || module.get_global(STATIC_RESULTS).is_some()
-        {
-            let result_ptr = result_slot_pointer(ctx, module, &builder, result_ptr)?;
-            let set_result_fn = ensure_dynamic_result_setter(ctx, module);
-            let _ = builder
-                .build_call(set_result_fn, &[result_ptr.into(), meas.into()], "")
-                .map_err(|e| format!("Failed to update dynamic result state: {e}"))?;
-        } else {
-            let result_ssa = unsafe {
-                &mut *result_ssa
-                    .cast::<Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>>()
-            };
-            let result_idx = get_result_index(result_ptr)?;
-            let result_idx_usize = checked_result_index(result_idx, result_ssa.len())?;
-            result_ssa[result_idx_usize] = Some((meas, None));
-        }
+        let result_ptr = result_slot_pointer(ctx, module, &builder, result_ptr)?;
+        let set_result_fn = ensure_dynamic_result_setter(ctx, module);
+        let _ = builder
+            .build_call(set_result_fn, &[result_ptr.into(), meas.into()], "")
+            .map_err(|e| format!("Failed to update result state: {e}"))?;
 
         if fn_name == "__quantum__qis__mresetz__body" {
             log::warn!("`__quantum__qis__mresetz__body` is from Q# QDK");
@@ -2928,15 +2854,10 @@ mod aux {
         fn_name: &str,
         capability_flags: CapabilityFlags,
         global_mapping: *mut (),
-        result_ssa: *mut (),
     ) -> Result<(), String> {
         let module = unsafe { &*module.cast::<Module<'ctx>>() };
         let global_mapping = unsafe {
             &mut *global_mapping.cast::<HashMap<String, inkwell::values::GlobalValue<'ctx>>>()
-        };
-        let result_ssa = unsafe {
-            &mut *result_ssa
-                .cast::<Vec<Option<(BasicValueEnum<'ctx>, Option<BasicValueEnum<'ctx>>)>>>()
         };
         let call_args: Vec<BasicValueEnum> = extract_operands(instr)?;
         let result_ptr = call_args[0].into_pointer_value();
@@ -2944,14 +2865,7 @@ mod aux {
         let builder = ctx.create_builder();
         builder.position_before(instr);
 
-        let bool_val = read_result_bool(
-            ctx,
-            module,
-            &builder,
-            result_ptr,
-            capability_flags,
-            result_ssa,
-        )?;
+        let bool_val = read_result_bool(ctx, module, &builder, result_ptr)?;
 
         if fn_name == "__quantum__rt__read_result" {
             let instruction_val = bool_val
@@ -2987,12 +2901,12 @@ mod aux {
         Ok(())
     }
 
-    pub fn checked_result_index(result_idx: u64, result_ssa_len: usize) -> Result<usize, String> {
+    pub fn checked_result_index(result_idx: u64, result_count: usize) -> Result<usize, String> {
         let result_idx_usize = usize::try_from(result_idx)
             .map_err(|e| format!("Failed to convert result index to usize: {e}"))?;
-        if result_idx_usize >= result_ssa_len {
+        if result_idx_usize >= result_count {
             return Err(format!(
-                "Result index {result_idx} exceeds required_num_results ({result_ssa_len})"
+                "Result index {result_idx} exceeds required_num_results ({result_count})"
             ));
         }
         Ok(result_idx_usize)
@@ -5381,7 +5295,7 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
                 .expect("read function")
                 .get_name()
                 .to_bytes(),
-            b"___read_future_bool"
+            b"qir_qis.static_result_read"
         );
     }
 

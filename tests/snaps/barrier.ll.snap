@@ -1,6 +1,5 @@
 ---
 source: src/convert.rs
-assertion_line: 2701
 expression: qis_text.to_string()
 ---
 ; ModuleID = 'qis_module'
@@ -11,6 +10,7 @@ target triple = "aarch64-unknown-linux-gnu"
 @qis_qs = private unnamed_addr global [2 x i64] zeroinitializer, align 16
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
 @e_load_qubit_oob = private constant [38 x i8] c"%EXIT:INT:Invalid static qubit handle."
+@qir_qis.static_results = private unnamed_addr global [2 x { i8, i1, i64 }] zeroinitializer
 @res_r1 = private constant [15 x i8] c"\0EUSER:RESULT:r1"
 @res_r2 = private constant [15 x i8] c"\0EUSER:RESULT:r2"
 @res_t0.1 = private constant [17 x i8] c"\10USER:QIRTUPLE:t0"
@@ -19,6 +19,7 @@ target triple = "aarch64-unknown-linux-gnu"
 
 define noundef i64 @___user_qir_test_barriers() local_unnamed_addr {
 entry:
+  tail call void @llvm.memset.p0.i64(ptr noundef nonnull align 16 dereferenceable(32) @qir_qis.static_results, i8 0, i64 32, i1 false)
   %qalloc.i = tail call i64 @___qalloc()
   %is_fail.i = icmp eq i64 %qalloc.i, -1
   br i1 %is_fail.i, label %qalloc_fail.i, label %qir_qis.init_qubit.exit
@@ -30,29 +31,29 @@ qalloc_fail.i:                                    ; preds = %entry
 qir_qis.init_qubit.exit:                          ; preds = %entry
   tail call void @___reset(i64 %qalloc.i)
   store i64 %qalloc.i, ptr @qis_qs, align 16
-  %qalloc.i11 = tail call i64 @___qalloc()
-  %is_fail.i12 = icmp eq i64 %qalloc.i11, -1
-  br i1 %is_fail.i12, label %qalloc_fail.i13, label %qir_qis.init_qubit.exit14
+  %qalloc.i12 = tail call i64 @___qalloc()
+  %is_fail.i13 = icmp eq i64 %qalloc.i12, -1
+  br i1 %is_fail.i13, label %qalloc_fail.i14, label %qir_qis.init_qubit.exit15
 
-qalloc_fail.i13:                                  ; preds = %qir_qis.init_qubit.exit
+qalloc_fail.i14:                                  ; preds = %qir_qis.init_qubit.exit
   tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
   unreachable
 
-qir_qis.init_qubit.exit14:                        ; preds = %qir_qis.init_qubit.exit
-  tail call void @___reset(i64 %qalloc.i11)
-  store i64 %qalloc.i11, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+qir_qis.init_qubit.exit15:                        ; preds = %qir_qis.init_qubit.exit
+  tail call void @___reset(i64 %qalloc.i12)
+  store i64 %qalloc.i12, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   %qbit.i.i = load i64, ptr @qis_qs, align 16
   tail call void @___rxy(i64 %qbit.i.i, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
   %qbit.i6.i = load i64, ptr @qis_qs, align 16
   tail call void @___rz(i64 %qbit.i6.i, double 0x400921FB54442D18)
-  %qbit.i.i15 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rxy(i64 %qbit.i.i15, double 0x400921FB54442D18, double 0.000000e+00)
+  %qbit.i.i16 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rxy(i64 %qbit.i.i16, double 0x400921FB54442D18, double 0.000000e+00)
   %barrier_qubits = alloca [2 x i64], align 16
   %0 = load <2 x i64>, ptr @qis_qs, align 16
   store <2 x i64> %0, ptr %barrier_qubits, align 16
   call void @___barrier(ptr nonnull %barrier_qubits, i64 2)
-  %qbit.i.i16 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  call void @___rxy(i64 %qbit.i.i16, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
+  %qbit.i.i17 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  call void @___rxy(i64 %qbit.i.i17, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
   %qbit.i10.i = load i64, ptr @qis_qs, align 16
   %qbit.i16.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   call void @___rzz(i64 %qbit.i10.i, i64 %qbit.i16.i, double 0x3FF921FB54442D18)
@@ -68,19 +69,107 @@ qir_qis.init_qubit.exit14:                        ; preds = %qir_qis.init_qubit.
   call void @___barrier(ptr nonnull %barrier_qubits2, i64 1)
   %qbit5 = load i64, ptr @qis_qs, align 16
   %meas = call i64 @___lazy_measure(i64 %qbit5)
+  %state1.i.i = load i8, ptr @qir_qis.static_results, align 16
+  %is_pending.i.i = icmp eq i8 %state1.i.i, 1
+  br i1 %is_pending.i.i, label %dec_future.i.i, label %qir_qis.result_set_pending.exit
+
+dec_future.i.i:                                   ; preds = %qir_qis.init_qubit.exit15
+  %future2.i.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  call void @___dec_future_refcount(i64 %future2.i.i)
+  br label %qir_qis.result_set_pending.exit
+
+qir_qis.result_set_pending.exit:                  ; preds = %dec_future.i.i, %qir_qis.init_qubit.exit15
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  store i8 1, ptr @qir_qis.static_results, align 16
+  store i64 %meas, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
   %qbit6 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   %meas7 = call i64 @___lazy_measure(i64 %qbit6)
+  %state1.i.i18 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  %is_pending.i.i19 = icmp eq i8 %state1.i.i18, 1
+  br i1 %is_pending.i.i19, label %dec_future.i.i20, label %qir_qis.result_set_pending.exit22
+
+dec_future.i.i20:                                 ; preds = %qir_qis.result_set_pending.exit
+  %future2.i.i21 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 24), align 8
+  call void @___dec_future_refcount(i64 %future2.i.i21)
+  br label %qir_qis.result_set_pending.exit22
+
+qir_qis.result_set_pending.exit22:                ; preds = %dec_future.i.i20, %qir_qis.result_set_pending.exit
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 17), align 1
+  store i8 1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  store i64 %meas7, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 24), align 8
   call void @print_int(ptr nonnull @res_t0.1, i64 16, i64 2)
-  %bool = call i1 @___read_future_bool(i64 %meas)
-  call void @___dec_future_refcount(i64 %meas)
-  call void @print_bool(ptr nonnull @res_r1, i64 14, i1 %bool)
-  %bool8 = call i1 @___read_future_bool(i64 %meas7)
-  call void @___dec_future_refcount(i64 %meas7)
-  call void @print_bool(ptr nonnull @res_r2, i64 14, i1 %bool8)
-  %qbit9 = load i64, ptr @qis_qs, align 16
-  call void @___qfree(i64 %qbit9)
-  %qbit10 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %state2.i.i = load i8, ptr @qir_qis.static_results, align 16
+  switch i8 %state2.i.i, label %qir_qis.static_result_read.exit [
+    i8 1, label %pending.i.i
+    i8 2, label %cached.i.i
+  ]
+
+pending.i.i:                                      ; preds = %qir_qis.result_set_pending.exit22
+  %future3.i.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  %bool.i.i = call i1 @___read_future_bool(i64 %future3.i.i)
+  call void @___dec_future_refcount(i64 %future3.i.i)
+  store i1 %bool.i.i, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  store i8 2, ptr @qir_qis.static_results, align 16
+  br label %qir_qis.static_result_read.exit
+
+cached.i.i:                                       ; preds = %qir_qis.result_set_pending.exit22
+  %cached4.i.i = load i1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  br label %qir_qis.static_result_read.exit
+
+qir_qis.static_result_read.exit:                  ; preds = %cached.i.i, %pending.i.i, %qir_qis.result_set_pending.exit22
+  %common.ret.op.i.i = phi i1 [ %bool.i.i, %pending.i.i ], [ %cached4.i.i, %cached.i.i ], [ false, %qir_qis.result_set_pending.exit22 ]
+  call void @print_bool(ptr nonnull @res_r1, i64 14, i1 %common.ret.op.i.i)
+  %state2.i.i23 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  switch i8 %state2.i.i23, label %qir_qis.static_result_read.exit30 [
+    i8 1, label %pending.i.i27
+    i8 2, label %cached.i.i24
+  ]
+
+pending.i.i27:                                    ; preds = %qir_qis.static_result_read.exit
+  %future3.i.i28 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 24), align 8
+  %bool.i.i29 = call i1 @___read_future_bool(i64 %future3.i.i28)
+  call void @___dec_future_refcount(i64 %future3.i.i28)
+  store i1 %bool.i.i29, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 17), align 1
+  store i8 2, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  br label %qir_qis.static_result_read.exit30
+
+cached.i.i24:                                     ; preds = %qir_qis.static_result_read.exit
+  %cached4.i.i25 = load i1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 17), align 1
+  br label %qir_qis.static_result_read.exit30
+
+qir_qis.static_result_read.exit30:                ; preds = %cached.i.i24, %pending.i.i27, %qir_qis.static_result_read.exit
+  %common.ret.op.i.i26 = phi i1 [ %bool.i.i29, %pending.i.i27 ], [ %cached4.i.i25, %cached.i.i24 ], [ false, %qir_qis.static_result_read.exit ]
+  call void @print_bool(ptr nonnull @res_r2, i64 14, i1 %common.ret.op.i.i26)
+  %state1.i.i31 = load i8, ptr @qir_qis.static_results, align 16
+  %is_pending.i.i32 = icmp eq i8 %state1.i.i31, 1
+  br i1 %is_pending.i.i32, label %dec_future.i.i33, label %body.i.1.i
+
+dec_future.i.i33:                                 ; preds = %qir_qis.static_result_read.exit30
+  %future2.i.i34 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  call void @___dec_future_refcount(i64 %future2.i.i34)
+  br label %body.i.1.i
+
+body.i.1.i:                                       ; preds = %dec_future.i.i33, %qir_qis.static_result_read.exit30
+  store i8 0, ptr @qir_qis.static_results, align 16
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  store i64 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  %state1.i.1.i = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  %is_pending.i.1.i = icmp eq i8 %state1.i.1.i, 1
+  br i1 %is_pending.i.1.i, label %dec_future.i.1.i, label %qir_qis.clear_static_results.exit
+
+dec_future.i.1.i:                                 ; preds = %body.i.1.i
+  %future2.i.1.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 24), align 8
+  call void @___dec_future_refcount(i64 %future2.i.1.i)
+  br label %qir_qis.clear_static_results.exit
+
+qir_qis.clear_static_results.exit:                ; preds = %dec_future.i.1.i, %body.i.1.i
+  store i8 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 17), align 1
+  store i64 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 24), align 8
+  %qbit10 = load i64, ptr @qis_qs, align 16
   call void @___qfree(i64 %qbit10)
+  %qbit11 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  call void @___qfree(i64 %qbit11)
   ret i64 0
 }
 
@@ -106,6 +195,11 @@ load_qubit_invalid:                               ; preds = %entry
   unreachable
 }
 
+; Function Attrs: nocallback nofree nounwind willreturn memory(argmem: write)
+declare void @llvm.memset.p0.i64(ptr writeonly captures(none), i8, i64, i1 immarg) #0
+
+declare void @___dec_future_refcount(i64) local_unnamed_addr
+
 declare void @___barrier(ptr, i64) local_unnamed_addr
 
 declare i64 @___lazy_measure(i64) local_unnamed_addr
@@ -113,8 +207,6 @@ declare i64 @___lazy_measure(i64) local_unnamed_addr
 declare void @print_int(ptr, i64, i64) local_unnamed_addr
 
 declare i1 @___read_future_bool(i64) local_unnamed_addr
-
-declare void @___dec_future_refcount(i64) local_unnamed_addr
 
 declare void @print_bool(ptr, i64, i1) local_unnamed_addr
 
@@ -137,6 +229,8 @@ entry:
 declare void @setup(i64) local_unnamed_addr
 
 declare i64 @teardown() local_unnamed_addr
+
+attributes #0 = { nocallback nofree nounwind willreturn memory(argmem: write) }
 
 !llvm.module.flags = !{!0, !1, !2, !3}
 !name = !{!4}

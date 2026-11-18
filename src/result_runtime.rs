@@ -446,7 +446,8 @@ pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValida
             }
         }
     };
-    let table = uses_static_results(module, entry, flags.dynamic_result_management);
+    let computed_ids =
+        allows_computed_static_result_ids(module, entry, flags.dynamic_result_management);
     for function in module.get_functions() {
         for block in function.get_basic_blocks() {
             for instruction in block.get_instructions() {
@@ -516,7 +517,7 @@ pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValida
                     continue;
                 }
                 if let Err(error) =
-                    validate_result_operands(ctx, instruction, op, required, table, name)
+                    validate_result_operands(ctx, instruction, op, required, computed_ids, name)
                 {
                     checks.errors.push(error);
                 }
@@ -531,7 +532,7 @@ fn validate_result_operands(
     instruction: InstructionValue<'_>,
     op: ResultOp,
     required: Option<usize>,
-    table: bool,
+    computed_ids: bool,
     name: &str,
 ) -> Result<(), String> {
     if let (Some(count), Some(index)) = (required, op.result_operand()) {
@@ -547,7 +548,7 @@ fn validate_result_operands(
             Err(_) if count == 0 => {
                 return Err("Scalar result operations require at least one static result".into());
             }
-            Err(_) if table => {}
+            Err(_) if computed_ids => {}
             Err(error) => {
                 return Err(format!(
                     "Failed to inspect result operand for `{name}`: {error}"
@@ -1117,7 +1118,7 @@ pub fn ensure_dynamic_result_array_record_output<'ctx>(
             false,
         ),
     );
-    let read_fn = result_read_function(ctx, module, true).ok_or("Missing result array reader")?;
+    let read_fn = result_read_function(ctx, module);
     let bool_arr =
         build_dynamic_result_array_values(ctx, function, &builder, len, array_ptr, read_fn)?;
     let array_desc = build_dynamic_result_array_descriptor(ctx, &builder, len, bool_arr)?;
@@ -1356,7 +1357,13 @@ pub fn validate_translation_input(ctx: &Context, module: &Module<'_>) -> Result<
     }
 }
 
-pub fn uses_static_results(module: &Module<'_>, entry: FunctionValue<'_>, dynamic: bool) -> bool {
+// Keep computed-ID admission independent of storage: entry-only scalar QIR still
+// requires constant IDs even though all static results now use slots.
+fn allows_computed_static_result_ids(
+    module: &Module<'_>,
+    entry: FunctionValue<'_>,
+    dynamic: bool,
+) -> bool {
     if dynamic {
         return false;
     }
@@ -1402,9 +1409,11 @@ pub fn initialize_static_results<'ctx>(
     entry: FunctionValue<'ctx>,
     dynamic: bool,
 ) -> Result<(), String> {
-    if !uses_static_results(module, entry, dynamic) {
+    if dynamic {
         return Ok(());
     }
+    // Mutable slots carry both values and future ownership along executed paths;
+    // a lexical SSA cache cannot represent joins or loop-carried results.
     let count = u32::try_from(get_required_num_results(entry)?).map_err(|e| e.to_string())?;
     let ty = get_dynamic_result_slot_type(ctx).array_type(count);
     let table = module.add_global(ty, None, STATIC_RESULTS);
@@ -1558,13 +1567,12 @@ fn ensure_static_result_lookup<'ctx>(
 pub fn result_read_function<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
-    dynamic: bool,
-) -> Option<FunctionValue<'ctx>> {
+) -> FunctionValue<'ctx> {
     if module.get_global(STATIC_RESULTS).is_none() {
-        return dynamic.then(|| ensure_dynamic_result_read(ctx, module));
+        return ensure_dynamic_result_read(ctx, module);
     }
     if let Some(f) = module.get_function("qir_qis.static_result_read") {
-        return Some(f);
+        return f;
     }
     let ptr = ctx.ptr_type(AddressSpace::default());
     let f = module.add_function(
@@ -1592,7 +1600,7 @@ pub fn result_read_function<'ctx>(
         .basic()
         .expect("result bool");
     b.build_return(Some(&value)).expect("return bool");
-    Some(f)
+    f
 }
 
 #[cfg(test)]
