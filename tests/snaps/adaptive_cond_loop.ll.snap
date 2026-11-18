@@ -1,6 +1,5 @@
 ---
 source: src/convert.rs
-assertion_line: 2701
 expression: qis_text.to_string()
 ---
 ; ModuleID = 'qis_module'
@@ -11,6 +10,7 @@ target triple = "aarch64-unknown-linux-gnu"
 @qis_qs = private unnamed_addr global [6 x i64] zeroinitializer
 @e_qalloc_fail = private constant [47 x i8] c".EXIT:INT:No more qubits available to allocate."
 @e_load_qubit_oob = private constant [38 x i8] c"%EXIT:INT:Invalid static qubit handle."
+@qir_qis.static_results = private unnamed_addr global [6 x { i8, i1, i64 }] zeroinitializer
 @res_0_t0 = private constant [17 x i8] c"\10USER:RESULT:0_t0"
 @res_0_t1 = private constant [17 x i8] c"\10USER:RESULT:0_t1"
 @gen_name = local_unnamed_addr global [7 x i8] c"qir-qis", section ",generator"
@@ -18,6 +18,7 @@ target triple = "aarch64-unknown-linux-gnu"
 
 define noundef i64 @___user_qir_TeleportChain() local_unnamed_addr {
 entry:
+  tail call void @llvm.memset.p0.i64(ptr noundef nonnull align 16 dereferenceable(96) @qir_qis.static_results, i8 0, i64 96, i1 false)
   %qalloc.i = tail call i64 @___qalloc()
   %is_fail.i = icmp eq i64 %qalloc.i, -1
   br i1 %is_fail.i, label %qalloc_fail.i, label %qir_qis.init_qubit.exit
@@ -29,67 +30,67 @@ qalloc_fail.i:                                    ; preds = %entry
 qir_qis.init_qubit.exit:                          ; preds = %entry
   tail call void @___reset(i64 %qalloc.i)
   store i64 %qalloc.i, ptr @qis_qs, align 16
-  %qalloc.i32 = tail call i64 @___qalloc()
-  %is_fail.i33 = icmp eq i64 %qalloc.i32, -1
-  br i1 %is_fail.i33, label %qalloc_fail.i34, label %qir_qis.init_qubit.exit35
+  %qalloc.i38 = tail call i64 @___qalloc()
+  %is_fail.i39 = icmp eq i64 %qalloc.i38, -1
+  br i1 %is_fail.i39, label %qalloc_fail.i40, label %qir_qis.init_qubit.exit41
 
-qalloc_fail.i34:                                  ; preds = %qir_qis.init_qubit.exit
+qalloc_fail.i40:                                  ; preds = %qir_qis.init_qubit.exit
   tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
   unreachable
 
-qir_qis.init_qubit.exit35:                        ; preds = %qir_qis.init_qubit.exit
-  tail call void @___reset(i64 %qalloc.i32)
-  store i64 %qalloc.i32, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  %qalloc.i36 = tail call i64 @___qalloc()
-  %is_fail.i37 = icmp eq i64 %qalloc.i36, -1
-  br i1 %is_fail.i37, label %qalloc_fail.i38, label %qir_qis.init_qubit.exit39
+qir_qis.init_qubit.exit41:                        ; preds = %qir_qis.init_qubit.exit
+  tail call void @___reset(i64 %qalloc.i38)
+  store i64 %qalloc.i38, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %qalloc.i42 = tail call i64 @___qalloc()
+  %is_fail.i43 = icmp eq i64 %qalloc.i42, -1
+  br i1 %is_fail.i43, label %qalloc_fail.i44, label %qir_qis.init_qubit.exit45
 
-qalloc_fail.i38:                                  ; preds = %qir_qis.init_qubit.exit35
+qalloc_fail.i44:                                  ; preds = %qir_qis.init_qubit.exit41
   tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
   unreachable
 
-qir_qis.init_qubit.exit39:                        ; preds = %qir_qis.init_qubit.exit35
-  tail call void @___reset(i64 %qalloc.i36)
-  store i64 %qalloc.i36, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  %qalloc.i40 = tail call i64 @___qalloc()
-  %is_fail.i41 = icmp eq i64 %qalloc.i40, -1
-  br i1 %is_fail.i41, label %qalloc_fail.i42, label %qir_qis.init_qubit.exit43
+qir_qis.init_qubit.exit45:                        ; preds = %qir_qis.init_qubit.exit41
+  tail call void @___reset(i64 %qalloc.i42)
+  store i64 %qalloc.i42, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  %qalloc.i46 = tail call i64 @___qalloc()
+  %is_fail.i47 = icmp eq i64 %qalloc.i46, -1
+  br i1 %is_fail.i47, label %qalloc_fail.i48, label %qir_qis.init_qubit.exit49
 
-qalloc_fail.i42:                                  ; preds = %qir_qis.init_qubit.exit39
+qalloc_fail.i48:                                  ; preds = %qir_qis.init_qubit.exit45
   tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
   unreachable
 
-qir_qis.init_qubit.exit43:                        ; preds = %qir_qis.init_qubit.exit39
-  tail call void @___reset(i64 %qalloc.i40)
-  store i64 %qalloc.i40, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  %qalloc.i44 = tail call i64 @___qalloc()
-  %is_fail.i45 = icmp eq i64 %qalloc.i44, -1
-  br i1 %is_fail.i45, label %qalloc_fail.i46, label %qir_qis.init_qubit.exit47
+qir_qis.init_qubit.exit49:                        ; preds = %qir_qis.init_qubit.exit45
+  tail call void @___reset(i64 %qalloc.i46)
+  store i64 %qalloc.i46, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  %qalloc.i50 = tail call i64 @___qalloc()
+  %is_fail.i51 = icmp eq i64 %qalloc.i50, -1
+  br i1 %is_fail.i51, label %qalloc_fail.i52, label %qir_qis.init_qubit.exit53
 
-qalloc_fail.i46:                                  ; preds = %qir_qis.init_qubit.exit43
+qalloc_fail.i52:                                  ; preds = %qir_qis.init_qubit.exit49
   tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
   unreachable
 
-qir_qis.init_qubit.exit47:                        ; preds = %qir_qis.init_qubit.exit43
-  tail call void @___reset(i64 %qalloc.i44)
-  store i64 %qalloc.i44, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  %qalloc.i48 = tail call i64 @___qalloc()
-  %is_fail.i49 = icmp eq i64 %qalloc.i48, -1
-  br i1 %is_fail.i49, label %qalloc_fail.i50, label %qir_qis.init_qubit.exit51
+qir_qis.init_qubit.exit53:                        ; preds = %qir_qis.init_qubit.exit49
+  tail call void @___reset(i64 %qalloc.i50)
+  store i64 %qalloc.i50, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  %qalloc.i54 = tail call i64 @___qalloc()
+  %is_fail.i55 = icmp eq i64 %qalloc.i54, -1
+  br i1 %is_fail.i55, label %qalloc_fail.i56, label %qir_qis.init_qubit.exit57
 
-qalloc_fail.i50:                                  ; preds = %qir_qis.init_qubit.exit47
+qalloc_fail.i56:                                  ; preds = %qir_qis.init_qubit.exit53
   tail call void @panic(i32 1001, ptr nonnull @e_qalloc_fail)
   unreachable
 
-qir_qis.init_qubit.exit51:                        ; preds = %qir_qis.init_qubit.exit47
-  tail call void @___reset(i64 %qalloc.i48)
-  store i64 %qalloc.i48, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
+qir_qis.init_qubit.exit57:                        ; preds = %qir_qis.init_qubit.exit53
+  tail call void @___reset(i64 %qalloc.i54)
+  store i64 %qalloc.i54, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
   %qbit.i.i = load i64, ptr @qis_qs, align 16
   tail call void @___rxy(i64 %qbit.i.i, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
   %qbit.i6.i = load i64, ptr @qis_qs, align 16
   tail call void @___rz(i64 %qbit.i6.i, double 0x400921FB54442D18)
-  %qbit.i.i52 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rxy(i64 %qbit.i.i52, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
+  %qbit.i.i58 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rxy(i64 %qbit.i.i58, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
   %qbit.i10.i = load i64, ptr @qis_qs, align 16
   %qbit.i16.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   tail call void @___rzz(i64 %qbit.i10.i, i64 %qbit.i16.i, double 0x3FF921FB54442D18)
@@ -99,164 +100,442 @@ qir_qis.init_qubit.exit51:                        ; preds = %qir_qis.init_qubit.
   tail call void @___rxy(i64 %qbit.i28.i, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
   %qbit.i34.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   tail call void @___rz(i64 %qbit.i34.i, double 0xBFF921FB54442D18)
-  %qbit.i.i53 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___rxy(i64 %qbit.i.i53, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i6.i54 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___rz(i64 %qbit.i6.i54, double 0x400921FB54442D18)
-  %qbit.i.i55 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rxy(i64 %qbit.i.i55, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i10.i56 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  %qbit.i16.i57 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rzz(i64 %qbit.i10.i56, i64 %qbit.i16.i57, double 0x3FF921FB54442D18)
-  %qbit.i22.i58 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___rz(i64 %qbit.i22.i58, double 0xBFF921FB54442D18)
-  %qbit.i28.i59 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rxy(i64 %qbit.i28.i59, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i34.i60 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rz(i64 %qbit.i34.i60, double 0xBFF921FB54442D18)
-  %qbit.i.i61 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rxy(i64 %qbit.i.i61, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i6.i62 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rz(i64 %qbit.i6.i62, double 0x400921FB54442D18)
-  %qbit.i.i63 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___rxy(i64 %qbit.i.i63, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i10.i64 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  %qbit.i16.i65 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___rzz(i64 %qbit.i10.i64, i64 %qbit.i16.i65, double 0x3FF921FB54442D18)
-  %qbit.i22.i66 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rz(i64 %qbit.i22.i66, double 0xBFF921FB54442D18)
-  %qbit.i28.i67 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___rxy(i64 %qbit.i28.i67, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i34.i68 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___rz(i64 %qbit.i34.i68, double 0xBFF921FB54442D18)
-  %qbit.i.i69 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  %qbit.i.i59 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rxy(i64 %qbit.i.i59, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
+  %qbit.i6.i60 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rz(i64 %qbit.i6.i60, double 0x400921FB54442D18)
+  %qbit.i.i61 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rxy(i64 %qbit.i.i61, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
+  %qbit.i10.i62 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  %qbit.i16.i63 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rzz(i64 %qbit.i10.i62, i64 %qbit.i16.i63, double 0x3FF921FB54442D18)
+  %qbit.i22.i64 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rz(i64 %qbit.i22.i64, double 0xBFF921FB54442D18)
+  %qbit.i28.i65 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rxy(i64 %qbit.i28.i65, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  %qbit.i34.i66 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rz(i64 %qbit.i34.i66, double 0xBFF921FB54442D18)
+  %qbit.i.i67 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rxy(i64 %qbit.i.i67, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
+  %qbit.i6.i68 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rz(i64 %qbit.i6.i68, double 0x400921FB54442D18)
+  %qbit.i.i69 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
   tail call void @___rxy(i64 %qbit.i.i69, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i10.i70 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  %qbit.i16.i71 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  %qbit.i10.i70 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  %qbit.i16.i71 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
   tail call void @___rzz(i64 %qbit.i10.i70, i64 %qbit.i16.i71, double 0x3FF921FB54442D18)
-  %qbit.i22.i72 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %qbit.i22.i72 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
   tail call void @___rz(i64 %qbit.i22.i72, double 0xBFF921FB54442D18)
-  %qbit.i28.i73 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  %qbit.i28.i73 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
   tail call void @___rxy(i64 %qbit.i28.i73, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i34.i74 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  %qbit.i34.i74 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
   tail call void @___rz(i64 %qbit.i34.i74, double 0xBFF921FB54442D18)
-  %qbit.i.i75 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rxy(i64 %qbit.i.i75, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i6.i76 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___rz(i64 %qbit.i6.i76, double 0x400921FB54442D18)
+  %qbit.i.i75 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rxy(i64 %qbit.i.i75, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
+  %qbit.i10.i76 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  %qbit.i16.i77 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rzz(i64 %qbit.i10.i76, i64 %qbit.i16.i77, double 0x3FF921FB54442D18)
+  %qbit.i22.i78 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rz(i64 %qbit.i22.i78, double 0xBFF921FB54442D18)
+  %qbit.i28.i79 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rxy(i64 %qbit.i28.i79, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  %qbit.i34.i80 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___rz(i64 %qbit.i34.i80, double 0xBFF921FB54442D18)
+  %qbit.i.i81 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rxy(i64 %qbit.i.i81, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
+  %qbit.i6.i82 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___rz(i64 %qbit.i6.i82, double 0x400921FB54442D18)
   br label %loop
 
-loop:                                             ; preds = %loop, %qir_qis.init_qubit.exit51
-  %qbit.i.i77 = load i64, ptr @qis_qs, align 16
-  tail call void @___rxy(i64 %qbit.i.i77, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i6.i78 = load i64, ptr @qis_qs, align 16
-  tail call void @___rz(i64 %qbit.i6.i78, double 0x400921FB54442D18)
+loop:                                             ; preds = %loop.backedge, %qir_qis.init_qubit.exit57
+  %qbit.i.i83 = load i64, ptr @qis_qs, align 16
+  tail call void @___rxy(i64 %qbit.i.i83, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
+  %qbit.i6.i84 = load i64, ptr @qis_qs, align 16
+  tail call void @___rz(i64 %qbit.i6.i84, double 0x400921FB54442D18)
   %qbit = load i64, ptr @qis_qs, align 16
   %meas = tail call i64 @___lazy_measure(i64 %qbit)
+  %state1.i.i = load i8, ptr @qir_qis.static_results, align 16
+  %is_pending.i.i = icmp eq i8 %state1.i.i, 1
+  br i1 %is_pending.i.i, label %dec_future.i.i, label %qir_qis.result_set_pending.exit
+
+dec_future.i.i:                                   ; preds = %loop
+  %future2.i.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.i)
+  br label %qir_qis.result_set_pending.exit
+
+qir_qis.result_set_pending.exit:                  ; preds = %dec_future.i.i, %loop
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  store i8 1, ptr @qir_qis.static_results, align 16
+  store i64 %meas, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
   %qbit1 = load i64, ptr @qis_qs, align 16
   tail call void @___reset(i64 %qbit1)
-  %bool = tail call i1 @___read_future_bool(i64 %meas)
-  tail call void @___dec_future_refcount(i64 %meas)
-  br i1 %bool, label %cont, label %loop
+  %state2.i.i = load i8, ptr @qir_qis.static_results, align 16
+  switch i8 %state2.i.i, label %loop.backedge [
+    i8 1, label %pending.i.i
+    i8 2, label %cached.i.i
+  ]
 
-cont:                                             ; preds = %loop
+pending.i.i:                                      ; preds = %qir_qis.result_set_pending.exit
+  %future3.i.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  %bool.i.i = tail call i1 @___read_future_bool(i64 %future3.i.i)
+  tail call void @___dec_future_refcount(i64 %future3.i.i)
+  store i1 %bool.i.i, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  store i8 2, ptr @qir_qis.static_results, align 16
+  br i1 %bool.i.i, label %cont, label %loop.backedge
+
+loop.backedge:                                    ; preds = %cached.i.i, %pending.i.i, %qir_qis.result_set_pending.exit
+  br label %loop
+
+cached.i.i:                                       ; preds = %qir_qis.result_set_pending.exit
+  %cached4.i.i = load i1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  br i1 %cached4.i.i, label %cont, label %loop.backedge
+
+cont:                                             ; preds = %cached.i.i, %pending.i.i
   %qbit2 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
   %meas3 = tail call i64 @___lazy_measure(i64 %qbit2)
-  %qbit4 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___reset(i64 %qbit4)
-  %bool5 = tail call i1 @___read_future_bool(i64 %meas3)
-  tail call void @___dec_future_refcount(i64 %meas3)
-  br i1 %bool5, label %then__1, label %continue__1
+  %state1.i.i85 = load i8, ptr @qir_qis.static_results, align 16
+  %is_pending.i.i86 = icmp eq i8 %state1.i.i85, 1
+  br i1 %is_pending.i.i86, label %dec_future.i.i87, label %qir_qis.result_set_pending.exit89
 
-then__1:                                          ; preds = %cont
-  %qbit.i.i79 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rz(i64 %qbit.i.i79, double 0x400921FB54442D18)
+dec_future.i.i87:                                 ; preds = %cont
+  %future2.i.i88 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.i88)
+  br label %qir_qis.result_set_pending.exit89
+
+qir_qis.result_set_pending.exit89:                ; preds = %dec_future.i.i87, %cont
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  store i8 1, ptr @qir_qis.static_results, align 16
+  store i64 %meas3, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  %qbit5 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___reset(i64 %qbit5)
+  %state2.i.i90 = load i8, ptr @qir_qis.static_results, align 16
+  switch i8 %state2.i.i90, label %continue__1 [
+    i8 1, label %pending.i.i94
+    i8 2, label %qir_qis.static_result_read.exit97
+  ]
+
+pending.i.i94:                                    ; preds = %qir_qis.result_set_pending.exit89
+  %future3.i.i95 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  %bool.i.i96 = tail call i1 @___read_future_bool(i64 %future3.i.i95)
+  tail call void @___dec_future_refcount(i64 %future3.i.i95)
+  store i1 %bool.i.i96, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  store i8 2, ptr @qir_qis.static_results, align 16
+  br i1 %bool.i.i96, label %then__1, label %continue__1
+
+qir_qis.static_result_read.exit97:                ; preds = %qir_qis.result_set_pending.exit89
+  %cached4.i.i92 = load i1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  br i1 %cached4.i.i92, label %then__1, label %continue__1
+
+then__1:                                          ; preds = %qir_qis.static_result_read.exit97, %pending.i.i94
+  %qbit.i.i98 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rz(i64 %qbit.i.i98, double 0x400921FB54442D18)
   br label %continue__1
 
-continue__1:                                      ; preds = %then__1, %cont
-  %qbit6 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  %meas7 = tail call i64 @___lazy_measure(i64 %qbit6)
-  %qbit8 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___reset(i64 %qbit8)
-  %bool9 = tail call i1 @___read_future_bool(i64 %meas7)
-  tail call void @___dec_future_refcount(i64 %meas7)
-  br i1 %bool9, label %then__2, label %continue__2
+continue__1:                                      ; preds = %then__1, %qir_qis.static_result_read.exit97, %pending.i.i94, %qir_qis.result_set_pending.exit89
+  %qbit7 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  %meas8 = tail call i64 @___lazy_measure(i64 %qbit7)
+  %state1.i.i99 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  %is_pending.i.i100 = icmp eq i8 %state1.i.i99, 1
+  br i1 %is_pending.i.i100, label %dec_future.i.i101, label %qir_qis.result_set_pending.exit103
 
-then__2:                                          ; preds = %continue__1
-  %qbit.i.i80 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rxy(i64 %qbit.i.i80, double 0x400921FB54442D18, double 0.000000e+00)
+dec_future.i.i101:                                ; preds = %continue__1
+  %future2.i.i102 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 24), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.i102)
+  br label %qir_qis.result_set_pending.exit103
+
+qir_qis.result_set_pending.exit103:               ; preds = %dec_future.i.i101, %continue__1
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 17), align 1
+  store i8 1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  store i64 %meas8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 24), align 8
+  %qbit10 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___reset(i64 %qbit10)
+  %state2.i.i104 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  switch i8 %state2.i.i104, label %continue__2 [
+    i8 1, label %pending.i.i108
+    i8 2, label %qir_qis.static_result_read.exit111
+  ]
+
+pending.i.i108:                                   ; preds = %qir_qis.result_set_pending.exit103
+  %future3.i.i109 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 24), align 8
+  %bool.i.i110 = tail call i1 @___read_future_bool(i64 %future3.i.i109)
+  tail call void @___dec_future_refcount(i64 %future3.i.i109)
+  store i1 %bool.i.i110, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 17), align 1
+  store i8 2, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  br i1 %bool.i.i110, label %then__2, label %continue__2
+
+qir_qis.static_result_read.exit111:               ; preds = %qir_qis.result_set_pending.exit103
+  %cached4.i.i106 = load i1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 17), align 1
+  br i1 %cached4.i.i106, label %then__2, label %continue__2
+
+then__2:                                          ; preds = %qir_qis.static_result_read.exit111, %pending.i.i108
+  %qbit.i.i112 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rxy(i64 %qbit.i.i112, double 0x400921FB54442D18, double 0.000000e+00)
   br label %continue__2
 
-continue__2:                                      ; preds = %then__2, %continue__1
-  %qbit.i.i81 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rxy(i64 %qbit.i.i81, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
-  %qbit.i10.i82 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  %qbit.i16.i83 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rzz(i64 %qbit.i10.i82, i64 %qbit.i16.i83, double 0x3FF921FB54442D18)
-  %qbit.i22.i84 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rz(i64 %qbit.i22.i84, double 0xBFF921FB54442D18)
-  %qbit.i28.i85 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rxy(i64 %qbit.i28.i85, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
-  %qbit.i34.i86 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___rz(i64 %qbit.i34.i86, double 0xBFF921FB54442D18)
-  %qbit.i.i87 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rxy(i64 %qbit.i.i87, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
-  %qbit.i6.i88 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___rz(i64 %qbit.i6.i88, double 0x400921FB54442D18)
-  %qbit10 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  %meas11 = tail call i64 @___lazy_measure(i64 %qbit10)
+continue__2:                                      ; preds = %then__2, %qir_qis.static_result_read.exit111, %pending.i.i108, %qir_qis.result_set_pending.exit103
+  %qbit.i.i113 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rxy(i64 %qbit.i.i113, double 0xBFF921FB54442D18, double 0x3FF921FB54442D18)
+  %qbit.i10.i114 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  %qbit.i16.i115 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rzz(i64 %qbit.i10.i114, i64 %qbit.i16.i115, double 0x3FF921FB54442D18)
+  %qbit.i22.i116 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rz(i64 %qbit.i22.i116, double 0xBFF921FB54442D18)
+  %qbit.i28.i117 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rxy(i64 %qbit.i28.i117, double 0x3FF921FB54442D18, double 0x400921FB54442D18)
+  %qbit.i34.i118 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___rz(i64 %qbit.i34.i118, double 0xBFF921FB54442D18)
+  %qbit.i.i119 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rxy(i64 %qbit.i.i119, double 0x3FF921FB54442D18, double 0xBFF921FB54442D18)
+  %qbit.i6.i120 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___rz(i64 %qbit.i6.i120, double 0x400921FB54442D18)
   %qbit12 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___reset(i64 %qbit12)
-  %bool13 = tail call i1 @___read_future_bool(i64 %meas11)
-  tail call void @___dec_future_refcount(i64 %meas11)
-  br i1 %bool13, label %then__3, label %continue__3
+  %meas13 = tail call i64 @___lazy_measure(i64 %qbit12)
+  %state1.i.i121 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 32), align 16
+  %is_pending.i.i122 = icmp eq i8 %state1.i.i121, 1
+  br i1 %is_pending.i.i122, label %dec_future.i.i123, label %qir_qis.result_set_pending.exit125
 
-then__3:                                          ; preds = %continue__2
-  %qbit.i.i89 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___rz(i64 %qbit.i.i89, double 0x400921FB54442D18)
+dec_future.i.i123:                                ; preds = %continue__2
+  %future2.i.i124 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 40), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.i124)
+  br label %qir_qis.result_set_pending.exit125
+
+qir_qis.result_set_pending.exit125:               ; preds = %dec_future.i.i123, %continue__2
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 33), align 1
+  store i8 1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 32), align 16
+  store i64 %meas13, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 40), align 8
+  %qbit15 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___reset(i64 %qbit15)
+  %state2.i.i126 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 32), align 16
+  switch i8 %state2.i.i126, label %continue__3 [
+    i8 1, label %pending.i.i130
+    i8 2, label %qir_qis.static_result_read.exit133
+  ]
+
+pending.i.i130:                                   ; preds = %qir_qis.result_set_pending.exit125
+  %future3.i.i131 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 40), align 8
+  %bool.i.i132 = tail call i1 @___read_future_bool(i64 %future3.i.i131)
+  tail call void @___dec_future_refcount(i64 %future3.i.i131)
+  store i1 %bool.i.i132, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 33), align 1
+  store i8 2, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 32), align 16
+  br i1 %bool.i.i132, label %then__3, label %continue__3
+
+qir_qis.static_result_read.exit133:               ; preds = %qir_qis.result_set_pending.exit125
+  %cached4.i.i128 = load i1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 33), align 1
+  br i1 %cached4.i.i128, label %then__3, label %continue__3
+
+then__3:                                          ; preds = %qir_qis.static_result_read.exit133, %pending.i.i130
+  %qbit.i.i134 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
+  tail call void @___rz(i64 %qbit.i.i134, double 0x400921FB54442D18)
   br label %continue__3
 
-continue__3:                                      ; preds = %then__3, %continue__2
-  %qbit14 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  %meas15 = tail call i64 @___lazy_measure(i64 %qbit14)
-  %qbit16 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___reset(i64 %qbit16)
-  %bool17 = tail call i1 @___read_future_bool(i64 %meas15)
-  tail call void @___dec_future_refcount(i64 %meas15)
-  br i1 %bool17, label %then__4, label %continue__4
+continue__3:                                      ; preds = %then__3, %qir_qis.static_result_read.exit133, %pending.i.i130, %qir_qis.result_set_pending.exit125
+  %qbit17 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  %meas18 = tail call i64 @___lazy_measure(i64 %qbit17)
+  %state1.i.i135 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 48), align 16
+  %is_pending.i.i136 = icmp eq i8 %state1.i.i135, 1
+  br i1 %is_pending.i.i136, label %dec_future.i.i137, label %qir_qis.result_set_pending.exit139
 
-then__4:                                          ; preds = %continue__3
-  %qbit.i.i90 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___rxy(i64 %qbit.i.i90, double 0x400921FB54442D18, double 0.000000e+00)
+dec_future.i.i137:                                ; preds = %continue__3
+  %future2.i.i138 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 56), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.i138)
+  br label %qir_qis.result_set_pending.exit139
+
+qir_qis.result_set_pending.exit139:               ; preds = %dec_future.i.i137, %continue__3
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 49), align 1
+  store i8 1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 48), align 16
+  store i64 %meas18, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 56), align 8
+  %qbit20 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___reset(i64 %qbit20)
+  %state2.i.i140 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 48), align 16
+  switch i8 %state2.i.i140, label %continue__4 [
+    i8 1, label %pending.i.i144
+    i8 2, label %qir_qis.static_result_read.exit147
+  ]
+
+pending.i.i144:                                   ; preds = %qir_qis.result_set_pending.exit139
+  %future3.i.i145 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 56), align 8
+  %bool.i.i146 = tail call i1 @___read_future_bool(i64 %future3.i.i145)
+  tail call void @___dec_future_refcount(i64 %future3.i.i145)
+  store i1 %bool.i.i146, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 49), align 1
+  store i8 2, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 48), align 16
+  br i1 %bool.i.i146, label %then__4, label %continue__4
+
+qir_qis.static_result_read.exit147:               ; preds = %qir_qis.result_set_pending.exit139
+  %cached4.i.i142 = load i1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 49), align 1
+  br i1 %cached4.i.i142, label %then__4, label %continue__4
+
+then__4:                                          ; preds = %qir_qis.static_result_read.exit147, %pending.i.i144
+  %qbit.i.i148 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
+  tail call void @___rxy(i64 %qbit.i.i148, double 0x400921FB54442D18, double 0.000000e+00)
   br label %continue__4
 
-continue__4:                                      ; preds = %then__4, %continue__3
-  %qbit18 = load i64, ptr @qis_qs, align 16
-  %meas19 = tail call i64 @___lazy_measure(i64 %qbit18)
-  %qbit20 = load i64, ptr @qis_qs, align 16
-  tail call void @___reset(i64 %qbit20)
-  %qbit21 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  %meas22 = tail call i64 @___lazy_measure(i64 %qbit21)
-  %qbit23 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___reset(i64 %qbit23)
-  %bool24 = tail call i1 @___read_future_bool(i64 %meas19)
-  tail call void @___dec_future_refcount(i64 %meas19)
-  tail call void @print_bool(ptr nonnull @res_0_t0, i64 16, i1 %bool24)
-  %bool25 = tail call i1 @___read_future_bool(i64 %meas22)
-  tail call void @___dec_future_refcount(i64 %meas22)
-  tail call void @print_bool(ptr nonnull @res_0_t1, i64 16, i1 %bool25)
-  %qbit26 = load i64, ptr @qis_qs, align 16
-  tail call void @___qfree(i64 %qbit26)
-  %qbit27 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
-  tail call void @___qfree(i64 %qbit27)
-  %qbit28 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
-  tail call void @___qfree(i64 %qbit28)
-  %qbit29 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
-  tail call void @___qfree(i64 %qbit29)
-  %qbit30 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
-  tail call void @___qfree(i64 %qbit30)
-  %qbit31 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
-  tail call void @___qfree(i64 %qbit31)
+continue__4:                                      ; preds = %then__4, %qir_qis.static_result_read.exit147, %pending.i.i144, %qir_qis.result_set_pending.exit139
+  %qbit22 = load i64, ptr @qis_qs, align 16
+  %meas23 = tail call i64 @___lazy_measure(i64 %qbit22)
+  %state1.i.i149 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 64), align 16
+  %is_pending.i.i150 = icmp eq i8 %state1.i.i149, 1
+  br i1 %is_pending.i.i150, label %dec_future.i.i151, label %qir_qis.result_set_pending.exit153
+
+dec_future.i.i151:                                ; preds = %continue__4
+  %future2.i.i152 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 72), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.i152)
+  br label %qir_qis.result_set_pending.exit153
+
+qir_qis.result_set_pending.exit153:               ; preds = %dec_future.i.i151, %continue__4
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 65), align 1
+  store i8 1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 64), align 16
+  store i64 %meas23, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 72), align 8
+  %qbit25 = load i64, ptr @qis_qs, align 16
+  tail call void @___reset(i64 %qbit25)
+  %qbit26 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
+  %meas27 = tail call i64 @___lazy_measure(i64 %qbit26)
+  %state1.i.i154 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 80), align 16
+  %is_pending.i.i155 = icmp eq i8 %state1.i.i154, 1
+  br i1 %is_pending.i.i155, label %dec_future.i.i156, label %qir_qis.result_set_pending.exit158
+
+dec_future.i.i156:                                ; preds = %qir_qis.result_set_pending.exit153
+  %future2.i.i157 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 88), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.i157)
+  br label %qir_qis.result_set_pending.exit158
+
+qir_qis.result_set_pending.exit158:               ; preds = %dec_future.i.i156, %qir_qis.result_set_pending.exit153
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 81), align 1
+  store i8 1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 80), align 16
+  store i64 %meas27, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 88), align 8
+  %qbit29 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
+  tail call void @___reset(i64 %qbit29)
+  %state2.i.i159 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 64), align 16
+  switch i8 %state2.i.i159, label %qir_qis.static_result_read.exit166 [
+    i8 1, label %pending.i.i163
+    i8 2, label %cached.i.i160
+  ]
+
+pending.i.i163:                                   ; preds = %qir_qis.result_set_pending.exit158
+  %future3.i.i164 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 72), align 8
+  %bool.i.i165 = tail call i1 @___read_future_bool(i64 %future3.i.i164)
+  tail call void @___dec_future_refcount(i64 %future3.i.i164)
+  store i1 %bool.i.i165, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 65), align 1
+  store i8 2, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 64), align 16
+  br label %qir_qis.static_result_read.exit166
+
+cached.i.i160:                                    ; preds = %qir_qis.result_set_pending.exit158
+  %cached4.i.i161 = load i1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 65), align 1
+  br label %qir_qis.static_result_read.exit166
+
+qir_qis.static_result_read.exit166:               ; preds = %cached.i.i160, %pending.i.i163, %qir_qis.result_set_pending.exit158
+  %common.ret.op.i.i162 = phi i1 [ %bool.i.i165, %pending.i.i163 ], [ %cached4.i.i161, %cached.i.i160 ], [ false, %qir_qis.result_set_pending.exit158 ]
+  tail call void @print_bool(ptr nonnull @res_0_t0, i64 16, i1 %common.ret.op.i.i162)
+  %state2.i.i167 = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 80), align 16
+  switch i8 %state2.i.i167, label %qir_qis.static_result_read.exit174 [
+    i8 1, label %pending.i.i171
+    i8 2, label %cached.i.i168
+  ]
+
+pending.i.i171:                                   ; preds = %qir_qis.static_result_read.exit166
+  %future3.i.i172 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 88), align 8
+  %bool.i.i173 = tail call i1 @___read_future_bool(i64 %future3.i.i172)
+  tail call void @___dec_future_refcount(i64 %future3.i.i172)
+  store i1 %bool.i.i173, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 81), align 1
+  store i8 2, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 80), align 16
+  br label %qir_qis.static_result_read.exit174
+
+cached.i.i168:                                    ; preds = %qir_qis.static_result_read.exit166
+  %cached4.i.i169 = load i1, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 81), align 1
+  br label %qir_qis.static_result_read.exit174
+
+qir_qis.static_result_read.exit174:               ; preds = %cached.i.i168, %pending.i.i171, %qir_qis.static_result_read.exit166
+  %common.ret.op.i.i170 = phi i1 [ %bool.i.i173, %pending.i.i171 ], [ %cached4.i.i169, %cached.i.i168 ], [ false, %qir_qis.static_result_read.exit166 ]
+  tail call void @print_bool(ptr nonnull @res_0_t1, i64 16, i1 %common.ret.op.i.i170)
+  %state1.i.i175 = load i8, ptr @qir_qis.static_results, align 16
+  %is_pending.i.i176 = icmp eq i8 %state1.i.i175, 1
+  br i1 %is_pending.i.i176, label %dec_future.i.i177, label %body.i.1.i
+
+dec_future.i.i177:                                ; preds = %qir_qis.static_result_read.exit174
+  %future2.i.i178 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.i178)
+  br label %body.i.1.i
+
+body.i.1.i:                                       ; preds = %dec_future.i.i177, %qir_qis.static_result_read.exit174
+  store i8 0, ptr @qir_qis.static_results, align 16
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 1), align 1
+  store i64 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 8), align 8
+  %state1.i.1.i = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  %is_pending.i.1.i = icmp eq i8 %state1.i.1.i, 1
+  br i1 %is_pending.i.1.i, label %dec_future.i.1.i, label %body.i.2.i
+
+dec_future.i.1.i:                                 ; preds = %body.i.1.i
+  %future2.i.1.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 24), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.1.i)
+  br label %body.i.2.i
+
+body.i.2.i:                                       ; preds = %dec_future.i.1.i, %body.i.1.i
+  store i8 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 16), align 16
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 17), align 1
+  store i64 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 24), align 8
+  %state1.i.2.i = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 32), align 16
+  %is_pending.i.2.i = icmp eq i8 %state1.i.2.i, 1
+  br i1 %is_pending.i.2.i, label %dec_future.i.2.i, label %body.i.3.i
+
+dec_future.i.2.i:                                 ; preds = %body.i.2.i
+  %future2.i.2.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 40), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.2.i)
+  br label %body.i.3.i
+
+body.i.3.i:                                       ; preds = %dec_future.i.2.i, %body.i.2.i
+  store i8 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 32), align 16
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 33), align 1
+  store i64 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 40), align 8
+  %state1.i.3.i = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 48), align 16
+  %is_pending.i.3.i = icmp eq i8 %state1.i.3.i, 1
+  br i1 %is_pending.i.3.i, label %dec_future.i.3.i, label %body.i.4.i
+
+dec_future.i.3.i:                                 ; preds = %body.i.3.i
+  %future2.i.3.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 56), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.3.i)
+  br label %body.i.4.i
+
+body.i.4.i:                                       ; preds = %dec_future.i.3.i, %body.i.3.i
+  store i8 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 48), align 16
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 49), align 1
+  store i64 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 56), align 8
+  %state1.i.4.i = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 64), align 16
+  %is_pending.i.4.i = icmp eq i8 %state1.i.4.i, 1
+  br i1 %is_pending.i.4.i, label %dec_future.i.4.i, label %body.i.5.i
+
+dec_future.i.4.i:                                 ; preds = %body.i.4.i
+  %future2.i.4.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 72), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.4.i)
+  br label %body.i.5.i
+
+body.i.5.i:                                       ; preds = %dec_future.i.4.i, %body.i.4.i
+  store i8 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 64), align 16
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 65), align 1
+  store i64 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 72), align 8
+  %state1.i.5.i = load i8, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 80), align 16
+  %is_pending.i.5.i = icmp eq i8 %state1.i.5.i, 1
+  br i1 %is_pending.i.5.i, label %dec_future.i.5.i, label %qir_qis.clear_static_results.exit
+
+dec_future.i.5.i:                                 ; preds = %body.i.5.i
+  %future2.i.5.i = load i64, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 88), align 8
+  tail call void @___dec_future_refcount(i64 %future2.i.5.i)
+  br label %qir_qis.clear_static_results.exit
+
+qir_qis.clear_static_results.exit:                ; preds = %dec_future.i.5.i, %body.i.5.i
+  store i8 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 80), align 16
+  store i1 false, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 81), align 1
+  store i64 0, ptr getelementptr inbounds nuw (i8, ptr @qir_qis.static_results, i64 88), align 8
+  %qbit32 = load i64, ptr @qis_qs, align 16
+  tail call void @___qfree(i64 %qbit32)
+  %qbit33 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 8), align 8
+  tail call void @___qfree(i64 %qbit33)
+  %qbit34 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 16), align 16
+  tail call void @___qfree(i64 %qbit34)
+  %qbit35 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 24), align 8
+  tail call void @___qfree(i64 %qbit35)
+  %qbit36 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 32), align 16
+  tail call void @___qfree(i64 %qbit36)
+  %qbit37 = load i64, ptr getelementptr inbounds nuw (i8, ptr @qis_qs, i64 40), align 8
+  tail call void @___qfree(i64 %qbit37)
   ret i64 0
 }
 
@@ -282,11 +561,14 @@ load_qubit_invalid:                               ; preds = %entry
   unreachable
 }
 
+; Function Attrs: nocallback nofree nounwind willreturn memory(argmem: write)
+declare void @llvm.memset.p0.i64(ptr writeonly captures(none), i8, i64, i1 immarg) #0
+
+declare void @___dec_future_refcount(i64) local_unnamed_addr
+
 declare i64 @___lazy_measure(i64) local_unnamed_addr
 
 declare i1 @___read_future_bool(i64) local_unnamed_addr
-
-declare void @___dec_future_refcount(i64) local_unnamed_addr
 
 declare void @print_bool(ptr, i64, i1) local_unnamed_addr
 
@@ -309,6 +591,8 @@ entry:
 declare void @setup(i64) local_unnamed_addr
 
 declare i64 @teardown() local_unnamed_addr
+
+attributes #0 = { nocallback nofree nounwind willreturn memory(argmem: write) }
 
 !llvm.module.flags = !{!0, !1, !2, !3, !4, !6, !8, !9, !10, !11}
 !name = !{!12}

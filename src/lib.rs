@@ -58,7 +58,7 @@ mod aux {
             ResultOp, STATIC_RESULTS, ensure_dynamic_result_allocate,
             ensure_dynamic_result_array_allocate, ensure_dynamic_result_array_record_output,
             ensure_dynamic_result_array_release, ensure_dynamic_result_release,
-            ensure_dynamic_result_setter, result_read_function, result_slot_pointer,
+            ensure_result_setter, result_read_function, result_slot_pointer,
         },
         utils::extract_operands,
     };
@@ -1314,7 +1314,9 @@ mod aux {
         if global_mapping.is_empty() {
             log::warn!("No globals found in QIR module");
         }
-        let mut result_ssa = if capability_flags.dynamic_result_management {
+        let mut result_ssa = if capability_flags.dynamic_result_management
+            || module.get_global(STATIC_RESULTS).is_some()
+        {
             Vec::new()
         } else {
             get_result_vars(entry_fn)?
@@ -2638,7 +2640,7 @@ mod aux {
         if capability_flags.dynamic_result_management || module.get_global(STATIC_RESULTS).is_some()
         {
             let result_ptr = result_slot_pointer(ctx, module, &builder, result_ptr)?;
-            let set_result_fn = ensure_dynamic_result_setter(ctx, module);
+            let set_result_fn = ensure_result_setter(ctx, module);
             let _ = builder
                 .build_call(set_result_fn, &[result_ptr.into(), meas.into()], "")
                 .map_err(|e| format!("Failed to update dynamic result state: {e}"))?;

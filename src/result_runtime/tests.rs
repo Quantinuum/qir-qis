@@ -629,6 +629,376 @@ fn result_capabilities_follow_spec_matrix() {
 }
 
 #[test]
+fn straight_line_static_results_keep_the_ssa_fast_path() {
+    let ll = qir(
+        r"entry:
+  br label %measure
+measure:
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)
+  br label %output
+output:
+  %value = call i1 @__quantum__rt__read_result(ptr null)
+  %cached = call i1 @__quantum__rt__read_result(ptr null)
+  call void @__quantum__rt__result_record_output(ptr null, ptr @tag)
+  ret i64 0",
+        "",
+        false,
+        false,
+    );
+    for level in [0, 2] {
+        let rt = execute(&ll, level, None, 0);
+        assert_eq!(rt.outputs, vec![("USER:RESULT:out".into(), vec![true])]);
+        assert_eq!((rt.reads, rt.decrements, rt.allocated), (1, 1, 0));
+    }
+    let bc = qir_ll_to_bc(&ll).unwrap();
+    let output = qir_to_qis(&bc, 0, "native", None).unwrap();
+    let ctx = Context::create();
+    let buffer = MemoryBuffer::create_from_memory_range_copy(&output, "straight_line");
+    let module = Module::parse_bitcode_from_buffer(&buffer, &ctx).unwrap();
+    assert!(module.get_global(super::STATIC_RESULTS).is_none());
+}
+
+#[test]
+fn entry_without_static_results_preserves_musttail() {
+    let ll = qir(
+        r"entry:
+  %value = musttail call i64 @helper()
+  ret i64 %value",
+        r"define i64 @helper() {
+entry:
+  ret i64 0
+}",
+        false,
+        false,
+    )
+    .replace(
+        "\"required_num_qubits\"=\"2\"",
+        "\"required_num_qubits\"=\"0\"",
+    )
+    .replace(
+        "\"required_num_results\"=\"2\"",
+        "\"required_num_results\"=\"0\"",
+    );
+    for dynamic_qubits in [false, true] {
+        let ll = ll.replace(
+            "\"dynamic_qubit_management\", i1 false",
+            &format!("\"dynamic_qubit_management\", i1 {dynamic_qubits}"),
+        );
+        for level in [0, 2] {
+            // Direct translation accepts zero-qubit entries; validate_qir
+            // requires dynamic qubit management for them.
+            let rt = execute_inner(&ll, level, None, 0, dynamic_qubits);
+            assert_eq!((rt.reads, rt.decrements, rt.allocated), (0, 0, 0));
+        }
+    }
+}
+
+#[test]
+fn result_free_entry_musttail_preserves_main_acceptance() {
+    let ll = qir(
+        "entry:\n %value = musttail call i64 @helper()\n ret i64 %value",
+        "define i64 @helper() {\n ret i64 0\n}",
+        false,
+        false,
+    )
+    .replace(
+        "\"required_num_results\"=\"2\"",
+        "\"required_num_results\"=\"1\"",
+    );
+    let ll = ll.replace(
+        "\"dynamic_qubit_management\", i1 false",
+        "\"dynamic_qubit_management\", i1 true",
+    );
+    for level in [0, 2] {
+        let rt = execute(&ll, level, None, 0);
+        assert_eq!((rt.reads, rt.decrements, rt.allocated), (0, 0, 0));
+    }
+}
+
+#[test]
+fn storage_cleanup_precedes_a_result_free_musttail_call() {
+    let ll = qir(
+        r"entry:
+  %q = call ptr @__quantum__rt__qubit_allocate(ptr null)
+  call void @__quantum__qis__mz__body(ptr %q, ptr null)
+  call void @__quantum__rt__qubit_release(ptr %q)
+  %value = musttail call i64 @helper()
+  ret i64 %value",
+        r"declare ptr @__quantum__rt__qubit_allocate(ptr)
+declare void @__quantum__rt__qubit_release(ptr)
+define i64 @helper() {
+entry:
+  ret i64 0
+}",
+        false,
+        false,
+    )
+    .replace(
+        "\"dynamic_qubit_management\", i1 false",
+        "\"dynamic_qubit_management\", i1 true",
+    );
+    for level in [0, 2] {
+        let rt = execute(&ll, level, None, 0);
+        assert_eq!((rt.reads, rt.decrements, rt.allocated), (0, 1, 0));
+    }
+}
+
+#[test]
+fn entry_musttail_with_result_using_helpers_fails_explicitly() {
+    let ll = qir(
+        "entry:\n %value = musttail call i64 @helper()\n ret i64 %value",
+        r"define i64 @helper() {
+entry:
+  %value = call i1 @__quantum__rt__read_result(ptr null)
+  %code = zext i1 %value to i64
+  ret i64 %code
+}",
+        false,
+        false,
+    )
+    .replace(
+        "\"dynamic_qubit_management\", i1 false",
+        "\"dynamic_qubit_management\", i1 true",
+    );
+    let bc = qir_ll_to_bc(&ll).unwrap();
+    validate_qir(&bc, None).unwrap();
+    for level in [0, 2] {
+        assert_eq!(
+            qir_to_qis(&bc, level, "native", None).unwrap_err(),
+            "Entry-point musttail calls are unsupported when helpers use static results"
+        );
+    }
+}
+
+#[test]
+fn musttail_helpers_preserve_static_result_lifetimes() {
+    let ll = qir(
+        r"entry:
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)
+  %value = call i64 @helper()
+  ret i64 %value",
+        r"define i64 @helper() {
+entry:
+  %value = musttail call i64 @read()
+  ret i64 %value
+}
+define i64 @read() {
+entry:
+  %value = call i1 @__quantum__rt__read_result(ptr null)
+  %code = zext i1 %value to i64
+  ret i64 %code
+}",
+        false,
+        false,
+    );
+    for level in [0, 2] {
+        let rt = execute(&ll, level, None, 1);
+        assert_eq!((rt.reads, rt.decrements, rt.allocated), (1, 1, 0));
+    }
+}
+
+#[test]
+fn unmeasured_entry_results_keep_the_translation_error() {
+    for operation in [
+        "%value = call i1 @__quantum__rt__read_result(ptr null)",
+        "call void @__quantum__rt__result_record_output(ptr null, ptr @tag)",
+    ] {
+        for exit in [
+            "ret i64 0",
+            "br i1 true, label %yes, label %no\nyes:\n ret i64 0\nno:\n ret i64 0",
+        ] {
+            let ll = qir(&format!("entry:\n {operation}\n {exit}"), "", false, false);
+            let bc = qir_ll_to_bc(&ll).unwrap();
+            validate_qir(&bc, None).unwrap();
+            for level in [0, 2] {
+                let error = qir_to_qis(&bc, level, "native", None)
+                    .map(|_| ())
+                    .expect_err("an unmeasured entry result must fail translation");
+                assert_eq!(error, "Expected measurement handle");
+            }
+        }
+    }
+}
+
+#[test]
+fn straight_line_pending_overwrites_and_unread_exits_use_storage() {
+    for (body, reads, decrements, outputs) in [
+        (
+            "entry:\n call void @__quantum__qis__mz__body(ptr null, ptr null)\n call void @__quantum__qis__mz__body(ptr null, ptr null)\n call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)\n call void @__quantum__rt__result_record_output(ptr null, ptr @tag)\n ret i64 0",
+            1,
+            3,
+            vec![("USER:RESULT:out".into(), vec![true])],
+        ),
+        (
+            "entry:\n call void @__quantum__qis__mz__body(ptr null, ptr null)\n call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)\n call void @__quantum__rt__result_record_output(ptr null, ptr @tag)\n ret i64 0",
+            1,
+            2,
+            vec![("USER:RESULT:out".into(), vec![true])],
+        ),
+        (
+            "entry:\n call void @__quantum__qis__mz__body(ptr null, ptr null)\n ret i64 0",
+            0,
+            1,
+            vec![],
+        ),
+    ] {
+        let ll = qir(body, "", false, false);
+        for level in [0, 2] {
+            let rt = execute(&ll, level, None, 0);
+            assert_eq!(rt.outputs, outputs);
+            assert_eq!((rt.reads, rt.decrements), (reads, decrements));
+        }
+    }
+}
+
+#[test]
+fn reordered_straight_line_blocks_use_current_result_values() {
+    let ll = qir(
+        r"entry:
+  br label %measure
+output:
+  call void @__quantum__rt__result_record_output(ptr null, ptr @tag)
+  ret i64 0
+measure:
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)
+  br label %output",
+        "",
+        false,
+        false,
+    );
+    for level in [0, 2] {
+        let rt = execute(&ll, level, None, 0);
+        assert_eq!(rt.outputs, vec![("USER:RESULT:out".into(), vec![true])]);
+        assert_eq!((rt.reads, rt.decrements), (1, 1));
+    }
+}
+
+#[test]
+fn entry_static_branch_measurements_reach_merge() {
+    for take_then in [false, true] {
+        for reverse_blocks in [false, true] {
+            let then_block = "then:\n call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)\n br label %merge\n";
+            let else_block = "else:\n call void @__quantum__qis__mz__body(ptr null, ptr null)\n br label %merge\n";
+            let blocks = if reverse_blocks {
+                format!("{else_block}{then_block}")
+            } else {
+                format!("{then_block}{else_block}")
+            };
+            let ll = qir(
+                &format!(
+                    "entry:\n br i1 {take_then}, label %then, label %else\n{blocks}\
+                     merge:\n %value = call i1 @__quantum__rt__read_result(ptr null)\n \
+                     call void @__quantum__rt__result_record_output(ptr null, ptr @tag)\n ret i64 0"
+                ),
+                "",
+                false,
+                false,
+            );
+            for level in [0, 2] {
+                let rt = execute(&ll, level, None, 0);
+                assert_eq!(
+                    rt.outputs,
+                    vec![("USER:RESULT:out".into(), vec![take_then])]
+                );
+                assert_eq!((rt.reads, rt.decrements, rt.allocated), (1, 1, 0));
+            }
+        }
+    }
+}
+
+#[test]
+fn entry_static_sibling_reads_share_the_measured_value() {
+    for take_then in [false, true] {
+        let ll = qir(
+            &format!(
+                "entry:\n \
+                 call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)\n \
+                 br i1 {take_then}, label %then, label %else\n\
+                 then:\n %a = call i1 @__quantum__rt__read_result(ptr null)\n \
+                 call void @__quantum__rt__result_record_output(ptr null, ptr @tag)\n br label %merge\n\
+                 else:\n %b = call i1 @__quantum__rt__read_result(ptr null)\n \
+                 call void @__quantum__rt__result_record_output(ptr null, ptr @tag)\n br label %merge\n\
+                 merge:\n call void @__quantum__rt__result_record_output(ptr null, ptr @tag)\n ret i64 0"
+            ),
+            "",
+            false,
+            false,
+        );
+        for level in [0, 2] {
+            let rt = execute(&ll, level, None, 0);
+            assert_eq!(
+                rt.outputs,
+                vec![
+                    ("USER:RESULT:out".into(), vec![true]),
+                    ("USER:RESULT:out".into(), vec![true]),
+                ]
+            );
+            assert_eq!((rt.reads, rt.decrements), (1, 1));
+        }
+    }
+}
+
+#[test]
+fn entry_static_loop_reads_the_current_measurement() {
+    let ll = qir(
+        r"entry:
+  call void @__quantum__qis__mz__body(ptr inttoptr (i64 1 to ptr), ptr null)
+  br label %loop
+loop:
+  %i = phi i64 [0, %entry], [%next, %loop]
+  %value = call i1 @__quantum__rt__read_result(ptr null)
+  call void @__quantum__rt__result_record_output(ptr null, ptr @tag)
+  call void @__quantum__qis__mz__body(ptr null, ptr null)
+  %next = add i64 %i, 1
+  %more = icmp ult i64 %next, 2
+  br i1 %more, label %loop, label %done
+done:
+  ret i64 0",
+        "",
+        false,
+        false,
+    );
+    for level in [0, 2] {
+        let rt = execute(&ll, level, None, 0);
+        assert_eq!(
+            rt.outputs,
+            vec![
+                ("USER:RESULT:out".into(), vec![true]),
+                ("USER:RESULT:out".into(), vec![false]),
+            ]
+        );
+        assert_eq!((rt.reads, rt.decrements, rt.allocated), (2, 3, 0));
+    }
+}
+
+#[test]
+fn entry_static_overwrites_and_unread_returns_release_futures() {
+    for value in [false, true] {
+        let qubit = u64::from(value);
+        let ll = qir(
+            &format!(
+                "entry:\n \
+                 call void @__quantum__qis__mz__body(ptr null, ptr null)\n \
+                 call void @__quantum__qis__mz__body(ptr inttoptr (i64 {qubit} to ptr), ptr null)\n \
+                 %value = call i1 @__quantum__rt__read_result(ptr null)\n \
+                 call void @__quantum__rt__result_record_output(ptr null, ptr @tag)\n \
+                 br i1 %value, label %yes, label %no\n\
+                 yes:\n call void @__quantum__qis__mz__body(ptr null, ptr inttoptr (i64 1 to ptr))\n ret i64 1\n\
+                 no:\n call void @__quantum__qis__mz__body(ptr null, ptr inttoptr (i64 1 to ptr))\n ret i64 0"
+            ),
+            "",
+            false,
+            false,
+        );
+        for level in [0, 2] {
+            let rt = execute(&ll, level, None, u64::from(value));
+            assert_eq!(rt.outputs, vec![("USER:RESULT:out".into(), vec![value])]);
+            assert_eq!((rt.reads, rt.decrements, rt.allocated), (1, 3, 0));
+        }
+    }
+}
+
+#[test]
 fn static_arrays_preserve_values_order_duplicates_and_cached_reads() {
     let ll = qir(
         r"entry:
@@ -955,12 +1325,24 @@ fn allocation_failure_without_error_pointer_terminates_after_rollback() {
                 false,
                 None,
             ),
+            "empty_bounds" => (
+                "entry:\n %a = alloca [1 x ptr]\n store ptr null, ptr %a\n call void @__quantum__rt__result_array_record_output(i64 1, ptr %a, ptr @tag)\n ret i64 0",
+                false,
+                None,
+            ),
             _ => unreachable!("known child case"),
         };
-        execute(&qir(body, "", dynamic, true), 0, fail_after, 0);
+        let mut ll = qir(body, "", dynamic, true);
+        if case == "empty_bounds" {
+            ll = ll.replace(
+                "\"required_num_results\"=\"2\"",
+                "\"required_num_results\"=\"0\"",
+            );
+        }
+        execute(&ll, 0, fail_after, 0);
         panic!("runtime error path returned");
     }
-    for case in ["scalar", "bulk", "bounds"] {
+    for case in ["scalar", "bulk", "bounds", "empty_bounds"] {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "result_runtime::tests::allocation_failure_without_error_pointer_terminates_after_rollback", "--nocapture"])
             .env(ENV, case).output().unwrap();
@@ -972,7 +1354,7 @@ fn allocation_failure_without_error_pointer_terminates_after_rollback() {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("qir-qis runtime panic: 1001, live slots: 0"));
-        let expected_diagnostic = if case == "bounds" {
+        let expected_diagnostic = if case.ends_with("bounds") {
             "EXIT:INT:Static result index out of bounds."
         } else {
             "EXIT:INT:No memory available for result allocation."
@@ -1375,9 +1757,9 @@ fn static_table_initialization_uses_memset_at_resource_limit() {
 }
 
 #[test]
-fn entry_computed_static_ids_require_table_backing() {
-    for table in [false, true] {
-        let array_output = if table {
+fn entry_computed_static_ids_require_arrays_or_helpers() {
+    for arrays in [false, true] {
+        let array_output = if arrays {
             "%a = alloca [0 x ptr]\n call void @__quantum__rt__result_array_record_output(i64 0, ptr %a, ptr @tag)"
         } else {
             ""
@@ -1395,9 +1777,9 @@ fn entry_computed_static_ids_require_table_backing() {
             ),
             "",
             false,
-            table,
+            arrays,
         );
-        if table {
+        if arrays {
             for level in [0, 2] {
                 assert_eq!(
                     execute(&ll, level, None, 0).outputs,
@@ -1415,7 +1797,7 @@ fn entry_computed_static_ids_require_table_backing() {
             ] {
                 assert!(
                     error
-                        .expect_err("entry-only SSA lowering rejects computed IDs")
+                        .expect_err("entry-only scalar QIR requires constant IDs")
                         .contains("Cannot extract pointer index")
                 );
             }
