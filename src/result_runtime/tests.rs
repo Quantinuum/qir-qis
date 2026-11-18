@@ -629,6 +629,30 @@ fn result_capabilities_follow_spec_matrix() {
 }
 
 #[test]
+fn entry_static_unmeasured_reads_and_output_are_false() {
+    let ll = qir(
+        r"entry:
+  %first = call i1 @__quantum__rt__read_result(ptr null)
+  %second = call i1 @__quantum__rt__read_result(ptr null)
+  %any_true = or i1 %first, %second
+  call void @__quantum__rt__result_record_output(ptr null, ptr @tag)
+  br i1 %any_true, label %unexpected, label %done
+unexpected:
+  ret i64 1
+done:
+  ret i64 0",
+        "",
+        false,
+        false,
+    );
+    for level in [0, 2] {
+        let rt = execute(&ll, level, None, 0);
+        assert_eq!(rt.outputs, vec![("USER:RESULT:out".into(), vec![false])]);
+        assert_eq!((rt.reads, rt.decrements, rt.allocated), (0, 0, 0));
+    }
+}
+
+#[test]
 fn entry_static_branch_measurements_reach_merge() {
     for take_then in [false, true] {
         for reverse_blocks in [false, true] {

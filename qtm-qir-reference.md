@@ -185,6 +185,18 @@ declare void @__quantum__rt__int_record_output(i64, i8*)
 declare void @__quantum__rt__double_record_output(double, i8*)
 ```
 
+### Static Result Values
+
+Statically declared result slots start as `false` on each entry-point invocation.
+Reading or recording a result before its first measurement returns or outputs
+`false`, without reading or decrementing a measurement future. This is
+`qir-qis` behavior, shared by entry-only scalar programs and programs using
+result arrays or result operations in helpers.
+
+A measurement replaces the slot's previous value. Reads and output recording
+share the cached boolean until the next measurement. Pending futures are
+released when overwritten or before any normal return from the entry point.
+
 ### Dynamic Allocation and Arrays
 
 `qir-qis` accepts the optional Adaptive Profile capability flags:
