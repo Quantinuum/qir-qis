@@ -3072,7 +3072,8 @@ mod aux {
         new_global.set_initializer(&new_const);
         new_global.set_linkage(inkwell::module::Linkage::Private);
         new_global.set_constant(true);
-        global_mapping.insert(old_name, new_global);
+        // Keep the original RESULT mapping: Adaptive Profile records may reuse
+        // this tag with a different schema on a later call.
         record_classical_output(ctx, *instr, new_global, print_func, value)?;
         Ok(())
     }
@@ -3888,7 +3889,7 @@ mod test {
         context::Context,
         memory_buffer::MemoryBuffer,
         module::Module,
-        values::{CallSiteValue, FunctionValue},
+        values::{BasicValue, CallSiteValue, FunctionValue},
     };
     use proptest::prelude::*;
     use rstest::rstest;
@@ -5246,6 +5247,291 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
             module_flag_idx < capability_idx,
             "module flag errors should be reported before capability errors: {err}"
         );
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(2)]
+    #[case(32)]
+    fn test_zero_initialized_output_tag_is_an_empty_label(#[case] length: u32) {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "1",
+            "2",
+            &format!(
+                "@tag = private constant [{length} x i8] zeroinitializer\n\
+                 declare void @__quantum__qis__mz__body(ptr, ptr)\n\
+                 declare void @__quantum__rt__result_record_output(ptr, ptr)"
+            ),
+            "  call void @__quantum__qis__mz__body(ptr null, ptr null)\n\
+               call void @__quantum__rt__result_record_output(ptr null, ptr @tag)",
+        )
+        .replace("base_profile", "adaptive_profile");
+        let bc = qir_ll_to_bc(&ll_text).expect("QIR should assemble");
+        validate_qir(&bc, None).expect("positive-length zero-filled tags should validate");
+        let output = qir_to_qis(&bc, 0, "native", None)
+            .expect("positive-length zero-filled tags should translate");
+        verify_bitcode_module(&output, "empty_tag").expect("QIS should verify");
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &output, "empty_tag").expect("QIS should parse");
+        assert!(module.get_globals().any(|global| {
+            let Some(inkwell::values::BasicValueEnum::ArrayValue(value)) = global.get_initializer()
+            else {
+                return false;
+            };
+            value.is_const_string() && value.as_const_string() == Some(b"\x0cUSER:RESULT:")
+        }));
+    }
+
+    #[rstest]
+    #[case("bool", "i1 true", "print_bool", b"\x0dUSER:BOOL:out")]
+    #[case("int", "i64 42", "print_int", b"\x0cUSER:INT:out")]
+    #[case("double", "double 1.5", "print_float", b"\x0eUSER:FLOAT:out")]
+    fn test_adaptive_classical_and_scalar_result_preserve_shared_tag_schemas(
+        #[case] kind: &str,
+        #[case] value: &str,
+        #[case] print_name: &str,
+        #[case] classical_tag: &[u8],
+    ) {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "1",
+            "2",
+            &format!(
+                "@tag = private constant [4 x i8] c\"out\\00\"\n\
+             declare void @__quantum__qis__mz__body(ptr, ptr)\n\
+             declare void @__quantum__rt__{kind}_record_output({}, ptr)\n\
+             declare void @__quantum__rt__result_record_output(ptr, ptr)",
+                value.split_once(' ').expect("typed value").0
+            ),
+            &format!(
+                "  call void @__quantum__qis__mz__body(ptr null, ptr null)\n\
+               call void @__quantum__rt__{kind}_record_output({value}, ptr @tag)\n\
+               call void @__quantum__rt__result_record_output(ptr null, ptr @tag)"
+            ),
+        )
+        .replace("base_profile", "adaptive_profile");
+        let bc = qir_ll_to_bc(&ll_text).expect("QIR should assemble");
+        validate_qir(&bc, None).expect("Adaptive Profile permits tag reuse");
+        let output = qir_to_qis(&bc, 0, "native", None).expect("shared tags should translate");
+        verify_bitcode_module(&output, "shared_tag").expect("QIS should verify");
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &output, "shared_tag").expect("QIS should parse");
+        let prints = module
+            .get_functions()
+            .flat_map(FunctionValue::get_basic_blocks)
+            .flat_map(inkwell::basic_block::BasicBlock::get_instructions)
+            .filter(|instruction| {
+                inkwell::values::CallSiteValue::try_from(*instruction)
+                    .ok()
+                    .and_then(CallSiteValue::get_called_fn_value)
+                    .is_some_and(|function| {
+                        let name = function.get_name().to_bytes();
+                        name == print_name.as_bytes() || name == b"print_bool"
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(prints.len(), 2);
+        for (print, expected_tag) in prints
+            .iter()
+            .zip([classical_tag, b"\x0fUSER:RESULT:out".as_slice()])
+        {
+            let tag = module
+                .get_globals()
+                .find(|global| {
+                    let Some(inkwell::values::BasicValueEnum::ArrayValue(value)) =
+                        global.get_initializer()
+                    else {
+                        return false;
+                    };
+                    value.is_const_string() && value.as_const_string() == Some(expected_tag)
+                })
+                .expect("expected output schema should exist");
+            assert_eq!(
+                print
+                    .get_operand(0)
+                    .and_then(inkwell::values::Operand::value),
+                Some(tag.as_pointer_value().into()),
+                "print call must reference its own schema"
+            );
+        }
+        let mut prints = prints.into_iter();
+        let classical = prints.next().expect("classical output");
+        let expected_value = match kind {
+            "bool" => ctx.bool_type().const_int(1, false).into(),
+            "int" => ctx.i64_type().const_int(42, false).into(),
+            _ => ctx.f64_type().const_float(1.5).into(),
+        };
+        assert_eq!(
+            classical
+                .get_operand(2)
+                .and_then(inkwell::values::Operand::value),
+            Some(expected_value)
+        );
+        let result = prints.next().expect("result output");
+        let measured = result
+            .get_operand(2)
+            .and_then(inkwell::values::Operand::value)
+            .and_then(|value| value.as_instruction_value())
+            .expect("measured result value");
+        assert_eq!(
+            inkwell::values::CallSiteValue::try_from(measured)
+                .expect("measurement read")
+                .get_called_fn_value()
+                .expect("read function")
+                .get_name()
+                .to_bytes(),
+            b"___read_future_bool"
+        );
+    }
+
+    #[test]
+    fn test_adaptive_scalar_data_global_is_preserved() {
+        // Adaptive Profile Bullet 5 permits globals of supported scalar types.
+        // Its `arrays` capability (Bullet 11) covers qubits/results, not byte lookup tables.
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "1",
+            "2",
+            "@lookup = private constant i64 42\n\
+             @tag = private constant [4 x i8] c\"out\\00\"\n\
+             declare void @__quantum__rt__int_record_output(i64, ptr)",
+            "  %value = load i64, ptr @lookup\n\
+               call void @__quantum__rt__int_record_output(i64 %value, ptr @tag)",
+        )
+        .replace("base_profile", "adaptive_profile")
+        .replace("!{!0, !1, !2, !3}", "!{!0, !1, !2, !3, !4}")
+            + "!4 = !{i32 5, !\"int_computations\", !5}\n!5 = !{!\"i64\"}\n";
+        let bc = qir_ll_to_bc(&ll_text).expect("QIR should assemble");
+        validate_qir(&bc, None).expect("declared i64 data should validate");
+        let output = qir_to_qis(&bc, 0, "native", None).expect("scalar data should translate");
+        verify_bitcode_module(&output, "scalar_data").expect("QIS should verify");
+        let ctx = Context::create();
+        let module = parse_bitcode_module(&ctx, &output, "scalar_data").expect("QIS should parse");
+        let data = module
+            .get_global("lookup")
+            .expect("ordinary data should remain");
+        assert_eq!(
+            data.get_initializer()
+                .expect("data initializer")
+                .into_int_value()
+                .get_zero_extended_constant(),
+            Some(42)
+        );
+        let print = module
+            .get_functions()
+            .flat_map(FunctionValue::get_basic_blocks)
+            .flat_map(inkwell::basic_block::BasicBlock::get_instructions)
+            .find(|instruction| {
+                CallSiteValue::try_from(*instruction)
+                    .ok()
+                    .and_then(CallSiteValue::get_called_fn_value)
+                    .is_some_and(|function| function.get_name().to_bytes() == b"print_int")
+            })
+            .expect("integer output");
+        let load = print
+            .get_operand(2)
+            .and_then(inkwell::values::Operand::value)
+            .expect("output value")
+            .into_int_value()
+            .as_instruction_value()
+            .expect("data load");
+        assert_eq!(load.get_opcode(), inkwell::values::InstructionOpcode::Load);
+        assert_eq!(
+            load.get_operand(0)
+                .and_then(inkwell::values::Operand::value),
+            Some(data.as_pointer_value().into())
+        );
+    }
+
+    #[rstest]
+    #[case("[0 x i8] zeroinitializer", "at least one byte")]
+    #[case(
+        "[2 x i16] zeroinitializer",
+        "must resolve to a constant global string"
+    )]
+    #[case("[2 x i8] c\"\\FF\\00\"", "Invalid UTF-8")]
+    fn test_malformed_result_tags_still_fail(
+        #[case] initializer: &str,
+        #[case] error_fragment: &str,
+    ) {
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "1",
+            "2",
+            &format!(
+                "@tag = private constant {initializer}\n\
+                declare void @__quantum__qis__mz__body(ptr, ptr)\n\
+                declare void @__quantum__rt__result_record_output(ptr, ptr)"
+            ),
+            "  call void @__quantum__qis__mz__body(ptr null, ptr null)\n\
+               call void @__quantum__rt__result_record_output(ptr null, ptr @tag)",
+        );
+        let bc = qir_ll_to_bc(&ll_text).expect("QIR should assemble");
+        for error in [
+            validate_qir(&bc, None).expect_err("malformed actual tags must be rejected"),
+            qir_to_qis(&bc, 0, "native", None)
+                .expect_err("malformed actual tags must fail cleanly"),
+        ] {
+            assert!(error.contains(error_fragment), "{error}");
+        }
+    }
+
+    #[rstest]
+    #[case(false, 243, true)]
+    #[case(false, 244, false)]
+    #[case(true, 237, true)]
+    #[case(true, 238, false)]
+    fn test_result_tag_encoding_limits_are_preserved(
+        #[case] array: bool,
+        #[case] length: usize,
+        #[case] accepted: bool,
+    ) {
+        let label = "x".repeat(length);
+        let tag_size = length.checked_add(1).expect("small test length");
+        let (declaration, body) = if array {
+            (
+                "declare void @__quantum__rt__result_array_record_output(i64, ptr, ptr)",
+                "  %results = alloca [1 x ptr]\n\
+                store ptr null, ptr %results\n\
+                call void @__quantum__qis__mz__body(ptr null, ptr null)\n\
+                call void @__quantum__rt__result_array_record_output(i64 1, ptr %results, ptr @tag)",
+            )
+        } else {
+            (
+                "declare void @__quantum__rt__result_record_output(ptr, ptr)",
+                "  call void @__quantum__qis__mz__body(ptr null, ptr null)\n\
+                call void @__quantum__rt__result_record_output(ptr null, ptr @tag)",
+            )
+        };
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "1",
+            "2",
+            &format!(
+                "@tag = private constant [{tag_size} x i8] c\"{label}\\00\"\n\
+                declare void @__quantum__qis__mz__body(ptr, ptr)\n{declaration}"
+            ),
+            body,
+        )
+        .replace("base_profile", "adaptive_profile")
+        .replace("!{!0, !1, !2, !3}", "!{!0, !1, !2, !3, !4}")
+            + "!4 = !{i32 1, !\"arrays\", i1 true}\n";
+        let bc = qir_ll_to_bc(&ll_text).expect("QIR should assemble");
+        if accepted {
+            validate_qir(&bc, None).expect("maximum-length tag should validate");
+            let output =
+                qir_to_qis(&bc, 0, "native", None).expect("maximum-length tag should translate");
+            verify_bitcode_module(&output, "tag_limit").expect("QIS should verify");
+        } else {
+            for error in [
+                validate_qir(&bc, None).expect_err("oversized tag must fail validation"),
+                qir_to_qis(&bc, 0, "native", None)
+                    .expect_err("oversized tag must fail translation"),
+            ] {
+                assert!(error.contains("Constant string too long"), "{error}");
+            }
+        }
     }
 
     #[test]
