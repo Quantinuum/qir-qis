@@ -3610,6 +3610,9 @@ pub fn validate_qir(bc_bytes: &[u8], wasm_bytes: Option<&[u8]>) -> Result<(), St
 
     let wasm_fns = get_wasm_functions(wasm_bytes)?;
 
+    if let Err(error) = crate::result_runtime::validate_acyclic_calls(&module) {
+        errors.push(error);
+    }
     if let Err(error) = crate::result_runtime::validate_input_symbols(&ctx, &module) {
         errors.push(error);
     }
@@ -5455,6 +5458,75 @@ attributes #0 = { "entry_point" "qir_profiles"="base_profile" "output_labeling_s
         let err = qir_to_qis(&bc_bytes, 0, "native", None)
             .expect_err("raw ___barrier declarations should fail translation");
         assert!(err.contains("Unsupported Qtm QIS function: ___barrier"));
+    }
+
+    #[rstest]
+    #[case::direct_entry("", "  %again = call i64 @Entry_Point_Name()")]
+    #[case::entry_helper_entry(
+        "define i64 @helper() { %again = call i64 @Entry_Point_Name() ret i64 %again }",
+        "  %value = call i64 @helper()"
+    )]
+    #[case::direct_helper(
+        "define void @helper() { call void @helper() ret void }",
+        "  call void @helper()"
+    )]
+    #[case::mutual_helpers(
+        "define void @helper() { call void @other() ret void }
+         define void @other() { call void @helper() ret void }",
+        "  call void @helper()"
+    )]
+    #[case::unreachable_direct_helper("define void @helper() { call void @helper() ret void }", "")]
+    #[case::unreachable_mutual_helpers(
+        "define void @helper() { call void @other() ret void }
+         define void @other() { call void @helper() ret void }",
+        ""
+    )]
+    fn test_rejects_recursive_call_cycles(#[case] helpers: &str, #[case] body: &str) {
+        let ll_text = minimal_qir_with_body("1", "1", "2", helpers, body)
+            .replace("base_profile", "adaptive_profile");
+        let bc = qir_ll_to_bc(&ll_text).unwrap();
+
+        for (api, result) in [
+            ("validation", validate_qir(&bc, None)),
+            (
+                "translation",
+                qir_to_qis(&bc, 0, "native", None).map(|_| ()),
+            ),
+        ] {
+            let error = result.expect_err(&format!("{api} must reject recursive call cycles"));
+            assert!(error.contains("Recursive call cycle"), "{api}: {error}");
+        }
+    }
+
+    #[test]
+    fn test_accepts_acyclic_helper_calls() {
+        let helpers = r"
+declare void @__quantum__qis__h__body(ptr)
+
+define void @leaf() {
+  call void @__quantum__qis__h__body(ptr null)
+  ret void
+}
+
+define void @left() { call void @leaf() ret void }
+define void @right() { call void @leaf() ret void }
+define void @unused() { call void @leaf() ret void }
+";
+        let ll_text = minimal_qir_with_body(
+            "1",
+            "1",
+            "2",
+            helpers,
+            "  call void @left()\n  call void @right()\n  call void @left()",
+        )
+        .replace("base_profile", "adaptive_profile");
+        let bc = qir_ll_to_bc(&ll_text).unwrap();
+
+        validate_qir(&bc, None).expect("acyclic helper calls must validate");
+        let output =
+            qir_to_qis(&bc, 0, "native", None).expect("acyclic helper calls must translate");
+        verify_bitcode_module(&output, "acyclic_helpers")
+            .expect("translated acyclic helper calls must remain LLVM-verifiable");
     }
 
     #[test]
