@@ -1,4 +1,5 @@
 PYTHON = uv run -- python
+RUST = uv run --no-sync --
 RUST_HOST_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
 FUZZ_TARGET ?= validate_qir
 FUZZ_RUN_ARGS ?= -max_total_time=30
@@ -9,16 +10,16 @@ FUZZ_ALL_TARGETS := declared_qis_calls entry_contracts get_entry_attributes muta
 # Usage:
 # make compile FILE=tests/data/adaptive.ll
 compile:
-	cargo run -- $(FILE)
+	$(RUST) cargo run -- $(FILE)
 
 .PHONY: lint
 lint:
-	uvx prek run --all-files
-	uvx ty check
+	$(RUST) uvx prek run --all-files
+	uvx ty check --python "$$(uv python find)"
 
 .PHONY: test
 test:
-	cargo nextest run --all-targets --all-features
+	$(RUST) cargo nextest run --all-targets --all-features
 	$(PYTHON) tests/test_main.py
 
 .PHONY: audit
@@ -27,7 +28,7 @@ audit:
 
 .PHONY: mutants
 mutants:
-	NEXTEST_PROFILE=mutants cargo mutants --package qir-qis --all-features --test-tool nextest --minimum-test-timeout 60
+	NEXTEST_PROFILE=mutants $(RUST) cargo mutants --package qir-qis --all-features --test-tool nextest --minimum-test-timeout 60
 
 .PHONY: fuzz
 fuzz:
@@ -51,7 +52,7 @@ dis:
 
 .PHONY: stubs
 stubs:
-	cargo run --bin stub_gen
+	$(RUST) cargo run --bin stub_gen
 	uvx prek run --files qir_qis.pyi || true
 	uvx ruff check qir_qis.pyi --fix
 

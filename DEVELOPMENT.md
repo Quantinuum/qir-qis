@@ -28,12 +28,18 @@ echo 'export LLVM_SYS_211_PREFIX=/path/to/llvm21' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Then install Rust dependencies and Python dependencies:
+Install Python dependencies and build the Rust project:
 
 ```sh
-cargo build
 uv sync
+export PYO3_PYTHON="$(uv python find)"
+cargo build
 ```
+
+PyO3 needs a Python interpreter in the range specified by `requires-python` in
+`pyproject.toml`, even for Rust builds. Set `PYO3_PYTHON` as shown above in each
+shell used for direct Cargo commands. The Make targets select a compatible
+interpreter through uv; an explicitly set `PYO3_PYTHON` takes precedence.
 
 ## Agent Guidance
 
