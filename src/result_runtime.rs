@@ -17,7 +17,8 @@ use inkwell::{
     module::{Linkage, Module},
     types::FunctionType,
     values::{
-        AsValueRef, BasicValue, CallSiteValue, FunctionValue, InstructionValue, PointerValue,
+        AsValueRef, BasicValue, CallSiteValue, FunctionValue, InstructionValue, LLVMTailCallKind,
+        PointerValue,
     },
 };
 
@@ -446,7 +447,8 @@ pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValida
             }
         }
     };
-    let table = uses_static_results(module, entry, flags.dynamic_result_management);
+    let computed_ids =
+        allows_computed_static_result_ids(module, entry, flags.dynamic_result_management);
     for function in module.get_functions() {
         for block in function.get_basic_blocks() {
             for instruction in block.get_instructions() {
@@ -516,7 +518,7 @@ pub fn validate_result_calls(ctx: &Context, module: &Module<'_>) -> ResultValida
                     continue;
                 }
                 if let Err(error) =
-                    validate_result_operands(ctx, instruction, op, required, table, name)
+                    validate_result_operands(ctx, instruction, op, required, computed_ids, name)
                 {
                     checks.errors.push(error);
                 }
@@ -531,7 +533,7 @@ fn validate_result_operands(
     instruction: InstructionValue<'_>,
     op: ResultOp,
     required: Option<usize>,
-    table: bool,
+    computed_ids: bool,
     name: &str,
 ) -> Result<(), String> {
     if let (Some(count), Some(index)) = (required, op.result_operand()) {
@@ -547,7 +549,7 @@ fn validate_result_operands(
             Err(_) if count == 0 => {
                 return Err("Scalar result operations require at least one static result".into());
             }
-            Err(_) if table => {}
+            Err(_) if computed_ids => {}
             Err(error) => {
                 return Err(format!(
                     "Failed to inspect result operand for `{name}`: {error}"
@@ -854,7 +856,7 @@ pub fn initialize_dynamic_result_slot<'ctx>(
     clear_dynamic_result_slot(ctx, builder, &slot_ptrs);
 }
 
-pub fn ensure_dynamic_result_setter<'ctx>(
+pub fn ensure_result_setter<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
 ) -> FunctionValue<'ctx> {
@@ -1356,7 +1358,12 @@ pub fn validate_translation_input(ctx: &Context, module: &Module<'_>) -> Result<
     }
 }
 
-pub fn uses_static_results(module: &Module<'_>, entry: FunctionValue<'_>, dynamic: bool) -> bool {
+// Keep computed-ID admission independent of the scalar fast-path decision.
+fn allows_computed_static_result_ids(
+    module: &Module<'_>,
+    entry: FunctionValue<'_>,
+    dynamic: bool,
+) -> bool {
     if dynamic {
         return false;
     }
@@ -1372,6 +1379,10 @@ pub fn uses_static_results(module: &Module<'_>, entry: FunctionValue<'_>, dynami
     {
         return true;
     }
+    helpers_use_results(module, entry)
+}
+
+fn helpers_use_results(module: &Module<'_>, entry: FunctionValue<'_>) -> bool {
     module
         .get_functions()
         .filter(|function| {
@@ -1396,20 +1407,118 @@ pub fn uses_static_results(module: &Module<'_>, entry: FunctionValue<'_>, dynami
         })
 }
 
+/// The lexical cache is safe only along a straight-line chain in block order,
+/// with every future read before overwrite or return. Other cases use slots.
+fn entry_results_are_ssa_safe(entry: FunctionValue<'_>) -> Result<bool, String> {
+    use inkwell::values::{BasicValueEnum, InstructionOpcode, Operand};
+
+    let blocks = entry.get_basic_blocks();
+    let calls = blocks
+        .iter()
+        .flat_map(|block| block.get_instructions())
+        .filter_map(|instruction| {
+            let call = CallSiteValue::try_from(instruction).ok()?;
+            let callee = call.get_called_fn_value()?;
+            let name = callee.get_name();
+            let op = name.to_str().ok().and_then(ResultOp::from_name)?;
+            let index = op.result_operand()?;
+            Some(
+                instruction
+                    .get_operand(index)
+                    .and_then(Operand::value)
+                    .ok_or_else(|| "Missing result operand".into())
+                    .and_then(|value| {
+                        let BasicValueEnum::PointerValue(pointer) = value else {
+                            return Err("Result operand must be a pointer".into());
+                        };
+                        crate::convert::get_result_index(pointer)
+                    })
+                    .map(|id| (op, id)),
+            )
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if calls.is_empty() {
+        return Ok(true);
+    }
+    let measured: HashSet<_> = calls
+        .iter()
+        .filter(|(op, _)| {
+            matches!(
+                op,
+                ResultOp::Measure | ResultOp::MeasureAlias | ResultOp::MeasureReset
+            )
+        })
+        .map(|(_, id)| *id)
+        .collect();
+    if calls
+        .iter()
+        .any(|(op, id)| matches!(op, ResultOp::Read | ResultOp::Output) && !measured.contains(id))
+    {
+        return Err("Expected measurement handle".into());
+    }
+    if blocks
+        .last()
+        .and_then(|block| block.get_terminator())
+        .is_none_or(|instruction| instruction.get_opcode() != InstructionOpcode::Return)
+    {
+        return Ok(false);
+    }
+    for (block, next) in blocks.iter().zip(blocks.iter().skip(1)) {
+        let Some(terminator) = block.get_terminator() else {
+            return Ok(false);
+        };
+        // A br's first operand is a block only for an unconditional branch.
+        if terminator.get_opcode() != InstructionOpcode::Br
+            || terminator.get_operand(0).and_then(Operand::block) != Some(*next)
+        {
+            return Ok(false);
+        }
+    }
+
+    let mut pending = HashMap::new();
+    let mut overwritten = false;
+    for (op, id) in calls {
+        match op {
+            ResultOp::Measure | ResultOp::MeasureAlias | ResultOp::MeasureReset => {
+                overwritten |= pending.insert(id, true) == Some(true);
+            }
+            ResultOp::Read | ResultOp::Output => {
+                *pending.get_mut(&id).ok_or("Expected measurement handle")? = false;
+            }
+            ResultOp::Allocate
+            | ResultOp::Release
+            | ResultOp::ArrayAllocate
+            | ResultOp::ArrayRelease
+            | ResultOp::ArrayOutput => {}
+        }
+    }
+    Ok(!overwritten && !pending.values().any(|pending| *pending))
+}
+
 pub fn initialize_static_results<'ctx>(
     ctx: &'ctx Context,
     module: &Module<'ctx>,
     entry: FunctionValue<'ctx>,
     dynamic: bool,
 ) -> Result<(), String> {
-    if !uses_static_results(module, entry, dynamic) {
+    if dynamic {
         return Ok(());
     }
     let count = u32::try_from(get_required_num_results(entry)?).map_err(|e| e.to_string())?;
+    if !allows_computed_static_result_ids(module, entry, false)
+        && entry_results_are_ssa_safe(entry)?
+    {
+        return Ok(());
+    }
     let ty = get_dynamic_result_slot_type(ctx).array_type(count);
     let table = module.add_global(ty, None, STATIC_RESULTS);
     table.set_linkage(Linkage::Private);
     table.set_initializer(&ty.const_zero());
+    // Keep the empty table for static-ID bounds checks, but no lifecycle calls
+    // are needed. In particular, do not split a musttail call from its return.
+    if count == 0 {
+        return Ok(());
+    }
     let b = ctx.create_builder();
     let first = entry
         .get_first_basic_block()
@@ -1468,7 +1577,26 @@ pub fn initialize_static_results<'ctx>(
             .get_terminator()
             .filter(|i| i.get_opcode() == inkwell::values::InstructionOpcode::Return)
         {
-            b.position_before(&ret);
+            // A result-free tail callee cannot observe the slots, so cleanup
+            // can precede the call without breaking musttail/ret adjacency.
+            let musttail = ret.get_previous_instruction().and_then(|instruction| {
+                let instruction =
+                    if instruction.get_opcode() == inkwell::values::InstructionOpcode::BitCast {
+                        instruction.get_previous_instruction()?
+                    } else {
+                        instruction
+                    };
+                let call = CallSiteValue::try_from(instruction).ok()?;
+                (call.get_tail_call_kind() == LLVMTailCallKind::LLVMTailCallKindMustTail)
+                    .then_some(instruction)
+            });
+            if musttail.is_some() && helpers_use_results(module, entry) {
+                return Err(
+                    "Entry-point musttail calls are unsupported when helpers use static results"
+                        .into(),
+                );
+            }
+            b.position_before(&musttail.unwrap_or(ret));
             b.build_call(cleanup, &[], "").map_err(|e| e.to_string())?;
         }
     }
