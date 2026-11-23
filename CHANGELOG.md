@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12](https://github.com/Quantinuum/qir-qis/compare/v0.1.11...v0.1.12) (2026-11-23)
+
+
+### Bug Fixes
+
+* **deps:** refresh Python tooling and migrate to Selene 0.3 ([#177](https://github.com/Quantinuum/qir-qis/issues/177)) ([3ef777c](https://github.com/Quantinuum/qir-qis/commit/3ef777c432c6fd052ae79e3299379ac1bbcf5f90))
+* handle empty output tags and preserve record schemas ([#202](https://github.com/Quantinuum/qir-qis/issues/202)) ([29a1e51](https://github.com/Quantinuum/qir-qis/commit/29a1e517962861b8ce4d700bb71714564946401c))
+* preserve explicit result labels on fallback collisions ([#199](https://github.com/Quantinuum/qir-qis/issues/199)) ([39f5067](https://github.com/Quantinuum/qir-qis/commit/39f50672f22fe5e690e5d72f65583c698c5e2e24))
+* reject recursive QIR call cycles before lowering ([#201](https://github.com/Quantinuum/qir-qis/issues/201)) ([deec4b7](https://github.com/Quantinuum/qir-qis/commit/deec4b74df0bf5bbc17e182e8940fc6f63612e4f))
+* reject unsupported computed static qubit handles ([#200](https://github.com/Quantinuum/qir-qis/issues/200)) ([941c19e](https://github.com/Quantinuum/qir-qis/commit/941c19ea4798e3363135055d3b6df02b91068c8a))
+* support static result arrays and dynamic result lifetimes ([#189](https://github.com/Quantinuum/qir-qis/issues/189)) ([d4ee1a6](https://github.com/Quantinuum/qir-qis/commit/d4ee1a6a202db68c2945f328f5e7710068cde03f))
+
+
+### Performance Improvements
+
+* **validation:** avoid direct operand position allocations ([#164](https://github.com/Quantinuum/qir-qis/issues/164)) ([256bc7f](https://github.com/Quantinuum/qir-qis/commit/256bc7f337c326a940253acf3504a437ab54725c))
+
 ## [0.1.11](https://github.com/Quantinuum/qir-qis/compare/v0.1.10...v0.1.11) (2026-09-01)
 
 
