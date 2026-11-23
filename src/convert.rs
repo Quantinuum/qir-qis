@@ -2777,6 +2777,25 @@ entry:
     }
 
     #[test]
+    fn test_native_qir_to_qis_call_allows_internal_calls_in_generated_helpers() {
+        let context = Context::create();
+        for name in [INIT_QARRAY_FN, "qir_qis.generated"] {
+            let (module, defined_fn, call_instr) =
+                build_declared_call_fixture(&context, "test", "___qalloc");
+            defined_fn.as_global_value().set_name(name);
+            run_native_qir_to_qis_call(
+                &context,
+                &module,
+                call_instr,
+                "___qalloc",
+                defined_fn,
+                &BTreeSet::new(),
+            )
+            .expect("generated helpers may call internal functions");
+        }
+    }
+
+    #[test]
     fn test_native_qir_to_qis_call_rejects_reserved_passthrough_names() {
         let context = Context::create();
 
@@ -2883,6 +2902,31 @@ entry:
 
         process_ir_defined_q_fns(&context, &module, entry_fn, false, &BTreeSet::new())
             .expect("entry function should be excluded from IR-defined helper processing");
+    }
+
+    #[test]
+    fn test_process_ir_defined_q_fns_visits_multiblock_helpers() {
+        let context = Context::create();
+        let module = context.create_module("test");
+        let builder = context.create_builder();
+        let fn_type = context.void_type().fn_type(&[], false);
+        let entry_fn = module.add_function("entry", fn_type, None);
+        let helper = module.add_function("helper", fn_type, None);
+        let first = context.append_basic_block(helper, "first");
+        let second = context.append_basic_block(helper, "second");
+        let unknown = module.add_function("unknown", fn_type, None);
+        builder.position_at_end(first);
+        builder.build_unconditional_branch(second).unwrap();
+        builder.position_at_end(second);
+        builder.build_call(unknown, &[], "").unwrap();
+        builder.build_return(None).unwrap();
+
+        let error = process_ir_defined_q_fns(&context, &module, entry_fn, true, &BTreeSet::new())
+            .expect_err("calls in multi-block helpers must be checked");
+        assert!(
+            error.contains("Unsupported function call: unknown"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -7264,6 +7264,11 @@ attributes #0 = { "entry_point" "qir_profiles"="adaptive_profile" "output_labeli
             ),
             (
                 "wrong length type",
+                "declare void @__quantum__rt__qubit_array_allocate(i32, ptr, ptr)",
+                "__quantum__rt__qubit_array_allocate",
+            ),
+            (
+                "wrong result length type",
                 "declare void @__quantum__rt__result_array_allocate(i32, ptr, ptr)",
                 "__quantum__rt__result_array_allocate",
             ),

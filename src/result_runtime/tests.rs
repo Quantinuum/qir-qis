@@ -1268,6 +1268,81 @@ fn reserved_aliases_cannot_hide_result_storage_or_runtime_symbols() {
 }
 
 #[test]
+fn unrelated_aliases_and_indirect_functions_are_allowed() {
+    let context = Context::create();
+    let module = context
+        .create_module_from_ir(MemoryBuffer::create_from_memory_range_copy(
+            b"@storage = global i8 0\n@ordinary = alias i8, ptr @storage\n@dispatch = ifunc i1 (ptr), ptr @resolver\ndefine ptr @resolver() { ret ptr @actual }\ndefine i1 @actual(ptr %r) { ret i1 false }",
+            "aliases",
+        ))
+        .unwrap();
+    super::validate_alias_symbols(&context, &module).expect("unreserved names are allowed");
+}
+
+#[test]
+fn instruction_gep_to_output_tag_is_resolved() {
+    let body = "entry:\n call void @__quantum__qis__mz__body(ptr null, ptr null)\n %tag_view = getelementptr [4 x i8], ptr @tag, i64 0, i64 0\n call void @__quantum__rt__result_record_output(ptr null, ptr %tag_view)\n ret i64 0";
+    let ll = qir(body, "", false, true);
+    let context = Context::create();
+    let module = context
+        .create_module_from_ir(MemoryBuffer::create_from_memory_range_copy(
+            ll.as_bytes(),
+            "tag",
+        ))
+        .unwrap();
+    let call = module
+        .get_function("entry")
+        .unwrap()
+        .get_first_basic_block()
+        .unwrap()
+        .get_first_instruction()
+        .unwrap()
+        .get_next_instruction()
+        .unwrap()
+        .get_next_instruction()
+        .unwrap();
+    let tag = call
+        .get_operand(1)
+        .unwrap()
+        .expect_value("expected a tag pointer");
+    assert!(crate::convert::resolve_output_tag(tag).unwrap().is_some());
+    let bc = qir_ll_to_bc(&ll).unwrap();
+    validate_qir(&bc, None).expect("zero-index instruction GEP should validate");
+    qir_to_qis(&bc, 0, "native", None).expect("zero-index instruction GEP should translate");
+}
+
+#[test]
+fn constant_address_space_cast_to_output_tag_is_resolved() {
+    let context = Context::create();
+    let ll = r#"
+@label = private addrspace(1) constant [4 x i8] c"out\00"
+declare void @record(ptr)
+define void @entry() {
+  call void @record(ptr addrspacecast (ptr addrspace(1) @label to ptr))
+  ret void
+}
+"#;
+    let module = context
+        .create_module_from_ir(MemoryBuffer::create_from_memory_range_copy(
+            ll.as_bytes(),
+            "tag",
+        ))
+        .unwrap();
+    let call = module
+        .get_function("entry")
+        .unwrap()
+        .get_first_basic_block()
+        .unwrap()
+        .get_first_instruction()
+        .unwrap();
+    let tag = call
+        .get_operand(0)
+        .unwrap()
+        .expect_value("expected a tag pointer");
+    assert!(crate::convert::resolve_output_tag(tag).unwrap().is_some());
+}
+
+#[test]
 fn result_signatures_are_checked_independently_of_static_bounds() {
     for name in [
         "__quantum__rt__read_result",
